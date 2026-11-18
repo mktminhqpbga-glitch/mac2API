@@ -105,6 +105,7 @@ class ConcurrencyLock:
         self._sem = threading.Semaphore(self.limit)
         self._count_lock = threading.Lock()
         self._active_count = 0
+        self._idle_since = time.monotonic()
 
     def acquire(self, blocking: bool = True, timeout: float | None = -1) -> bool:
         if timeout is None:
@@ -122,7 +123,20 @@ class ConcurrencyLock:
         with self._count_lock:
             if self._active_count > 0:
                 self._active_count -= 1
+                if self._active_count == 0:
+                    self._idle_since = time.monotonic()
         self._sem.release()
+
+    def stop_browser_if_idle(self, browser, idle_seconds: int, has_queued_work) -> bool:
+        # Holding the admission lock through stop prevents a new lease from using
+        # Chromium while it is being shut down.
+        with self._count_lock:
+            if (not idle_seconds or self._active_count
+                    or time.monotonic() - self._idle_since < idle_seconds
+                    or browser.proc is None or has_queued_work()):
+                return False
+            browser.stop()
+            return True
 
     def locked(self) -> bool:
         with self._count_lock:
@@ -2744,10 +2758,11 @@ async def _keepalive_loop():
         await asyncio.to_thread(_check_update_sync, True)
     except Exception:
         pass
-    try:
-        await asyncio.to_thread(_warmup_browser_sync)
-    except Exception as e:  # noqa: BLE001
-        log.warning("【浏览器预热】异常: %s", e)
+    if not CFG.chromium_idle_seconds:
+        try:
+            await asyncio.to_thread(_warmup_browser_sync)
+        except Exception as e:  # noqa: BLE001
+            log.warning("【浏览器预热】异常: %s", e)
     while True:
         try:
             await asyncio.to_thread(_check_update_sync, True)
@@ -2790,7 +2805,7 @@ MANAGED_DEPLOYMENT = os.environ.get("MUSE2API_MANAGED_DEPLOYMENT", "0") == "1"
 TRACKED_REPO_PATHS = [
     "app.py", "engine.py", "store.py", "cdp.py", "config.py", "proxy.py",
     "generation_timing.py", "thumbnails.py", "media_storage.py", "chat_providers.py", "GENERATION_QUEUE.md", "VERSION_REPORTING.md",
-    "admin.html", "README.md", "version.json", "requirements.txt",
+    "admin.html", "README.md", "AGENTS.md", "CHANGELOG.md", "version.json", "requirements.txt",
     "Dockerfile", "docker-compose.yml", ".env.example", ".gitignore",
     "LICENSE", "extension", "deploy", "tools",
 ]
@@ -3045,6 +3060,25 @@ async def admin_repo_push(payload: dict = Body(default={}), _=Depends(auth)):
     return await asyncio.to_thread(_do_push)
 
 
+def _has_queued_media_work():
+    return any(task.get("status") in ("queued", "processing")
+               for task in list(store.tasks.values()))
+
+
+async def _chromium_idle_loop():
+    idle_seconds = CFG.chromium_idle_seconds
+    while True:
+        await asyncio.sleep(min(idle_seconds, 2))
+        try:
+            stopped = await asyncio.to_thread(
+                GEN_LOCK.stop_browser_if_idle, engine, idle_seconds, _has_queued_media_work
+            )
+            if stopped:
+                log.info("Chromium đã tắt sau %s giây không có tác vụ Muse.", idle_seconds)
+        except Exception:
+            log.exception("Không thể tắt Chromium khi rảnh")
+
+
 @app.on_event("startup")
 async def _startup():
     for task in list(store.tasks.values()):
@@ -3061,8 +3095,17 @@ async def _startup():
     except OSError:
         log.exception("Could not prune the media library during startup")
     asyncio.create_task(_keepalive_loop())
+    if CFG.chromium_idle_seconds:
+        app.state.chromium_idle_task = asyncio.create_task(_chromium_idle_loop())
 
 
 @app.on_event("shutdown")
-def _shutdown():
-    engine.stop()
+async def _shutdown():
+    idle_task = getattr(app.state, "chromium_idle_task", None)
+    if idle_task is not None:
+        idle_task.cancel()
+        try:
+            await idle_task
+        except asyncio.CancelledError:
+            pass
+    await asyncio.to_thread(engine.stop)

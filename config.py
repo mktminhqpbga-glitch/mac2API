@@ -70,6 +70,8 @@ class Config:
 
     # 浏览器
     chromium: str = field(default_factory=_detect_chromium)
+    chromium_idle_seconds: int = field(
+        default_factory=lambda: max(0, int(_env("MUSE2API_CHROMIUM_IDLE_SECONDS", "60"))))
     cdp_port: int = field(default_factory=lambda: int(_env("MUSE2API_CDP_PORT", "19210")))
     home_dir: str = field(default_factory=lambda: _env("MUSE2API_HOME_DIR", os.path.expanduser("~")))
     extra_path: str = field(default_factory=lambda: _env("MUSE2API_EXTRA_PATH", "/snap/bin"))

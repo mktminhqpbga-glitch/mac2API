@@ -44,6 +44,45 @@ def test_concurrency_lock():
     print("PASS: test_concurrency_lock")
 
 
+def test_chromium_idle_shutdown():
+    with patch.object(app.time, "monotonic", return_value=0) as clock:
+        lock = app.ConcurrencyLock(limit=2)
+        stopped = []
+        browser = SimpleNamespace(proc=object())
+        def stop():
+            stopped.append(clock.return_value)
+            browser.proc = None
+        browser.stop = stop
+
+        assert lock.acquire()
+        assert lock.acquire()
+        clock.return_value = 90
+        lock.release()
+        assert not lock.stop_browser_if_idle(browser, 60, lambda: False)
+        lock.release()
+
+        clock.return_value = 149
+        assert not lock.stop_browser_if_idle(browser, 60, lambda: False)
+        clock.return_value = 150
+        assert not lock.stop_browser_if_idle(browser, 60, lambda: True)
+        assert not lock.stop_browser_if_idle(browser, 0, lambda: False)
+        assert lock.stop_browser_if_idle(browser, 60, lambda: False)
+        assert not lock.stop_browser_if_idle(browser, 60, lambda: False)
+        assert stopped == [150]
+
+        # Only check the deadline while the browser is idle. A new lease resets it.
+        with lock:
+            browser.proc = object()
+            clock.return_value = 180
+            assert not lock.stop_browser_if_idle(browser, 60, lambda: False)
+        clock.return_value = 239
+        assert not lock.stop_browser_if_idle(browser, 60, lambda: False)
+        clock.return_value = 240
+        assert lock.stop_browser_if_idle(browser, 60, lambda: False)
+        assert stopped == [150, 240]
+    print("PASS: Chromium idle deadline, active leases, queued work and reopening")
+
+
 def test_account_pool_manager():
     dummy_accounts = [
         {"id": "acc-1", "label": "A1", "enabled": True, "cookies": {"k": "v1"}},
@@ -150,6 +189,7 @@ def test_parallel_generation_simulation():
 
 if __name__ == "__main__":
     test_concurrency_lock()
+    test_chromium_idle_shutdown()
     test_account_pool_manager()
     test_parallel_generation_simulation()
     print("ALL CONCURRENCY TESTS PASSED!")

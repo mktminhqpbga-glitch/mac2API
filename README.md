@@ -176,6 +176,7 @@ Với các yêu cầu dài, gửi `POST /v1/images/tasks` và kiểm tra `GET /v
 | `MUSE2API_HOST`, `MUSE2API_PORT` | Địa chỉ và cổng dịch vụ |
 | `MUSE2API_PUBLIC_BASE` | URL công khai dùng cho các liên kết được tạo |
 | `MUSE2API_CHROMIUM`, `MUSE2API_CDP_PORT` | Tệp thực thi Chromium và cổng DevTools |
+| `MUSE2API_CHROMIUM_IDLE_SECONDS` | Tắt Chromium khi không có tác vụ Muse, mặc định 60 giây. Đặt `0` để giữ Chromium chạy |
 | `MUSE2API_CONCURRENCY` | Số tác vụ chạy đồng thời |
 | `MUSE2API_IMAGE_TIMEOUT`, `MUSE2API_VIDEO_TIMEOUT`, `MUSE2API_CHAT_TIMEOUT` | Thời gian xử lý tính theo giây |
 | `MUSE2API_REF_IMAGE_LOCAL_FILES`, `MUSE2API_REF_IMAGE_PRIVATE_FETCH` | Quyền đọc tệp cục bộ và URL mạng riêng. Mặc định là `0` |

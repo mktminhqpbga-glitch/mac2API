@@ -401,6 +401,8 @@ class MuseEngine:
                         pass
 
             os.makedirs(self.cfg.data_dir, exist_ok=True)
+            if self._log is not None:
+                self._log.close()
             self._log = open(os.path.join(self.cfg.data_dir, "chromium.log"), "ab", buffering=0)
             cwd_dir = self.cfg.home_dir if (self.cfg.home_dir and os.path.isdir(self.cfg.home_dir)) else None
             self.proc = subprocess.Popen(args, stdout=self._log, stderr=subprocess.STDOUT,
@@ -436,9 +438,13 @@ class MuseEngine:
                 self.proc.terminate()
                 try:
                     self.proc.wait(timeout=10)
-                except Exception:  # noqa: BLE001
+                except subprocess.TimeoutExpired:
                     self.proc.kill()
+                    self.proc.wait(timeout=5)
             self.proc = None
+            if self._log is not None:
+                self._log.close()
+                self._log = None
             with self._contexts_lock:
                 relays = list(self._proxy_relays)
                 self._proxy_relays.clear()
