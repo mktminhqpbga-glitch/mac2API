@@ -28,13 +28,13 @@ Weekly limit resets on Oct 17
 Additional tokens
 Never expires
 0% used (8B tokens left)""",
-    """Usage
-Free plan
-Weekly limit resets on Oct 17
-24% used
-Additional tokens
-Never expires
-0% used (1B tokens left)""",
+    """Mức sử dụng
+Gói miễn phí
+Hạn mức tuần đặt lại vào 17 tháng 10
+Đã sử dụng 24%
+Token bổ sung
+Không hết hạn
+0% đã dùng (còn 1 tỷ token)""",
     """Usage
 Free plan
 Weekly limit resets on Oct 17
@@ -48,10 +48,13 @@ Never expires
 class Page:
     def __init__(self, quota):
         self.quota = quota
+        self.usage_open = not quota.startswith("Mức sử dụng")
 
     def js(self, script):
         if script == instance._QUOTA_DIALOG_JS:
-            return self.quota
+            return self.quota if self.usage_open else "Cài đặt"
+        if script == instance._QUOTA_USAGE_JS:
+            return '{"x": 3, "y": 4}'
         return "{\"x\": 1, \"y\": 2}"
 
     def send(self, *args, **kwargs):
@@ -75,7 +78,12 @@ def close():
 
 instance.ensure_page = ensure
 instance._close_page = close
-instance._click_point = lambda x, y: None
+def click(x, y):
+    if (x, y) == (3, 4):
+        instance.page.usage_open = True
+
+
+instance._click_point = click
 with patch("time.sleep"):
     qa1 = instance.quota({"fixture": "a"}, account_id="account-a")
     qb = instance.quota({"fixture": "b"}, account_id="account-b")
@@ -85,5 +93,5 @@ assert closed == ["account-a", "account-b", "account-a"]
 assert instance.page is None and instance.current_acc_id is None
 assert qa1["weekly_used_pct"] == qa2["weekly_used_pct"] == 2
 assert qa1["extra_left"] == qa2["extra_left"] == "8B tokens left"
-assert qb["weekly_used_pct"] == 24 and qb["extra_left"] == "1B tokens left"
+assert qb["weekly_used_pct"] == 24 and qb["extra_left"] == "còn 1 tỷ token"
 print("PASS: account-bound and repeated quota reads use disposable isolated pages")

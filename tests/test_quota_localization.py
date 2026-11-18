@@ -51,6 +51,23 @@ class QuotaLocalizationTests(unittest.TestCase):
                     weekly_used_pct=12.5, extra_used_pct=0, extra_expires="never",
                     extra_left="剩余 20 亿令牌")
 
+    def test_vietnamese_usage(self):
+        result = self.fields(
+            "Cài đặt\nThông tin hồ sơ\n99% đã dùng\nMức sử dụng\nGói miễn phí\n"
+            "Hạn mức hằng tuần sẽ được đặt lại vào 24 tháng 11\nĐã sử dụng 3%\n"
+            "Token bổ sung\nKhông hết hạn\n0% đã dùng (còn 2 tỷ token)\nNgôn ngữ\n",
+            found=True, plan="Gói miễn phí", weekly_reset="24 tháng 11",
+            weekly_used_pct=3, extra_used_pct=0, extra_left="còn 2 tỷ token",
+            extra_expires="never",
+        )
+        self.assertNotIn("99%", result["raw"])
+
+    def test_vietnamese_decimal_and_extra_only(self):
+        self.fields("Mức sử dụng\n12,5% đã sử dụng", found=True, weekly_used_pct=12.5)
+        result = self.fields("Mức sử dụng\nGói miễn phí\nMã thông báo bổ sung\nĐã dùng 3%",
+                             found=False, extra_used_pct=3)
+        self.assertNotIn("weekly_used_pct", result)
+
     def test_zero_is_success_and_integer(self):
         for text in ["0% used", "已用 0%", "已使用 0%", "已用 ０％"]:
             with self.subTest(text=text):

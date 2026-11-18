@@ -216,14 +216,19 @@ def _account_proxy(account: dict):
 
 
 @contextmanager
-def _account_operation(aid: str):
+def _account_operation(aid: str, *, wait_seconds: float = 0):
     """Maintenance and settings share the same account lease as generation."""
     with ACCOUNT_POOL.cond:
         account = store.get_account(aid)
         if not account:
             raise HTTPException(404, "账号不存在")
-        if aid in ACCOUNT_POOL.busy_accounts:
+        if not ACCOUNT_POOL.cond.wait_for(
+            lambda: aid not in ACCOUNT_POOL.busy_accounts, timeout=wait_seconds
+        ):
             raise HTTPException(409, "账号正在执行任务或检测，请稍后再试")
+        account = store.get_account(aid)
+        if not account:
+            raise HTTPException(404, "账号不存在")
         ACCOUNT_POOL.busy_accounts.add(aid)
         account = copy.deepcopy(account)
     try:
@@ -2358,7 +2363,7 @@ async def query_quota(aid: str, _=Depends(auth)):
         raise HTTPException(400, "该账号没有 cookie")
 
     def _probe():
-        with GEN_LOCK, _account_operation(aid) as acc:
+        with GEN_LOCK, _account_operation(aid, wait_seconds=60) as acc:
             engine.start()
             q = engine.quota(acc["cookies"], acc.get("cookies_exp"), account_id=aid)
             if not q.get("found"):

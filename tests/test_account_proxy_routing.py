@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -116,6 +117,40 @@ assert aid not in app.ACCOUNT_POOL.busy_accounts
 assert not hasattr(app.engine._ensure_local(), "proxy_snapshot")
 
 assert (acc["last_used"], acc["use_count"]) == before_use
+
+# The quota endpoint waits for maintenance to release this account.
+async def check_quota_wait():
+    entered = threading.Event()
+    operation = app._account_operation
+
+    def observed_operation(account_id, *, wait_seconds=0):
+        assert account_id == aid and wait_seconds == 60
+        entered.set()
+        return operation(account_id, wait_seconds=0.5)
+
+    with app.ACCOUNT_POOL.cond:
+        app.ACCOUNT_POOL.busy_accounts.add(aid)
+    try:
+        with patch.object(app, "_account_operation", side_effect=observed_operation), \
+             patch.object(app.engine, "start"), patch.object(app.engine, "quota", side_effect=quota) as read:
+            pending = asyncio.create_task(app.query_quota(aid))
+            assert await asyncio.to_thread(entered.wait, 1)
+            assert not pending.done() and not read.called
+            app.ACCOUNT_POOL.release(aid)
+            assert (await asyncio.wait_for(pending, 2))["found"]
+            read.assert_called_once()
+
+        with operation(aid):
+            try:
+                with operation(aid, wait_seconds=0.01):
+                    raise AssertionError("second lease was admitted")
+            except app.HTTPException as exc:
+                assert exc.status_code == 409
+    finally:
+        app.ACCOUNT_POOL.release(aid)
+
+
+asyncio.run(check_quota_wait())
 
 # A proxy outage must not mark unknown authentication as a successful account.
 acc["ok"] = None
