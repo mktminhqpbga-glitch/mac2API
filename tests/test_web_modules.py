@@ -13,6 +13,7 @@ import time
 from unittest.mock import patch
 
 import httpx
+import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -67,6 +68,30 @@ async def check():
         response = await client.get("/v1/models", headers=headers)
         assert set(app.MODULES) <= {m["id"] for m in response.json()["data"]}
         for provider in web_providers.PROVIDERS:
+            web_url = web_providers.PROVIDERS[provider].url
+            with requests.Session() as session:
+                session.trust_env = False
+                target = session.put(f"http://127.0.0.1:{app.web_providers.port}/json/new?{web_url}", timeout=3).json()["id"]
+            page = web_providers.CDP(f"ws://127.0.0.1:{app.web_providers.port}/devtools/page/{target}",
+                                     timeout=3, suppress_origin=True)
+            try:
+                definition = web_providers.PROVIDERS[provider]
+                app.web_providers._wait_composer(page, definition, time.monotonic() + 5)
+                marker = "a" * 32
+                page.js(f"document.documentElement.dataset.mac2apiLink = '{marker}'")
+                endpoint = f"/admin/web-providers/{provider}/link"
+                assert (await client.post(endpoint, json={"marker": marker})).status_code == 401
+                linked = await client.post(endpoint, headers=headers, json={"marker": marker})
+                assert linked.status_code == 200 and linked.json()["provider"] == provider, linked.text
+                status = (await client.get("/admin/web-providers", headers=headers)).json()
+                assert status["linked_at"][provider] == linked.json()["linked_at"]
+                replay = await client.post(endpoint, headers=headers, json={"marker": marker})
+                assert replay.status_code == 409, replay.text
+            finally:
+                page.close()
+                with requests.Session() as session:
+                    session.trust_env = False
+                    session.get(f"http://127.0.0.1:{app.web_providers.port}/json/close/{target}", timeout=3)
             response = await client.post(f"/admin/web-providers/{provider}/test", headers=headers)
             assert response.status_code == 200, response.text
             response = await client.post("/v1/chat/completions", headers=headers, json={

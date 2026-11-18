@@ -29,6 +29,7 @@
     background:linear-gradient(180deg,#4f8cff,#3d7bf0);color:#fff;
     font-size:13.5px;font-weight:600;cursor:pointer;
   }
+  .provider-buttons{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
   button:hover{filter:brightness(1.08)}
   button:disabled{opacity:.55;cursor:default;filter:none}
   .steps{background:#161b22;border:1px solid #30363d;border-radius:8px;
@@ -44,40 +45,35 @@
 </style>
 </head>
 <body>
-  <h1><span class="dot"></span><span data-i18n-text>Muse2API Cookie 导入</span><span id="extensionVersion" style="font-size:11px;color:#8b949e">v1.0.3</span>
+  <h1><span class="dot"></span><span data-i18n-text>Muse2API Cookie 导入</span><span id="extensionVersion" style="font-size:11px;color:#8b949e">v1.0.4</span>
     <select id="langSel" class="langsel" title="Ngôn ngữ / Language / 语言">
       <option value="vi">Tiếng Việt</option>
       <option value="zh">中文</option>
       <option value="en">English</option>
     </select>
   </h1>
-  <p class="sub" data-i18n-text>把当前浏览器里 muse.ai 的登录态，一键同步到你的 muse2api 服务。</p>
+  <p class="sub" data-i18n-text>选择当前标签页对应的服务。</p>
 
   <label data-i18n-text>服务地址（BASE URL）</label>
   <input id="base" placeholder="http://your-server-ip:18610" spellcheck="false">
 
   <label>API Key</label>
-  <input id="key" placeholder="m2a_..." spellcheck="false">
+  <input id="key" type="password" placeholder="m2a_..." spellcheck="false">
 
   <label data-i18n-text>账号标签（可留空）</label>
   <input id="label" placeholder="例如 muse-main" spellcheck="false">
 
-  <button id="go" data-i18n-text>读取并导入</button>
-
-  <div class="steps" data-i18n="steps">
-    <b>用之前先确认两件事：</b><br>
-    1. 你已经在<b>这个浏览器</b>里登录了 <a href="https://muse.ai/" target="_blank"
-       style="color:#4f8cff">muse.ai</a>（能看到聊天界面）。<br>
-    2. 上面的服务地址和 API Key 已填好（在 muse2api 管理页「账号池」页顶部可以复制）。
+  <div class="provider-buttons">
+    <button id="go" type="button">Muse</button>
+    <button id="linkChatGPT" type="button">ChatGPT</button>
+    <button id="linkGemini" type="button">Gemini</button>
   </div>
 
-  <div id="log"></div>
+  <div class="steps" data-i18n="steps"><b>打开已登录的标签页并选择对应服务。</b><br>Muse 导入 Cookie。ChatGPT 和 Gemini 验证 mac2API 同一台机器上专用 Chrome 的标签页。</div>
 
-  <div class="foot" data-i18n="foot">
-    本扩展只做一件事：用浏览器的 <code>chrome.cookies</code> 接口读取 muse.ai 的
-    Cookie（能读到 httpOnly 的那些），POST 到你填的服务地址。
-    不收集、不上传到任何第三方服务器。
-  </div>
+  <div id="log" role="status"></div>
+
+  <div class="foot" data-i18n="foot">只有 Muse Cookie 会发送至配置的服务。ChatGPT 和 Gemini 仅发送一次性验证标记。</div>
 
   <script src="popup.js"></script>
 </body>

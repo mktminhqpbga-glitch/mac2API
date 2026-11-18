@@ -35,7 +35,7 @@ Nếu Chromium nằm ngoài PATH, đặt `MUSE2API_CHROMIUM` thành đường d�
 ## Nhập tài khoản Muse
 
 1. Tải tiện ích từ bảng quản trị hoặc nạp [thư mục tiện ích](extension/) dưới dạng tiện ích đã giải nén trong Chrome hoặc Edge.
-2. Đăng nhập Muse.ai và mở tiện ích **v1.0.3** trong chính cửa sổ đó. Với chế độ ẩn danh hoặc InPrivate, hãy cấp quyền chạy tiện ích trong chế độ tương ứng.
+2. Đăng nhập Muse.ai và mở tiện ích **v1.0.4** trong chính cửa sổ đó. Với chế độ ẩn danh hoặc InPrivate, hãy cấp quyền chạy tiện ích trong chế độ tương ứng.
 3. Điền địa chỉ dịch vụ và API Key, rồi bấm **Đọc và nhập**.
 4. Trong mục **Quản lý tài khoản**, bấm **Kiểm tra** để mở Muse bằng Chromium trên máy chủ và xác minh phiên.
 
@@ -128,7 +128,7 @@ Chạy mac2API và Chrome riêng trực tiếp trên cùng máy. Ví dụ trên 
 open -na "Google Chrome" --args --remote-debugging-port=19211 --user-data-dir="$HOME/.mac2api-web-profile"
 ```
 
-Trong cửa sổ vừa mở, đăng nhập ChatGPT và Gemini bằng tài khoản bạn muốn dùng, rồi giữ Chrome mở. Đặt `MUSE2API_WEB_CDP_PORT=19211` cho mac2API và khởi động lại dịch vụ. Vào tab tương ứng và bấm **Kiểm tra phiên trình duyệt**, rồi thử chat. Chỉ dùng cổng DevTools cục bộ. Bản mac2API trên Render không tự dùng được Chrome trên máy Mac.
+Trong cửa sổ vừa mở, đăng nhập ChatGPT và Gemini bằng tài khoản bạn muốn dùng, rồi giữ Chrome mở. Đặt `MUSE2API_WEB_CDP_PORT=19211` cho mac2API và khởi động lại dịch vụ. Nạp tiện ích v1.0.4 vào Chrome này. Mở tab đã đăng nhập và chọn **ChatGPT** hoặc **Gemini** trong tiện ích. Bảng quản trị hiển thị thời điểm xác minh trong đúng mục. Bạn cũng có thể bấm **Kiểm tra phiên trình duyệt** ở bảng quản trị, rồi thử chat. Chỉ dùng cổng DevTools cục bộ. Bản mac2API trên Render không tự dùng được Chrome trên máy Mac.
 
 Các mô-đun web tạo một ảnh từ mô tả, tùy quyền của tài khoản. Chat web lấy câu trả lời hoàn chỉnh rồi mới trả về, kể cả khi client yêu cầu SSE. Mỗi yêu cầu mở và đóng tab riêng. Khả năng hoạt động phụ thuộc vào giao diện của từng trang web.
 

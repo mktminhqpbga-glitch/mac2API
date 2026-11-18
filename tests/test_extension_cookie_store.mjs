@@ -5,8 +5,8 @@ import vm from 'node:vm';
 const source = fs.readFileSync(new URL('../extension/popup.js', import.meta.url), 'utf8');
 const cookie = (value, extra = {}) => ({name: 'hatch_sess', value, domain: '.muse.ai', path: '/', httpOnly: true, ...extra});
 
-function fixture({incognito = false, tab = true, stores, cookies, locale = null} = {}) {
-  const active = tab ? {id: 27, incognito} : undefined;
+function fixture({incognito = false, tab = true, stores, cookies, locale = null, url = "https://muse.ai/"} = {}) {
+  const active = tab ? {id: 27, incognito, url} : undefined;
   const storeId = incognito ? 'private-7' : 'regular-3';
   const calls = {reads: [], uploads: []};
   const elements = new Map();
@@ -19,9 +19,12 @@ function fixture({incognito = false, tab = true, stores, cookies, locale = null}
   const context = vm.createContext({
     document: {getElementById: element, querySelectorAll: () => [], documentElement: {}, title: ''},
     localStorage: {getItem: () => locale},
+    URL,
+    crypto: {getRandomValues: bytes => bytes.fill(0xab)},
     chrome: {
       storage: {local: {get: async () => ({}), set: async () => {}}},
       tabs: {query: async () => active ? [active] : []},
+      scripting: {executeScript: async () => [{result: true}]},
       cookies: {
         getAllCookieStores: async () => stores ?? [
           {id: 'wrong-default', tabIds: [99]}, {id: storeId, tabIds: [27]},
@@ -37,6 +40,9 @@ function fixture({incognito = false, tab = true, stores, cookies, locale = null}
     },
     fetch: async (url, request) => {
       calls.uploads.push({url, body: JSON.parse(request.body)});
+      if (url.endsWith('/link')) {
+        return {status: 200, ok: true, json: async () => ({ok: true, provider: url.split('/').at(-2)})};
+      }
       return {status: 200, ok: true, text: async () => JSON.stringify({added: [{id: 'fixture', label: 'fixture'}]})};
     },
   });
@@ -96,3 +102,22 @@ for (const options of [{tab: false}, {cookies: [cookie('')]}]) {
   checks++;
 }
 console.log(`PASS: ${checks} extension cookie-store, URL scope, duplicate precedence and import checks; no live cookies/network`);
+
+for (const [provider, origin] of [['chatgpt', 'https://chatgpt.com'], ['gemini-web', 'https://gemini.google.com']]) {
+  const f = fixture({url: origin + '/'});
+  await f.run(`linkWebProvider('${provider}')`);
+  assert.equal(f.calls.reads.length, 0, 'web links never read cookies');
+  assert.equal(f.calls.uploads.length, 1);
+  assert.equal(f.calls.uploads[0].url, `https://test.invalid/admin/web-providers/${provider}/link`);
+  assert.equal(f.calls.uploads[0].body.marker, 'ab'.repeat(16));
+  assert.deepEqual(Object.keys(f.calls.uploads[0].body), ['marker']);
+  assert.match(f.element('log').innerHTML, /Đã xác minh tab/);
+}
+for (const url of ['https://chatgpt.com.example/', 'https://gemini.google.com/']) {
+  const f = fixture({url});
+  await f.run("linkWebProvider('chatgpt')");
+  await f.run('run()');
+  assert.equal(f.calls.uploads.length, 0);
+  assert.equal(f.calls.reads.length, 0);
+}
+console.log('PASS: exact provider origin, matching route and no web cookie import');

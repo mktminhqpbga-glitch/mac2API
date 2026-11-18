@@ -1,5 +1,10 @@
 # Nhật ký và bàn giao mac2API
 
+## Tiện ích Chrome 1.0.4
+
+- Ba nút Muse, ChatGPT và Gemini đối chiếu tên miền của tab đang mở. Muse nhập cookie như trước. ChatGPT và Gemini xác minh tab qua mã một lần trên đúng Chrome cục bộ, không gửi cookie web.
+- Bảng quản trị hiển thị thời điểm xác minh ở đúng tab nhà cung cấp. Trạng thái này tồn tại trong tiến trình đang chạy. Thử chat để xác nhận tài khoản trả lời.
+
 ## Dọn bản nháp và hiển thị lỗi Muse
 
 - Trước khi tạo ảnh/video, xác nhận ô nhập đã hết văn bản và tệp cũ. Bỏ qua tệp trong lịch sử. Nếu không xác minh được, dừng trước khi gửi.

@@ -2198,7 +2198,20 @@ def get_media_thumbnail(name: str):
 # ------------------------- 管理：总览 -------------------------
 @app.get("/admin/web-providers")
 def list_web_providers(_=Depends(auth)):
-    return {"configured": bool(web_providers.port), "port": web_providers.port}
+    return {"configured": bool(web_providers.port), "port": web_providers.port,
+            "linked_at": dict(web_providers.linked_at)}
+
+
+class WebProviderLink(BaseModel):
+    marker: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
+@app.post("/admin/web-providers/{provider}/link")
+async def link_web_provider(provider: str, req: WebProviderLink, _=Depends(auth)):
+    if provider not in WEB_PROVIDERS:
+        raise HTTPException(404, "Không tìm thấy nhà cung cấp web.")
+    linked_at = await asyncio.to_thread(_web_call, web_providers.link, provider, req.marker)
+    return {"ok": True, "provider": provider, "linked_at": linked_at}
 
 
 @app.post("/admin/web-providers/{provider}/test")

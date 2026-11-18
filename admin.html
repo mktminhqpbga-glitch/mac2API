@@ -298,7 +298,7 @@
     <button data-t="docs">接入文档</button>
   </nav>
 
-  <div class="card" id="extensionUpgradeNotice" style="border-color:var(--warn)" role="note" data-i18n="extension-upgrade-notice"><b>重要：请手动升级浏览器插件至 1.0.3</b><br>更新服务不会自动升级已加载的扩展。下载新包，替换原扩展目录文件，再到 <code>chrome://extensions</code> 或 <code>edge://extensions</code> 点击“重新加载”。不同浏览器个人资料需分别升级。<br><a href="/admin/extension">下载扩展 1.0.3</a>；油猴用户请升级脚本至 1.1.2。</div>
+  <div class="card" id="extensionUpgradeNotice" style="border-color:var(--warn)" role="note" data-i18n="extension-upgrade-notice"><b>重要：请手动升级浏览器插件至 1.0.4</b><br>更新服务不会自动升级已加载的扩展。下载新包，替换原扩展目录文件，再到 <code>chrome://extensions</code> 或 <code>edge://extensions</code> 点击“重新加载”。不同浏览器个人资料需分别升级。<br><a href="/admin/extension">下载扩展 1.0.4</a>；油猴用户请升级脚本至 1.1.2。</div>
 
 
   <section class="tab" id="tab-openai"></section>
@@ -1287,7 +1287,7 @@ const I18N_EN = {
 };
 /* 含富文本的块：data-i18n="key" → 英文 innerHTML（须保留原有子元素的 id/class/属性） */
 const I18N_EN_HTML = {
-  "extension-upgrade-notice": "<b>Important: manually upgrade the extension to 1.0.3</b><br>Updating the service does not update unpacked extensions. Replace files in the original folder and click Reload at <code>chrome://extensions</code> or <code>edge://extensions</code>, separately for each browser profile.<br><a href=\"/admin/extension\">Download extension 1.0.3</a>; upgrade the userscript to 1.1.2.",
+  "extension-upgrade-notice": "<b>Important: manually upgrade the extension to 1.0.4</b><br>Updating the service does not update unpacked extensions. Replace files in the original folder and click Reload at <code>chrome://extensions</code> or <code>edge://extensions</code>, separately for each browser profile.<br><a href=\"/admin/extension\">Download extension 1.0.4</a>; upgrade the userscript to 1.1.2.",
   "repo-status-desc": "Comparing your local version with the latest version in the official GitHub repository… (online upgrades keep your <code>.env</code> keys and the <code>data/</code> Account Pool and media data)",
   "auth-banner": "\n      <b>Enter your API Key first so the page can load data</b><br>\n      <span style=\"color:var(--muted)\">\n        The API Key is this service's own \"access password\". It stops other people from using your Muse account quota.\n        It is <b style=\"color:var(--text)\">not</b> your Muse password. It is a random string generated at deploy time (it starts with <code>m2a_</code>).<br>\n        Paste it into the box at the top right and click \"Save\". Your browser remembers it, so you won't need to enter it again.\n      </span>\n    ",
   "model-names-hint": "\n        Model names: <code>muse-spark</code> (chat/code), <code>muse-image</code> (images), <code>muse-video</code> (videos).\n        See the \"Integration Docs\" tab for full examples.\n      ",
@@ -1973,7 +1973,7 @@ const I18N_VI = {
   "✗ 保活失败: 未知错误": "✗ Duy trì phiên thất bại do lỗi chưa xác định"
 };
 const I18N_VI_HTML = {
-  "extension-upgrade-notice": "<b>Hãy cập nhật tiện ích lên 1.0.3</b><br>Thay tệp trong thư mục tiện ích đã giải nén rồi bấm Tải lại tại <code>chrome://extensions</code> hoặc <code>edge://extensions</code> cho từng hồ sơ.",
+  "extension-upgrade-notice": "<b>Hãy cập nhật tiện ích lên 1.0.4</b><br>Thay tệp trong thư mục tiện ích đã giải nén rồi bấm Tải lại tại <code>chrome://extensions</code> hoặc <code>edge://extensions</code> cho từng hồ sơ.",
   "repo-status-desc": "Đang đối chiếu phiên bản đã cài với kho cập nhật. Cấu hình <code>.env</code> và dữ liệu trong <code>data/</code> được giữ lại khi cập nhật.",
   "auth-banner": "<b>Nhập API Key để tải dữ liệu</b><br><span style=\"color:var(--muted)\">Dùng khóa truy cập của dịch vụ Muse2API và bấm Lưu.</span>",
   "model-names-hint": "Model: <code>muse-spark</code> (chat và mã), <code>muse-image</code> (ảnh), <code>muse-video</code> (video). Xem mục Hướng dẫn tích hợp để biết ví dụ.",
@@ -2207,6 +2207,7 @@ const chatProviderPanels = new Map([
   function render(data) {
     status.textContent = data.configured ? 'Đã cấu hình cổng Chrome. Hãy kiểm tra phiên trình duyệt.'
       : 'Chưa cấu hình MUSE2API_WEB_CDP_PORT trên máy chủ.';
+    if (data.linked_at?.[id]) status.textContent = 'Đã xác minh tab qua tiện ích lúc ' + fmtTime(data.linked_at[id]) + '.';
     test.disabled = send.disabled = !data.configured;
   }
   test.disabled = send.disabled = true;

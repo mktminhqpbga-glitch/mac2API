@@ -26,6 +26,12 @@ function setLang(v) {
 
 /* 整句：中文 → 英文 */
 const I18N_EN = {
+  "选择当前标签页对应的服务。": "Select the service in the active tab.",
+  "请在当前窗口打开 {site} 后重试。": "Open {site} in the current window and try again.",
+  "请在专用 Chrome 的普通窗口中连接网页服务。": "Connect web services from the dedicated Chrome browser in a regular window.",
+  "正在验证 {site} 标签页…": "Verifying the {site} tab…",
+  "已验证 {site} 标签页。请在控制台对应页签试聊。": "Verified the {site} tab. Try chat in its dashboard tab.",
+  "连接失败 (HTTP {status})": "Connection failed (HTTP {status})",
   // popup.html 静态文案
   'Muse2API Cookie 导入': 'Muse2API Cookie Import',
   '把当前浏览器里 muse.ai 的登录态，一键同步到你的 muse2api 服务。':
@@ -68,13 +74,8 @@ const I18N_EN = {
 
 /* 含富文本的块：data-i18n="key" → 英文 innerHTML */
 const I18N_EN_HTML = {
-  steps: '<b>Before you start, check two things:</b><br>\n'
-    + '    1. You are logged in to <a href="https://muse.ai/" target="_blank"\n'
-    + '       style="color:#4f8cff">muse.ai</a> in <b>this browser</b> (you can see the chat interface).<br>\n'
-    + '    2. The service URL and API Key above are filled in (you can copy them from the top of the "Account Pool" tab on the muse2api admin page).',
-  foot: 'This extension does only one thing: it uses the browser\'s <code>chrome.cookies</code> API to read muse.ai\n'
-    + '    cookies (including the httpOnly ones) and POSTs them to the service URL you entered.\n'
-    + '    Nothing is collected or uploaded to any third-party server.',
+  "steps": "<b>Open the signed-in tab and select its service.</b><br>Muse imports cookies. ChatGPT and Gemini verify the dedicated Chrome tab on the mac2API machine.",
+  "foot": "Only Muse cookies are sent to the configured service. ChatGPT and Gemini send a one-time verification marker."
 };
 
 /* 服务端返回的含变量文案：[正则, 替换串] */
@@ -83,6 +84,12 @@ const I18N_EN_PATTERNS = [
 ];
 
 const I18N_VI = {
+  "选择当前标签页对应的服务。": "Chọn dịch vụ tương ứng với tab đang mở.",
+  "请在当前窗口打开 {site} 后重试。": "Hãy mở {site} trong cửa sổ hiện tại rồi thử lại.",
+  "请在专用 Chrome 的普通窗口中连接网页服务。": "Hãy kết nối dịch vụ web từ cửa sổ thường của Chrome riêng.",
+  "正在验证 {site} 标签页…": "Đang xác minh tab {site}…",
+  "已验证 {site} 标签页。请在控制台对应页签试聊。": "Đã xác minh tab {site}. Hãy thử chat trong mục tương ứng của bảng quản trị.",
+  "连接失败 (HTTP {status})": "Kết nối thất bại (HTTP {status})",
   "Muse2API Cookie 导入": "Nhập cookie Muse2API",
   "把当前浏览器里 muse.ai 的登录态，一键同步到你的 muse2api 服务。": "Đồng bộ phiên đăng nhập Muse.ai từ trình duyệt này sang dịch vụ Muse2API của bạn.",
   "服务地址（BASE URL）": "Địa chỉ dịch vụ (BASE URL)",
@@ -112,8 +119,8 @@ const I18N_VI = {
   "API key 无效": "API key không hợp lệ"
 };
 const I18N_VI_HTML = {
-  "steps": "<b>Trước khi nhập:</b><br>1. Đăng nhập <a href=\"https://muse.ai/\" target=\"_blank\" rel=\"noopener\">Muse.ai</a> trong cửa sổ này.<br>2. Điền địa chỉ dịch vụ và API Key từ mục Quản lý tài khoản.",
-  "foot": "Tiện ích dùng <code>chrome.cookies</code> để đọc cookie Muse.ai và gửi đến địa chỉ dịch vụ bạn đã nhập."
+  "steps": "<b>Mở tab đã đăng nhập rồi chọn đúng nút.</b><br>Muse nhập cookie. ChatGPT và Gemini xác minh tab trong Chrome riêng trên cùng máy với mac2API.",
+  "foot": "Tiện ích chỉ gửi cookie Muse tới địa chỉ dịch vụ bạn nhập. Với ChatGPT và Gemini, tiện ích gửi mã xác minh một lần."
 };
 
 function t(s, vars) {
@@ -144,10 +151,11 @@ function applyLang() {
   });
 }
 
-function log(html, cls) {
+function log(message, cls) {
   const el = $('log');
   el.className = 'show';
-  el.innerHTML = cls ? `<span class="${cls}">${html}</span>` : html;
+  const safe = String(message).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  el.innerHTML = cls ? `<span class="${cls}">${safe}</span>` : safe;
 }
 
 /* 规范化服务地址：去掉结尾斜杠和 /v1 后缀 */
@@ -190,10 +198,13 @@ async function saveCfg() {
   });
 }
 
-async function grabCookies() {
+async function grabCookies(requireMuseTab = false) {
   // A spanning extension shares its regular context with incognito windows.
   // Select the active tab's store explicitly; never guess or fall back.
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (requireMuseTab && !tabAtOrigin(tab, ['https://muse.ai', 'https://www.muse.ai'])) {
+    throw new Error(t('请在当前窗口打开 {site} 后重试。', {site: 'Muse'}));
+  }
   const stores = await chrome.cookies.getAllCookieStores();
   const store = tab && stores.find((s) => s.tabIds.includes(tab.id));
   if (!store) {
@@ -225,7 +236,7 @@ async function run() {
   log(t('正在读取 muse.ai 的 Cookie…'));
 
   try {
-    const { cookies, expires, windowKind } = await grabCookies();
+    const { cookies, expires, windowKind } = await grabCookies(true);
     const names = Object.keys(cookies);
     if (!names.length) {
       return log(t('没读到 muse.ai 的 Cookie。\n请先在这个浏览器里打开并登录 '
@@ -243,6 +254,7 @@ async function run() {
 
     const r = await fetch(base + '/admin/accounts', {
       method: 'POST',
+      redirect: 'error',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ' + key,
@@ -283,7 +295,79 @@ async function run() {
   }
 }
 
+function tabAtOrigin(tab, origins) {
+  try { return origins.includes(new URL(tab.url).origin); }
+  catch { return false; }
+}
+
+const WEB_BUTTONS = {
+  chatgpt: {button: 'linkChatGPT', site: 'ChatGPT', origin: 'https://chatgpt.com'},
+  'gemini-web': {button: 'linkGemini', site: 'Gemini', origin: 'https://gemini.google.com'},
+};
+
+async function linkWebProvider(provider) {
+  const {button, site, origin} = WEB_BUTTONS[provider];
+  const base = normBase($('base').value);
+  const key = $('key').value.trim();
+  if (!base) return log(t('请先填服务地址'), 'bad');
+  if (!key) return log(t('请先填 API Key'), 'bad');
+  $(button).disabled = true;
+  let tabId, marker;
+  try {
+    const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
+    if (!tabAtOrigin(tab, [origin])) {
+      return log(t('请在当前窗口打开 {site} 后重试。', {site}), 'bad');
+    }
+    if (tab.incognito) return log(t('请在专用 Chrome 的普通窗口中连接网页服务。'), 'bad');
+    log(t('正在验证 {site} 标签页…', {site}));
+    tabId = tab.id;
+    marker = [...crypto.getRandomValues(new Uint8Array(16))]
+      .map(byte => byte.toString(16).padStart(2, '0')).join('');
+    const [marked] = await chrome.scripting.executeScript({
+      target: {tabId},
+      args: [origin, marker],
+      func: (expected, nonce) => {
+        if (location.origin !== expected) return false;
+        document.documentElement.dataset.mac2apiLink = nonce;
+        return true;
+      },
+    });
+    if (!marked?.result) return log(t('请在当前窗口打开 {site} 后重试。', {site}), 'bad');
+    const response = await fetch(base + '/admin/web-providers/' + provider + '/link', {
+      method: 'POST',
+      redirect: 'error',
+      headers: {'Content-Type': 'application/json', Authorization: 'Bearer ' + key},
+      body: JSON.stringify({marker}),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok !== true || data.provider !== provider) {
+      return log(typeof data.detail === 'string' ? t(data.detail)
+        : t('连接失败 (HTTP {status})', {status: response.status}), 'bad');
+    }
+    await saveCfg();
+    log(t('已验证 {site} 标签页。请在控制台对应页签试聊。', {site}), 'ok');
+  } catch (error) {
+    log(error.message, 'bad');
+  } finally {
+    if (tabId !== undefined && marker) {
+      await chrome.scripting.executeScript({
+        target: {tabId},
+        args: [origin, marker],
+        func: (expected, nonce) => {
+          if (location.origin === expected && document.documentElement.dataset.mac2apiLink === nonce) {
+            delete document.documentElement.dataset.mac2apiLink;
+          }
+        },
+      }).catch(() => {});
+    }
+    $(button).disabled = false;
+  }
+}
+
 applyLang();
 $('langSel').addEventListener('change', (e) => setLang(e.target.value));
 $('go').addEventListener('click', run);
+for (const [provider, {button}] of Object.entries(WEB_BUTTONS)) {
+  $(button).addEventListener('click', () => linkWebProvider(provider));
+}
 loadCfg();

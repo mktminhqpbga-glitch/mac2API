@@ -59,6 +59,7 @@ class WebProviderError(RuntimeError):
 class WebProviders:
     def __init__(self, port: int):
         self.port = port
+        self.linked_at: dict[str, int] = {}
 
     @contextmanager
     def _page(self, provider: WebProvider):
@@ -106,6 +107,49 @@ class WebProviders:
         provider = PROVIDERS[provider_id]
         with self._page(provider) as page:
             self._wait_composer(page, provider, time.monotonic() + 15)
+
+    def link(self, provider_id: str, marker: str) -> int:
+        """Verify that the extension's active tab belongs to this local browser."""
+        if not self.port:
+            raise WebProviderError("Chưa cấu hình cổng Chrome Web trên máy chạy mac2API.", 503)
+        provider = PROVIDERS[provider_id]
+        origin = _origin(provider.url)
+        base = f"http://127.0.0.1:{self.port}"
+        try:
+            with requests.Session() as session:
+                session.trust_env = False
+                response = session.get(base + "/json/list", timeout=5, allow_redirects=False)
+                response.raise_for_status()
+                tabs = response.json()
+        except (requests.RequestException, ValueError) as exc:
+            raise WebProviderError("Không kết nối được với Chrome trên máy chạy mac2API.", 503) from exc
+
+        for tab in tabs:
+            if tab.get("type") != "page" or _origin(tab.get("url", "")) != origin:
+                continue
+            target = tab.get("id")
+            if not isinstance(target, str) or not re.fullmatch(r"[a-zA-Z0-9_-]+", target):
+                continue
+            try:
+                page = CDP(f"ws://127.0.0.1:{self.port}/devtools/page/{target}", timeout=3, suppress_origin=True)
+                try:
+                    matched = page.js(f"""(() => {{
+                        if (location.origin !== {json.dumps(origin)}) return false;
+                        const root = document.documentElement;
+                        if (root.dataset.mac2apiLink !== {json.dumps(marker)}) return false;
+                        delete root.dataset.mac2apiLink;
+                        return true;
+                    }})()""")
+                    if matched is True:
+                        self._wait_composer(page, provider, time.monotonic() + 5)
+                        checked = int(time.time())
+                        self.linked_at[provider_id] = checked
+                        return checked
+                finally:
+                    page.close()
+            except (OSError, TimeoutError):
+                continue
+        raise WebProviderError("Tab này không thuộc Chrome mà mac2API đang kết nối. Hãy mở tiện ích trong hồ sơ Chrome riêng trên cùng máy.", 409)
 
     def generate(self, provider_id: str, prompt: str, *, image: bool, timeout: int):
         provider = PROVIDERS[provider_id]
