@@ -64,7 +64,7 @@ async def run():
             response = await client.get("/admin/chat-providers")
             assert response.status_code == 401
             initial = await client.get("/v1/models", headers=auth)
-            assert len(initial.json()["data"]) == 3
+            assert len(initial.json()["data"]) == 6
             legacy = await client.post("/v1/chat/completions", headers=auth, json={
                 "model": "gpt-4o", "messages": [{"role": "user", "content": "Xin chao"}],
             })

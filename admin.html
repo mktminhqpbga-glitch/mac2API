@@ -289,8 +289,8 @@
 
   <nav class="tabs">
     <button class="active" data-t="pool">账号池</button>
-    <button data-t="openai">OpenAI (ChatGPT)</button>
-    <button data-t="gemini">Google Gemini</button>
+    <button data-t="openai">ChatGPT Web</button>
+    <button data-t="gemini">Gemini Web</button>
     <button data-t="cookie">获取 Cookie</button>
     <button data-t="tasks">任务记录</button>
     <button data-t="media">媒体库</button>
@@ -308,17 +308,8 @@
       <h3 data-provider-title></h3>
       <p class="hint" data-provider-status role="status"></p>
       <p class="hint" data-provider-model-id></p>
-      <form data-provider-settings>
-        <div class="row">
-          <label>Model mặc định <input name="model" required maxlength="200"></label>
-          <label>API Key của nhà cung cấp <input name="providerKey" type="password" autocomplete="new-password" maxlength="4096" placeholder="Để trống để giữ khóa hiện tại"></label>
-        </div>
-        <div class="row">
-          <button type="submit">Lưu cấu hình</button>
-          <button type="button" class="ghost" data-provider-test>Kiểm tra kết nối và model</button>
-          <button type="button" class="ghost" data-provider-remove>Xóa khóa đã lưu</button>
-        </div>
-      </form>
+      <p class="hint">Đăng nhập trong hồ sơ Chrome riêng trên máy chạy mac2API. Sau đó kiểm tra kết nối với phiên web.</p>
+      <button type="button" class="ghost" data-provider-test>Kiểm tra phiên trình duyệt</button>
     </div>
     <div class="card">
       <h3>Thử chat</h3>
@@ -1321,6 +1312,7 @@ const I18N_EN_HTML = {
 };
 /* 含变量的文案：[正则源码, 替换串]，按顺序匹配整段文本 */
 const I18N_EN_PATTERNS = ([
+  ["参考素材上传未确认\\s*[（(]\\s*(\\d+)\\s*/\\s*(\\d+)\\s*[）)]\\s*[，,]\\s*已停止生成", "Muse did not confirm the reference files ($1/$2) within 30 seconds. The generation request was not sent."],
   ["账号代理请求失败 \\((.*?)\\)；请检查代理连接或认证，未回退直连", "Account proxy request failed ($1); check the proxy connection or credentials. Direct fallback was not used"],
   ["经账号代理唤醒或确认 VM 失败 \\((.*?)\\)；未回退直连", "VM wake or verification through the account proxy failed ($1); direct fallback was not used"],
   ["代理异常: (.*)", "Proxy error: $1"],
@@ -1430,6 +1422,7 @@ const I18N_EN_PATTERNS = ([
   ["✗ (.+)", "✗ $1"],
 ]).map(([re, rep]) => [new RegExp('^' + re + '$', 's'), rep]);
 const I18N_VI_PATTERNS = [
+  ["参考素材上传未确认\\s*[（(]\\s*(\\d+)\\s*/\\s*(\\d+)\\s*[）)]\\s*[，,]\\s*已停止生成", "Muse chưa xác nhận tệp tham chiếu ($1/$2) sau 30 giây. Đã dừng trước khi gửi yêu cầu tạo nội dung."],
   ["账号代理请求失败 \\((.*?)\\)；请检查代理连接或认证，未回退直连", "Yêu cầu qua proxy thất bại ($1). Hãy kiểm tra kết nối hoặc xác thực. Tuyến proxy được giữ nguyên"],
   ["经账号代理唤醒或确认 VM 失败 \\((.*?)\\)；未回退直连", "Không thể đánh thức hoặc xác minh máy ảo qua proxy ($1)"],
   ["代理异常: (.*)", "Lỗi proxy: $1"],
@@ -1510,6 +1503,7 @@ const I18N_VI_PATTERNS = [
   ["会话正常 \\(VM: (.*?)\\)", "Phiên hợp lệ (VM: $1)"],
   ["会话有效 · 自动保活 \\(VM: (.*?)\\)", "Phiên hợp lệ · Tự duy trì phiên (VM: $1)"],
   ["任务异常: (.*)", "Lỗi tác vụ: $1"],
+  ["Lỗi tác vụ:\\s*(.*)", "Lỗi tác vụ: $1"],
   ["生成失败: (.*)", "Tạo thất bại: $1"],
   ["助手超时: (.*)", "Hết thời gian chờ trợ lý: $1"],
   ["内部错误: (.*)", "Lỗi nội bộ: $1"],
@@ -2197,80 +2191,55 @@ document.querySelectorAll('nav.tabs button').forEach(b => {
 
 
 const chatProviderPanels = new Map([
-  ['openai', 'OpenAI (ChatGPT)'],
-  ['gemini', 'Google Gemini'],
-].map(([id, title]) => {
-  const panel = $('tab-' + id);
+  ['openai', 'chatgpt', 'ChatGPT Web'],
+  ['gemini', 'gemini-web', 'Gemini Web'],
+].map(([tab, id, title]) => {
+  const panel = $('tab-' + tab);
   panel.append($('chatProviderTemplate').content.cloneNode(true));
   panel.querySelector('[data-provider-title]').textContent = title;
-  const settings = panel.querySelector('[data-provider-settings]');
+  panel.querySelector('[data-provider-model-id]').textContent = 'Mô-đun: ' + id + '/text · ' + id + '/image';
   const test = panel.querySelector('[data-provider-test]');
-  const remove = panel.querySelector('[data-provider-remove]');
   const chat = panel.querySelector('[data-provider-chat]');
+  const send = chat.querySelector('button');
   const status = panel.querySelector('[data-provider-status]');
-  const modelId = panel.querySelector('[data-provider-model-id]');
   const output = panel.querySelector('[data-provider-output]');
-  const model = settings.elements.model;
-  const key = settings.elements.providerKey;
-  const path = '/admin/chat-providers/' + id;
 
   function render(data) {
-    model.value = data.model;
-    modelId.textContent = 'Model dùng qua API: ' + data.model_id;
-    status.textContent = data.key_from_env ? 'Đang dùng khóa từ biến môi trường.' :
-      data.configured ? 'Đã cấu hình API Key.' : 'Chưa cấu hình API Key.';
-    key.disabled = data.key_from_env;
-    test.disabled = !data.configured;
-    remove.disabled = !data.configured || data.key_from_env;
-    chat.querySelector('button').disabled = !data.configured;
+    status.textContent = data.configured ? 'Đã cấu hình cổng Chrome. Hãy kiểm tra phiên trình duyệt.'
+      : 'Chưa cấu hình MUSE2API_WEB_CDP_PORT trên máy chủ.';
+    test.disabled = send.disabled = !data.configured;
   }
-  async function save(removeKey = false) {
-    const body = {model: model.value.trim()};
-    if (removeKey) body.api_key = null;
-    else if (key.value.trim()) body.api_key = key.value.trim();
-    try {
-      const data = await api(path, {method: 'PUT', body: JSON.stringify(body)});
-      key.value = '';
-      render(data);
-      toast(removeKey ? 'Đã xóa khóa.' : 'Đã lưu cấu hình.', 'ok');
-    } catch (error) { toast(error.message, 'bad'); }
-  }
-  settings.onsubmit = event => { event.preventDefault(); save(); };
-  remove.onclick = () => { if (confirm('Xóa API Key đã lưu?')) save(true); };
+  test.disabled = send.disabled = true;
   test.onclick = async () => {
     test.disabled = true;
     try {
-      const data = await api(path + '/test', {method: 'POST'});
-      toast('Đã kết nối và xác minh model ' + data.model_id, 'ok');
-    } catch (error) { toast(error.message, 'bad'); }
+      await api('/admin/web-providers/' + id + '/test', {method: 'POST'});
+      status.textContent = 'Đã kết nối với Chrome và tìm thấy ô chat.';
+    } catch (error) { status.textContent = error.message; }
     finally { test.disabled = false; }
   };
   chat.onsubmit = async event => {
     event.preventDefault();
-    const button = chat.querySelector('button');
     const prompt = chat.elements.prompt.value.trim();
     if (!prompt) return;
-    button.disabled = true;
+    send.disabled = true;
     output.hidden = false;
     output.textContent = 'Đang chờ phản hồi…';
     try {
       const result = await api('/v1/chat/completions', {method: 'POST', body: JSON.stringify({
-        model: id + '/' + model.value.trim(),
-        messages: [{role: 'user', content: prompt}],
+        model: id + '/text', messages: [{role: 'user', content: prompt}],
       })});
-      output.textContent = result.choices[0]?.message?.content || 'Model chưa trả nội dung văn bản.';
+      output.textContent = result.choices[0]?.message?.content || 'Trang web chưa trả lời.';
     } catch (error) { output.textContent = error.message; }
-    finally { button.disabled = false; }
+    finally { send.disabled = false; }
   };
-  return [id, {render, status}];
+  return [tab, {render, status}];
 }));
 
 async function loadChatProvider(id) {
   const {render, status} = chatProviderPanels.get(id);
   try {
-    const {providers} = await api('/admin/chat-providers');
-    const provider = providers.find(item => item.id === id);
-    if (provider) render(provider);
+    render(await api('/admin/web-providers'));
   } catch (error) { status.textContent = error.message; }
 }
 
@@ -2471,6 +2440,7 @@ async function loadPool(){
     }
     $('poolBody').innerHTML = accounts.map(a => {
       const ok = a.ok;
+      const note = t(a.note || '—');
       const badge = !a.enabled ? '<span class="badge mute">已禁用</span>'
                   : ok === true  ? '<span class="badge ok">● 可用</span>'
                   : ok === false ? '<span class="badge bad">● 异常</span>'
@@ -2485,7 +2455,7 @@ async function loadPool(){
         <td>${a.enabled ? '<span class="badge ok">开</span>' : '<span class="badge mute">关</span>'}</td>
         <td class="mono">${a.cookie_count}</td>
         <td class="mono" title="${a.last_used ? fmtTime(a.last_used) : ''}">${ago(a.last_used)}</td>
-        <td class="mono ellip" title="${esc(a.note||'')}">${esc(a.note || '—')}</td>
+        <td class="mono ellip" title="${esc(note)}">${esc(note)}</td>
         <td><div class="acts">
           <button class="ghost mini" onclick="testAcc('${a.id}')">测试</button>
           <button class="ghost mini" onclick="keepaliveOne('${a.id}')" title="静默刷新会话令牌与有效期">保活</button>
@@ -2701,11 +2671,19 @@ async function delAcc(id, label){
 
 /* ================= 任务记录 ================= */
 async function loadTasks(){
+  const translateTaskText = t;
+  const states = {
+    vi: {queued: 'Đang chờ', processing: 'Đang xử lý', completed: 'Hoàn tất', succeeded: 'Hoàn tất', failed: 'Thất bại'},
+    en: {queued: 'Queued', processing: 'Processing', completed: 'Completed', succeeded: 'Completed', failed: 'Failed'},
+    zh: {queued: '排队', processing: '处理中', completed: '已完成', succeeded: '已完成', failed: '失败'},
+  };
   try{
     const d = await api('/admin/tasks?limit=60');
     const ts = d.tasks || [];
     $('taskCount').textContent = ts.length;
     if (!ts.length){ $('taskBody').innerHTML = '<tr><td colspan="8" class="empty">暂无任务记录</td></tr>'; return; }
+    const openErrors = new Set([...$('taskBody').querySelectorAll('details[data-task-error][open]')]
+      .map(detail => detail.dataset.taskError));
     $('taskBody').innerHTML = ts.map(t => {
       const cls = (t.status === 'succeeded' || t.status === 'completed') ? 'ok' : t.status === 'failed' ? 'bad'
                 : t.status === 'processing' ? 'info' : 'warn';
@@ -2713,12 +2691,21 @@ async function loadTasks(){
       const accountText = accountLabel ? accountLabel + ' (' + t.account + ')' : t.account;
       let out = '—';
       if (t.result && t.result.url) out = `<a href="${esc(t.result.url)}" target="_blank">查看结果</a> <span class="mono">${fmtBytes(t.result.bytes)}</span>`;
-      else if (t.error) out = `<span style="color:var(--bad)">${esc(t.error).slice(0,120)}</span>`;
+      else if (t.error || t.last_error) {
+        const message = translateTaskText(t.error || t.last_error);
+        const previous = t.last_error && translateTaskText(t.last_error);
+        const detailLabel = LANG === 'vi' ? 'Chi tiết lỗi' : LANG === 'en' ? 'Error details' : '错误详情';
+        const previousLabel = LANG === 'vi' ? 'Lỗi ở lần thử gần nhất' : LANG === 'en' ? 'Most recent attempt error' : '最近一次尝试的错误';
+        out = `<details data-task-error="${esc(t.id)}"${openErrors.has(t.id) ? ' open' : ''}><summary style="color:var(--bad)">${esc(detailLabel)}</summary>
+          <div style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(message)}</div>
+          ${previous && previous !== message ? `<div style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(previousLabel)}: ${esc(previous)}</div>` : ''}
+        </details>`;
+      }
       return `<tr>
         <td class="mono">${esc(t.id)}${t.account ? `<br><small>${esc(accountText)} · #${t.attempt || 1}</small>` : ''}</td>
         <td>${t.kind === 'video' ? '<span class="badge info">视频</span>' : '<span class="badge info">图片</span>'}</td>
         <td><span class="ellip" title="${esc(t.prompt)}">${esc(t.prompt)}</span></td>
-        <td><span class="badge ${cls}">${esc(t.status)}</span></td>
+        <td><span class="badge ${cls}">${esc(states[LANG][t.status] || t.status)}</span></td>
         <td class="mono">${taskDuration(t)}</td>
         <td class="mono">${fmtTime(t.created_at)}</td>
         <td>${out}</td>
@@ -3045,9 +3032,13 @@ async function loadRepoStatus(force){
     const lVer = 'v' + (s.local_version || '1.5.0');
     const rVer = 'v' + (s.remote_version || s.local_version || '1.5.0');
 
-    const state = LANG === 'en'
+    const relationLabel = {
+      behind: {vi: 'Bản đang chạy mới hơn nguồn cập nhật', en: 'Installed commit is ahead of source', zh: '当前提交领先于更新源'},
+      diverged: {vi: 'Hai nhánh đã tách, cần gộp thủ công', en: 'Branches diverged; merge manually', zh: '分支已分叉，请手动合并'},
+    }[s.remote_relation];
+    const state = relationLabel?.[LANG] || (LANG === 'en'
       ? (s.has_update ? 'Update available' : s.up_to_date === true ? 'Up to date' : 'Version status unconfirmed')
-      : (s.has_update ? '有更新' : s.up_to_date === true ? '已是最新' : '版本状态待确认');
+      : (s.has_update ? '有更新' : s.up_to_date === true ? '已是最新' : '版本状态待确认'));
     badge.className = 'badge ' + (s.has_update ? 'warn' : s.up_to_date === true ? 'ok' : 'mute');
     badge.textContent = `${t(state)} · ${lVer} (${s.local_sha || 'unknown'})`;
     topBtn.classList.toggle('updpill-alert', !!s.has_update);
@@ -3064,7 +3055,7 @@ async function loadRepoStatus(force){
       (s.check_error ? `<br>${esc(s.check_error)}` : '') +
       (s.managed_deployment ? '<br>此实例通过镜像部署，更新需从上述分支构建并切换容器。' : '');
     for (const id of ['btnRepoPull', 'btnBannerUpgrade']) {
-      const btn = $(id); if (btn) btn.disabled = !!s.managed_deployment;
+      const btn = $(id); if (btn) btn.disabled = !!s.managed_deployment || !s.has_update || !!s.local_dirty;
     }
 
     let html = '';
@@ -3088,6 +3079,7 @@ async function loadRepoStatus(force){
 
 async function upgradeNow(){
   if (_lastRepoStatus?.managed_deployment) return toast('此实例通过镜像部署，请从配置的仓库分支更新容器', 'warn');
+  if (!_lastRepoStatus?.has_update || _lastRepoStatus.local_dirty) return;
   const upgradePrompt = (LANG === 'en' ? 'Update and restart from ' : LANG === 'vi' ? 'Cập nhật và khởi động lại từ ' : '确定从 ')
     + (_lastRepoStatus?.repo_url || '') + ' / ' + (_lastRepoStatus?.repo_ref || 'main')
     + (LANG === 'zh' ? ' 更新并重启服务吗？' : '?');

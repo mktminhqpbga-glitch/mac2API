@@ -59,9 +59,9 @@ with tempfile.TemporaryDirectory(prefix="muse-upload-check-", dir=Path.home()) a
         assert page, "fixture Chromium did not start"
         page.send("Page.enable")
         page.send("Runtime.enable")
-        def fixture(legacy=False, history_only=False):
+        def fixture(legacy=False, history_only=False, label="Remove attachment"):
             history = '<div class="chat-user-bubble"><button aria-label="Remove attachment"></button><input type="file"><img src="old.png"></div>'
-            buttons = "" if history_only else '<button aria-label="Remove attachment"></button>' * 2
+            buttons = "" if history_only else f'<button aria-label="{label}"></button>' * 2
             if legacy:
                 composer = '<form>' + buttons + '<div><textarea></textarea><input type="file" multiple><div data-testid="hatch-composer-placeholder-overlay"></div></div></form>'
             else:
@@ -75,11 +75,22 @@ with tempfile.TemporaryDirectory(prefix="muse-upload-check-", dir=Path.home()) a
         if not args.probe_only:
             fixture(legacy=True)
             assert page.js(count_script) == 2
+            for label in ("Xóa tệp đính kèm", "Gỡ ảnh đính kèm", "Loại bỏ tệp đính kèm"):
+                fixture(label=label)
+                assert page.js(count_script) == 2
             fixture(history_only=True)
             assert page.js(count_script) == 0, "history attachments counted as new uploads"
             fixture()
             engine = Engine(SimpleNamespace(profile_dir=home))
             engine.page = page
+            page.js("""document.querySelector('textarea').value = 'stale draft';
+                document.querySelectorAll('section button').forEach(button => button.onclick = () => button.remove());""")
+            engine._clear_attachments()
+            assert page.js(engine._COMPOSER_EMPTY_JS) is True
+            assert page.js("document.querySelectorAll('.chat-user-bubble button').length") == 1
+            fixture()
+            page.js(engine._CLEAR_COMPOSER_JS)
+            assert page.js(engine._COMPOSER_EMPTY_JS) is False, "unresponsive old attachment treated as cleared"
             upload = Path(home) / "fixture.txt"
             upload.write_text("fixture file visible to the browser")
             engine._set_input_files([str(upload)])

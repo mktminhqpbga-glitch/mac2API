@@ -11,7 +11,7 @@ html=Path(args.html).read_bytes()
 VERSION=json.loads((ROOT/'version.json').read_text())['version']
 now=int(time.time())
 accounts=[{'id':'fixture'+str(i).zfill(5),'label':'Fixture-'+str(i),'enabled':True,'ok':True,'essential_ok':True,'cookie_count':12,
- 'proxy':None,'note':'会话有效 · 自动保活 (VM: RUNNING)','last_used':now-43200,'expires_at':now+172800,
+ 'proxy':None,'note':'Lỗi tác vụ: 参考素材上传未确认 (0/1), 已停止生成','last_used':now-43200,'expires_at':now+172800,
  'quota':{'found':True,'plan':'Free plan','weekly_used_pct':29,'extra_left':'1B tokens left','checked_at':now-10000}} for i in range(8)]
 events=[]
 network=[]
@@ -34,7 +34,7 @@ class Handler(BaseHTTPRequestHandler):
   elif path=='/admin/media':
    data={'count':2,'media':[{'name':name,'kind':'video','url':'/v1/media/'+name,'thumbnail_url':'/v1/media/'+name+'/thumbnail','bytes':4000,'mtime':now}for name in ['clip-one.mp4','clip-two.mp4']]};kind='application/json'
   elif path=='/admin/tasks':
-   data={'tasks':[{'id':'fixture-task','kind':'video','prompt':'fixture task','status':'failed','error':'fixture failure','created_at':now-7,'account':'fixture00000','queue_elapsed':2.0,'elapsed':5.0,'total_elapsed':7.0,'attempt':1}]};kind='application/json'
+   data={'tasks':[{'id':'fixture-task','kind':'video','prompt':'fixture task','status':'failed','error':'参考素材上传未确认（0/1），已停止生成','created_at':now-7,'account':'fixture00000','queue_elapsed':2.0,'elapsed':5.0,'total_elapsed':7.0,'attempt':1}]};kind='application/json'
   elif path.endswith('/thumbnail'):data=thumbnail_bytes;kind='image/jpeg'
   elif path.endswith('.mp4'):data=video_bytes;kind='video/mp4'
   else:data={'browser_running':True,'media_count':2,'status':'ok','generation_queue':{'queue_timeout':3600},'config':{'image_timeout':240,'video_timeout':600}};kind='application/json'
@@ -113,6 +113,13 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
    wait("document.querySelector('#taskBody').textContent.includes('fixture-task')")
    text=page.js("document.querySelector('#tab-tasks tbody').innerText")
    check('Fixture-0' in text,lang+': task account is not visible')
+   page.js("document.querySelector('#taskBody summary').click()")
+   message = {'vi': 'Muse chưa xác nhận tệp tham chiếu (0/1)',
+              'en': 'Muse did not confirm the reference files (0/1)',
+              'zh': '参考素材上传未确认（0/1）'}[lang]
+   wait(f"document.querySelector('#taskBody details[open]').innerText.includes({json.dumps(message)})")
+   page.js("loadTasks()",await_promise=True)
+   check(page.js("Boolean(document.querySelector('#taskBody details[open]'))"),lang+': error details collapsed on refresh')
    for word in {'en': ['Queue','Generate','Total'], 'vi': ['Chờ','Tạo','Tổng'], 'zh': ['排队','生成','总计']}[lang]:check(word in text,lang+': task duration missing '+word)
    server_state['mode']='unknown'
    page.js("loadRepoStatus(true)",await_promise=True)
@@ -121,6 +128,8 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
    if lang=='en':check('unconfirmed'in badge.lower(),'en: unknown state is not localized')
    server_state['mode']='update'
    page.js("loadRepoStatus(true);goTab('pool')")
+   if lang == 'vi':
+    wait("document.querySelector('#poolBody td.ellip')?.title.includes('Lỗi tác vụ: Muse chưa xác nhận tệp tham chiếu (0/1)')")
    print('UI_FEATURE_PROBE',lang,json.dumps({'errors':feature_errors,'original_video_requests':[x['path']for x in network if x['path'].endswith('.mp4')]}),flush=True)
    for width in ([1920] if args.probe_only else [2560,1920,1536,1440,1366,1280,768,390,320]):
     page.send('Emulation.setDeviceMetricsOverride',{'width':width,'height':1080,'deviceScaleFactor':1,'mobile':False})

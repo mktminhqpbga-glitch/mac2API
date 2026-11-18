@@ -51,7 +51,7 @@ with tempfile.TemporaryDirectory(prefix='muse-media-test-', dir=Path.home(), ign
    engine._download_fallback('selected',timeout=0)
   else:engine._download_fallback(timeout=0)
   global_click=page.js('window.wrongDownload')
-  page.js('''document.body.innerHTML=`<button aria-label="Remove attachment" id="outside"></button><form><div data-testid="hatch-composer-placeholder-overlay"></div><input type="file"></form>`;
+  page.js('''document.body.innerHTML=`<button aria-label="Remove attachment" id="outside"></button><form><div data-testid="hatch-composer-placeholder-overlay"></div><textarea></textarea><input type="file"></form>`;
     document.querySelector('input').addEventListener('change',function(e){
       for (var i=0;i<e.target.files.length;i++) {
         var b=document.createElement('button');b.setAttribute('aria-label','Remove attachment');

@@ -15,8 +15,8 @@ class CDPError(RuntimeError):
 
 
 class CDP:
-    def __init__(self, ws_url: str, timeout: float = 90.0, max_size: int = 256 << 20):
-        self.ws = websocket.create_connection(ws_url, timeout=timeout, max_size=max_size)
+    def __init__(self, ws_url: str, timeout: float = 90.0, max_size: int = 256 << 20, *, suppress_origin: bool = False):
+        self.ws = websocket.create_connection(ws_url, timeout=timeout, max_size=max_size, suppress_origin=suppress_origin)
         self.timeout = timeout
         self._id = 0
         self._lock = threading.Lock()

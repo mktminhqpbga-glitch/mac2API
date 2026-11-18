@@ -118,11 +118,27 @@ Dùng `images` để gửi ảnh tham chiếu cho video. Ảnh đầu tiên là 
 
 Trong **Quản lý tài khoản**, chọn **Ngôn ngữ chỉ dẫn Muse** rồi bấm **Lưu ngôn ngữ chỉ dẫn**. Có ba lựa chọn là tiếng Việt (mặc định), tiếng Anh và tiếng Trung. Cài đặt lưu trong `data/muse-prompt.json`, áp dụng cho yêu cầu Muse mới và giữ nguyên prompt đầu vào. Phần chỉ dẫn tạo ảnh/video đề nghị Muse xác nhận bằng ngôn ngữ đã chọn. Muse tự quyết định lời đáp thực tế. Chat chỉ có một tin nhắn người dùng vẫn gửi trực tiếp. Khóa và tin nhắn gửi tới OpenAI hoặc Gemini sử dụng luồng riêng.
 
-## OpenAI (ChatGPT) và Google Gemini
+## ChatGPT Web và Gemini Web
 
-Trong bảng quản trị, mở mục **OpenAI (ChatGPT)** hoặc **Google Gemini**, nhập API Key của chính nhà cung cấp và model bạn có quyền sử dụng, rồi bấm **Lưu cấu hình**. **Kiểm tra kết nối và model** đọc thông tin model mà không gửi prompt. **Thử chat** gửi yêu cầu thực tế và có thể tính phí theo gói API. Thuê bao ChatGPT Plus và API OpenAI được thanh toán riêng.
+Các mô-đun mới dùng một Base URL và khóa mac2API. `muse/text`, `chatgpt/text` và `gemini-web/text` dùng `/v1/chat/completions`. `muse/image`, `chatgpt/image` và `gemini-web/image` dùng `/v1/images/generations` hoặc `/v1/images/tasks`. `muse/video` dùng `/v1/videos`. Tên Muse cũ vẫn dùng được.
 
-Có thể cấp khóa qua `OPENAI_API_KEY` hoặc `GEMINI_API_KEY`. Khóa từ môi trường được ưu tiên. Model mặc định có thể đặt qua `OPENAI_MODEL` hoặc `GEMINI_MODEL` trước khi lưu cấu hình trong bảng quản trị. Khóa nhập trên bảng quản trị được lưu tại `data/chat-providers.json` và chỉ ghi xuống máy chủ. Hãy bảo vệ thư mục dữ liệu và bản sao lưu. Khi nhập khóa từ xa, dùng HTTPS hoặc đường hầm SSH.
+Chạy mac2API và Chrome riêng trực tiếp trên cùng máy. Ví dụ trên macOS:
+
+```bash
+open -na "Google Chrome" --args --remote-debugging-port=19211 --user-data-dir="$HOME/.mac2api-web-profile"
+```
+
+Trong cửa sổ vừa mở, đăng nhập ChatGPT và Gemini bằng tài khoản bạn muốn dùng, rồi giữ Chrome mở. Đặt `MUSE2API_WEB_CDP_PORT=19211` cho mac2API và khởi động lại dịch vụ. Vào tab tương ứng và bấm **Kiểm tra phiên trình duyệt**, rồi thử chat. Chỉ dùng cổng DevTools cục bộ. Bản mac2API trên Render không tự dùng được Chrome trên máy Mac.
+
+Các mô-đun web tạo một ảnh từ mô tả, tùy quyền của tài khoản. Chat web lấy câu trả lời hoàn chỉnh rồi mới trả về, kể cả khi client yêu cầu SSE. Mỗi yêu cầu mở và đóng tab riêng. Khả năng hoạt động phụ thuộc vào giao diện của từng trang web.
+
+Để thêm nhà cung cấp media trong MacFlow/Toonflow, nhập [mac2Api.ts](adapters/mac2Api.ts). Tệp này khai báo mô-đun ảnh và video. Các mô-đun chat dùng cấu hình nhà cung cấp văn bản với giao thức OpenAI Chat Completions.
+
+## Tương thích với kết nối API chính thức đã có
+
+Các model dạng `openai/<model>` và `gemini/<model>` dành cho ứng dụng đã cấu hình khóa API chính thức. Các lệnh gọi này có thể tính phí theo gói API. Thuê bao ChatGPT Plus và API OpenAI được thanh toán riêng.
+
+Có thể cấp khóa qua `OPENAI_API_KEY` hoặc `GEMINI_API_KEY`. Khóa từ môi trường được ưu tiên. Model mặc định có thể đặt qua `OPENAI_MODEL` hoặc `GEMINI_MODEL`. Khóa API đã cấu hình ở các bản trước được lưu tại `data/chat-providers.json` và chỉ ghi xuống máy chủ. Hãy bảo vệ thư mục dữ liệu và bản sao lưu. Khi nhập khóa từ xa, dùng HTTPS hoặc đường hầm SSH.
 
 Cả hai cùng dùng `POST /v1/chat/completions` với API Key của **MUSE2API** trong header. Thêm tiền tố vào tên model để chọn nhà cung cấp. Ví dụ `openai/gpt-4.1-mini` hoặc `gemini/gemini-2.5-flash`. Thay model theo danh sách tài khoản của bạn. Bật `"stream":true` để nhận SSE. `GET /v1/models` hiển thị model mặc định của các nhà cung cấp đã cấu hình.
 

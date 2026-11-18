@@ -58,7 +58,8 @@ from engine import MuseProxyError, MuseSessionUnavailable
 from store import Store, account_expiry, min_expiry
 from generation_timing import QueuePolicy, QueueSettings, TaskTiming
 from proxy import normalize_server, request_proxy_context, split_proxy_url
-from media_storage import CAPACITY_BYTES, CLEANUP_BYTES, delete_media_file, media_entries, prune_media
+from media_storage import CAPACITY_BYTES, CLEANUP_BYTES, delete_media_file, media_entries, prune_media, save_media
+from web_providers import PROVIDERS as WEB_PROVIDERS, WebProviderError, WebProviders
 from thumbnails import (VIDEO_FORMATS, ThumbnailUnavailable,
                         source_version, video_thumbnail)
 
@@ -91,6 +92,69 @@ app.add_middleware(CORSMiddleware,
 
 store = Store(CFG)
 chat_providers = ChatProviders(CFG.data_dir)
+if CFG.web_cdp_port and (not 1 <= CFG.web_cdp_port <= 65535 or CFG.web_cdp_port == CFG.cdp_port):
+    raise ValueError("MUSE2API_WEB_CDP_PORT must be separate from the Muse CDP port")
+web_providers = WebProviders(CFG.web_cdp_port)
+MODULES = {f"muse/{kind}": ("muse", kind) for kind in ("text", "image", "video")}
+MODULES.update({f"{provider}/{kind}": (provider, kind)
+                for provider in WEB_PROVIDERS for kind in ("text", "image")})
+
+
+def _module_provider(model: str, kind: str) -> str | None:
+    route = MODULES.get(model)
+    if route is None:
+        if model.partition("/")[0] in WEB_PROVIDERS and "/" in model:
+            raise HTTPException(404, "Không tìm thấy mô-đun web đã chọn.")
+        return None
+    provider, expected = route
+    if expected != kind:
+        raise HTTPException(400, "Mô-đun không phù hợp với loại tác vụ ở endpoint này.")
+    return provider if provider in WEB_PROVIDERS else None
+
+
+def _web_call(fn, *args, on_acquired=None, on_queue=None, **kwargs):
+    queued_at = time.monotonic()
+    acquired = GEN_LOCK.acquire(timeout=QUEUE_POLICY.settings()["queue_timeout"] or None)
+    try:
+        if on_queue:
+            on_queue(time.monotonic() - queued_at)
+        if not acquired:
+            raise HTTPException(429, "Hết thời gian chờ khe xử lý.")
+        if on_acquired:
+            on_acquired()
+        return fn(*args, **kwargs)
+    except WebProviderError as error:
+        raise HTTPException(error.status, str(error)) from error
+    finally:
+        if acquired:
+            GEN_LOCK.release()
+
+
+def _run_web_image(provider, prompt, timeout, **callbacks):
+    data, ext = _web_call(web_providers.generate, provider, prompt, image=True,
+                          timeout=timeout, **callbacks)
+    name = uuid.uuid4().hex + ext
+    try:
+        path, size = save_media(CFG.media_dir, name, data=data)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(507, "Không lưu được ảnh vào kho media.") from exc
+    return {"filename": name, "path": path, "size": size, "kind": "image"}
+
+
+def _image_module(req):
+    provider = _module_provider(req.model, "image")
+    if provider and (req.n != 1 or _image_references(req)):
+        raise HTTPException(400, "Mô-đun web hiện tạo một ảnh từ văn bản và chưa nhận ảnh tham chiếu.")
+    return provider
+
+
+def _web_image_prompt(req):
+    lines = [req.prompt]
+    if req.aspect_ratio or req.size:
+        lines.append(f"Kích thước hoặc tỷ lệ mong muốn: {req.aspect_ratio or req.size}.")
+    if req.extra:
+        lines.append(req.extra)
+    return "\n".join(lines)
 engine = MuseEngine(CFG)
 engine.proxy_resolver = lambda aid: (store.get_account(aid) or {}).get("proxy")
 
@@ -1417,7 +1481,12 @@ def models(_=Depends(auth)):
         {"id": item["model_id"], "object": "model", "owned_by": item["id"]}
         for item in chat_providers.status() if item["configured"]
     ]
-    return {"object": "list", "data": [*MODELS, *external]}
+    modules = [
+        {"id": model, "object": "model", "owned_by": provider, "type": kind}
+        for model, (provider, kind) in MODULES.items()
+        if provider == "muse" or web_providers.port
+    ]
+    return {"object": "list", "data": [*MODELS, *modules, *external]}
 
 
 # ------------------------- 生图 -------------------------
@@ -1462,6 +1531,7 @@ def _queue_image(req: ImageRequest, prompt: str, reference_images: list[str],
     """Opt-in polling avoids reverse-proxy timeouts; no generation is repeated by polling."""
     if idempotency_key and len(idempotency_key) > 256:
         raise HTTPException(400, "Idempotency-Key too long")
+    web_provider = _image_module(req)
     key_hash = hashlib.sha256(idempotency_key.encode()).hexdigest() if idempotency_key else None
     request_hash = hashlib.sha256(json.dumps(
         {"request": req.model_dump(by_alias=True), "references": reference_images},
@@ -1494,12 +1564,17 @@ def _queue_image(req: ImageRequest, prompt: str, reference_images: list[str],
             timing.acquired()
             store.update_task(tid, progress=5)
         try:
-            res, acc_id = _run_generation(
-                prompt, "image", req.timeout or CFG.image_timeout,
-                reference_images=reference_images,
-                on_progress=lambda p: store.update_task(tid, progress=p),
-                on_acquired=_on_acquired, on_account=timing.account,
-                on_queue=timing.queued, on_error=timing.error)
+            if web_provider:
+                res = _run_web_image(web_provider, prompt, req.timeout or CFG.image_timeout,
+                                     on_acquired=_on_acquired, on_queue=timing.queued)
+                acc_id = None
+            else:
+                res, acc_id = _run_generation(
+                    prompt, "image", req.timeout or CFG.image_timeout,
+                    reference_images=reference_images,
+                    on_progress=lambda p: store.update_task(tid, progress=p),
+                    on_acquired=_on_acquired, on_account=timing.account,
+                    on_queue=timing.queued, on_error=timing.error)
             # Store only media metadata, not large base64 payloads or reference credentials.
             store.update_task(tid, status="completed", progress=100, account=acc_id,
                               **timing.finish(),
@@ -1519,6 +1594,9 @@ def _queue_image(req: ImageRequest, prompt: str, reference_images: list[str],
 @app.post("/v1/images/tasks")
 def create_image_task(req: ImageRequest,
                       idempotency_key: str | None = Header(default=None), _=Depends(auth)):
+    provider = _image_module(req)
+    if provider:
+        return _queue_image(req, _web_image_prompt(req), [], idempotency_key)
     refs = _prepare_reference_images(_image_references(req))
     return _queue_image(req, build_image_prompt(req, _reference_kinds(refs), language=store.muse_prompt_language()), refs, idempotency_key)
 
@@ -1538,6 +1616,13 @@ def get_image_task(task_id: str, _=Depends(auth)):
 
 @app.post("/v1/images/generations")
 async def images_generations(req: ImageRequest, _=Depends(auth)):
+    provider = _image_module(req)
+    if provider:
+        prompt = _web_image_prompt(req)
+        if req.async_:
+            return _queue_image(req, prompt, [])
+        res = await asyncio.to_thread(_run_web_image, provider, prompt, req.timeout or CFG.image_timeout)
+        return _image_response(req, res)
     ref_images = await asyncio.to_thread(
         _prepare_reference_images, _image_references(req))
 
@@ -1637,6 +1722,8 @@ async def images_edits(request: Request, _=Depends(auth)):
         images=ref_image_data,
         **{"async": async_mode}
     )
+    if _module_provider(req_obj.model, "image"):
+        raise HTTPException(400, "Mô-đun web chưa hỗ trợ chỉnh sửa ảnh.")
     ref_image_data = await asyncio.to_thread(
         _prepare_reference_images, ref_image_data)
     full_prompt = build_image_prompt(req_obj, _reference_kinds(ref_image_data), language=store.muse_prompt_language())
@@ -1659,6 +1746,7 @@ async def images_edits(request: Request, _=Depends(auth)):
 @app.post("/v1/videos")
 @app.post("/v1/videos/generations")
 async def create_video(req: VideoRequest, _=Depends(auth)):
+    _module_provider(req.model, "video")
     ref_images = await asyncio.to_thread(
         _prepare_reference_images, _video_references(req))
 
@@ -1779,6 +1867,30 @@ async def chat_completions(req: ChatRequest, request: Request, _=Depends(auth)):
 
     对话与生图/生视频共用同一个浏览器实例，靠 `GEN_LOCK` 串行。
     """
+    web_provider = _module_provider(req.model, "text")
+    if web_provider:
+        if req.tools or any(isinstance(msg.content, list) and any(
+            isinstance(part, dict) and part.get("type") not in (None, "text", "input_text", "output_text")
+            for part in msg.content
+        ) for msg in req.messages):
+            raise HTTPException(400, "Mô-đun web chỉ nhận văn bản và chưa hỗ trợ gọi công cụ.")
+        prompt = build_chat_prompt(req.messages, language="vi") or (req.prompt or "").strip()
+        if not prompt:
+            raise HTTPException(400, "Hãy nhập nội dung chat.")
+        timeout = max(1, min(req.timeout or CFG.chat_timeout, 600))
+        text = await asyncio.to_thread(_web_call, web_providers.generate, web_provider, prompt,
+                                       image=False, timeout=timeout)
+        cid, created = "chatcmpl-" + uuid.uuid4().hex, int(time.time())
+        if req.stream:
+            return StreamingResponse(iter((
+                _sse(_chat_chunk(cid, created, req.model, {"role": "assistant", "content": text})),
+                _sse(_chat_chunk(cid, created, req.model, {}, finish="stop")),
+                "data: [DONE]\n\n",
+            )), media_type="text/event-stream", headers=_SSE_HEADERS)
+        return {"id": cid, "object": "chat.completion", "created": created, "model": req.model,
+                "choices": [{"index": 0, "finish_reason": "stop",
+                             "message": {"role": "assistant", "content": text}}]}
+
     provider_route = chat_providers.route(req.model)
     if provider_route:
         provider, model_id = provider_route
@@ -1800,7 +1912,7 @@ async def chat_completions(req: ChatRequest, request: Request, _=Depends(auth)):
         # 紧贴用户消息之前，模型对末尾指令的遵守度明显更高。
         prompt = prompt + "\n\n" + tool_note
 
-    model = resolve_model(req.model.removeprefix("muse/"), default="muse-spark")
+    model = "muse/text" if req.model == "muse/text" else resolve_model(req.model.removeprefix("muse/"), default="muse-spark")
     timeout = int(req.timeout or CFG.chat_timeout)
     acc = store.pick_account(rotate=True)
     if not acc:
@@ -1958,7 +2070,7 @@ async def responses_api(req: ResponsesRequest, _=Depends(auth)):
     只实现 Codex 实际用到的子集：文本进 → 文本出（含流式事件）。
     muse.ai 不会返回结构化的 tool_calls，关于工具调用的边界见 README。
     """
-    if chat_providers.route(req.model):
+    if _module_provider(req.model, "text") or chat_providers.route(req.model):
         raise HTTPException(400, "Hãy dùng /v1/chat/completions cho OpenAI hoặc Gemini.")
     prompt = build_chat_prompt(_responses_messages(req), language=store.muse_prompt_language())
     if not prompt:
@@ -2084,6 +2196,19 @@ def get_media_thumbnail(name: str):
 
 
 # ------------------------- 管理：总览 -------------------------
+@app.get("/admin/web-providers")
+def list_web_providers(_=Depends(auth)):
+    return {"configured": bool(web_providers.port), "port": web_providers.port}
+
+
+@app.post("/admin/web-providers/{provider}/test")
+async def test_web_provider(provider: str, _=Depends(auth)):
+    if provider not in WEB_PROVIDERS:
+        raise HTTPException(404, "Không tìm thấy nhà cung cấp web.")
+    await asyncio.to_thread(_web_call, web_providers.check, provider)
+    return {"ok": True}
+
+
 @app.get("/admin/chat-providers")
 def list_chat_providers(_=Depends(auth)):
     return {"providers": chat_providers.status()}
@@ -2796,18 +2921,22 @@ def get_keepalive_status(_=Depends(auth)):
 
 
 # ------------------------- 仓库实时更新检测、通知与一键在线升级 -------------------------
-REPO_SLUG = os.environ.get("MUSE2API_REPOSITORY", "czg86389-hub/muse2api")
+REPO_SLUG = os.environ.get("MUSE2API_REPOSITORY", "mktminhqpbga-glitch/mac2API")
 if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", REPO_SLUG):
     raise ValueError("Invalid MUSE2API_REPOSITORY")
 REPO_REF = os.environ.get("MUSE2API_REPO_REF", "main")
 REPO_URL = f"https://github.com/{REPO_SLUG}"
-MANAGED_DEPLOYMENT = os.environ.get("MUSE2API_MANAGED_DEPLOYMENT", "0") == "1"
+MANAGED_DEPLOYMENT = (
+    os.environ.get("MUSE2API_MANAGED_DEPLOYMENT") == "1"
+    or os.environ.get("RENDER", "").lower() == "true"
+    or bool(os.environ.get("RENDER_GIT_COMMIT"))
+)
 TRACKED_REPO_PATHS = [
     "app.py", "engine.py", "store.py", "cdp.py", "config.py", "proxy.py",
-    "generation_timing.py", "thumbnails.py", "media_storage.py", "chat_providers.py", "GENERATION_QUEUE.md", "VERSION_REPORTING.md",
+    "generation_timing.py", "thumbnails.py", "media_storage.py", "chat_providers.py", "web_providers.py", "GENERATION_QUEUE.md", "VERSION_REPORTING.md",
     "admin.html", "README.md", "AGENTS.md", "CHANGELOG.md", "version.json", "requirements.txt",
     "Dockerfile", "docker-compose.yml", ".env.example", ".gitignore",
-    "LICENSE", "extension", "deploy", "tools",
+    "LICENSE", "extension", "deploy", "tools", "adapters",
 ]
 _UPDATE_CACHE: dict[str, Any] = {"ts": 0.0, "data": None}
 
@@ -2859,7 +2988,7 @@ def _git(args: list[str], timeout: int = 30):
 
 
 def _ensure_git_repo(token: str = ""):
-    """确保 BASE_DIR 已初始化为绑定 czg86389-hub/muse2api 的 Git 仓库。"""
+    """Initialize Git for the configured update source."""
     git_dir = os.path.join(BASE_DIR, ".git")
     remote_url = f"https://x-access-token:{token}@github.com/{REPO_SLUG}.git" if token else f"{REPO_URL}.git"
     if not os.path.isdir(git_dir):
@@ -2871,6 +3000,30 @@ def _ensure_git_repo(token: str = ""):
     _git(["config", "user.email", "czg86389-hub@users.noreply.github.com"])
 
 
+def _compare_update_commits(local: str, remote: str, has_git: bool, headers: dict) -> str:
+    """Describe remote relative to local, without fetching or modifying Git."""
+    if not all(re.fullmatch(r"[0-9a-f]{40}", sha) for sha in (local, remote)):
+        return "unknown"
+    if local == remote:
+        return "identical"
+    if has_git:
+        base = _git(["merge-base", local, remote])
+        if base.returncode == 0:
+            ancestor = base.stdout.strip()
+            if ancestor == local:
+                return "ahead"
+            if ancestor == remote:
+                return "behind"
+    import requests
+    response = requests.get(
+        f"https://api.github.com/repos/{REPO_SLUG}/compare/{local}...{remote}",
+        params={"per_page": 1}, headers=headers, timeout=6,
+    )
+    response.raise_for_status()
+    comparison = response.json().get("status")
+    return comparison if comparison in ("ahead", "behind", "diverged") else "unknown"
+
+
 def _check_update_sync(force: bool = False, _auto_upgrade: bool = False) -> dict:
     """A check is read-only. Report installed files and remote state separately."""
     now = time.time()
@@ -2880,7 +3033,7 @@ def _check_update_sync(force: bool = False, _auto_upgrade: bool = False) -> dict
     from urllib.parse import quote
     local = _read_local_version()
     local_version = str(local.get("version") or "unknown")
-    local_sha = os.environ.get("MUSE2API_BUILD_SHA", "").strip()
+    local_sha = (os.environ.get("MUSE2API_BUILD_SHA") or os.environ.get("RENDER_GIT_COMMIT", "")).strip()
     has_git = os.path.exists(os.path.join(BASE_DIR, ".git"))
     if not local_sha and has_git:
         result = _git(["rev-parse", "HEAD"])
@@ -2889,7 +3042,6 @@ def _check_update_sync(force: bool = False, _auto_upgrade: bool = False) -> dict
     if not local_sha and os.path.isfile(_installed_sha_file()):
         with open(_installed_sha_file()) as f:
             local_sha = f.read().strip()
-    local_sha = local_sha[:7]
     local_dirty = False
     if has_git:
         changed = _git(["status", "--porcelain", "--", *TRACKED_REPO_PATHS])
@@ -2928,14 +3080,18 @@ def _check_update_sync(force: bool = False, _auto_upgrade: bool = False) -> dict
         highlights_en = list(remote.get("highlights_en") or [])
     except Exception:
         errors.append("远端版本文件读取失败")
-    verified = bool(local_sha and remote_sha and remote_version)
-    has_update = bool((local_sha and remote_sha and local_sha != remote_sha) or
-                      (remote_version and local_version != remote_version))
+    relation = "unknown"
+    try:
+        relation = _compare_update_commits(local_sha, remote_commit, has_git, headers)
+    except Exception:
+        errors.append("Không xác minh được quan hệ giữa hai commit.")
+    verified = relation != "unknown" and bool(remote_version)
+    has_update = verified and relation == "ahead"
     data = {"repo_url": REPO_URL, "repo_ref": REPO_REF, "has_git": has_git,
-            "local_version": local_version, "local_sha": local_sha,
+            "local_version": local_version, "local_sha": local_sha[:7], "remote_relation": relation,
             "remote_version": remote_version, "remote_sha": remote_sha, "remote_commit": remote_commit,
             "remote_msg": remote_msg, "remote_time": remote_time,
-            "has_update": has_update, "up_to_date": (not has_update and not local_dirty) if verified else None,
+            "has_update": has_update, "up_to_date": (relation in ("identical", "behind") and not local_dirty) if verified else None,
             "local_dirty": local_dirty,
             "check_error": "; ".join(errors), "managed_deployment": MANAGED_DEPLOYMENT,
             "highlights": highlights, "highlights_en": highlights_en,
@@ -2952,7 +3108,12 @@ def _upgrade_from_github_sync() -> dict:
         raise HTTPException(409, "仍有任务排队或运行，请等待任务完成后更新")
     import requests
     import tarfile
-    target = _check_update_sync(force=True, _auto_upgrade=False).get("remote_commit", "")
+    comparison = _check_update_sync(force=True, _auto_upgrade=False)
+    if comparison.get("remote_relation") != "ahead" or not comparison.get("has_update"):
+        raise HTTPException(409, "Chỉ cập nhật khi xác minh được commit từ xa nối tiếp bản đang chạy.")
+    if comparison.get("local_dirty"):
+        raise HTTPException(409, "Mã nguồn có thay đổi cục bộ. Hãy lưu thay đổi trước khi cập nhật.")
+    target = comparison.get("remote_commit", "")
     if not re.fullmatch(r"[0-9a-f]{40}", target):
         raise HTTPException(502, "无法确认远端目标提交，未执行更新")
     upgraded_via = ""
@@ -2991,9 +3152,6 @@ def _upgrade_from_github_sync() -> dict:
         f.write(target)
     _UPDATE_CACHE["ts"] = 0.0
     status = _check_update_sync(force=True, _auto_upgrade=False)
-    status["local_sha"] = target[:7]
-    status["has_update"] = bool(status.get("remote_sha") and status["remote_sha"] != target[:7])
-    status["up_to_date"] = not status["has_update"] if status.get("remote_sha") else None
     return {"ok": True, "via": upgraded_via, "installed_sha": target,
             "message": f"已安装版本 {_read_local_version().get('version')} ({target[:7]})", "status": status}
 

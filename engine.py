@@ -1800,22 +1800,23 @@ class MuseEngine:
                     f"读取本地参考图失败: {type(exc).__name__}") from exc
         raise MuseGenerationError("参考图必须是 URL、Data URL、本地图片或有效 Base64")
 
+    _REMOVE_ATTACHMENT_LABEL = r"remove\s*attachment|移除附件|删除附件|(?:xóa|gỡ|bỏ|loại bỏ)\s+(?:(?:tệp|tập tin|ảnh|nội dung)\s+)?đính kèm"
+
     def _clear_attachments(self):
-        """清除聊天输入框里遗留的附件缩略图（兼容中/英文 UI）。"""
+        """Clear and verify the current composer before preparing new media."""
         try:
-            self.page.js(
-                "(function(){"
-                "var btns=Array.from(document.querySelectorAll('button[aria-label]')).filter(function(b){"
-                "var al=b.getAttribute('aria-label')||'';"
-                "return /remove\\s*attachment|移除附件|删除附件|移除|删除/i.test(al);"
-                "});"
-                "btns.forEach(function(b){b.click();});"
-                "Array.from(document.querySelectorAll('input[type=\"file\"]')).forEach(function(inp){inp.value='';});"
-                "return btns.length;"
-                "})()")
-            time.sleep(0.3)
-        except Exception:
-            pass
+            self.page.js(self._CLEAR_COMPOSER_JS)
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                if self.page.js(self._COMPOSER_EMPTY_JS) is True:
+                    return
+                time.sleep(0.15)
+        except Exception as exc:
+            raise MuseGenerationError(
+                "Không kiểm tra được ô nhập Muse. Đã dừng trước khi gửi yêu cầu.") from exc
+        raise MuseGenerationError(
+            "Ô nhập Muse vẫn còn văn bản hoặc tệp đính kèm cũ, hoặc chưa sẵn sàng. "
+            "Đã dừng trước khi gửi yêu cầu mới.")
 
     # 新版 muse 页面已没有 hatch-composer-placeholder-overlay，也不包 <form>：
     # 输入框所在容器是 textarea 往上第二层，附件的「Remove attachment」按钮在那里。
@@ -1845,17 +1846,44 @@ class MuseEngine:
         return null;
     })()"""
 
-    _ATTACHED_COUNT_JS = "(function(){" + _COMPOSER_ROOTS_JS + """
-        var rx = /remove\\s*attachment|移除附件|删除附件/i;
-        var bubble = '[class*=chat-user-bubble], [class*="group/msg"], [class*=hatch-chat-groupable-bubble]';
-        var roots = __composerRoots();
-        for (var r of roots) {
-            var n = Array.from(r.querySelectorAll('button[aria-label]')).filter(function(b){
-                return rx.test(b.getAttribute('aria-label') || '') && !b.closest(bubble);
-            }).length;
-            if (n) return n;
+    _COMPOSER_ATTACHMENTS_JS = _COMPOSER_ROOTS_JS + f"""
+        const removeLabel = /{_REMOVE_ATTACHMENT_LABEL}/iu;
+        const bubble = '[class*=chat-user-bubble], [class*="group/msg"], [class*=hatch-chat-groupable-bubble]';
+        function currentAttachments() {{
+            for (const root of __composerRoots()) {{
+                const buttons = [...root.querySelectorAll('button[aria-label]')].filter(button =>
+                    removeLabel.test(button.getAttribute('aria-label') || '') && !button.closest(bubble));
+                if (buttons.length) return buttons;
+            }}
+            return [];
+        }}
+    """
+
+    _ATTACHED_COUNT_JS = "(() => {" + _COMPOSER_ATTACHMENTS_JS + "return currentAttachments().length;})()"
+
+    _CLEAR_COMPOSER_JS = "(() => {" + _COMPOSER_ATTACHMENTS_JS + """
+        const textarea = document.querySelector('textarea');
+        if (!textarea) return;
+        if (textarea.value) {
+            const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+            setter.call(textarea, '');
+            textarea.dispatchEvent(new Event('input', {bubbles: true}));
+            textarea.dispatchEvent(new Event('change', {bubbles: true}));
         }
-        return 0;
+        currentAttachments().forEach(button => button.click());
+        for (const root of __composerRoots()) {
+            for (const input of root.querySelectorAll('input[type=file]')) {
+                if (!input.closest(bubble) && input.files?.length) input.value = '';
+            }
+        }
+    })()"""
+
+    _COMPOSER_EMPTY_JS = "(() => {" + _COMPOSER_ATTACHMENTS_JS + """
+        const textarea = document.querySelector('textarea');
+        const roots = __composerRoots();
+        return Boolean(textarea && !textarea.value && !currentAttachments().length
+            && !roots.some(root => [...root.querySelectorAll('input[type=file]')]
+                .some(input => !input.closest(bubble) && input.files?.length)));
     })()"""
 
     def _set_input_files(self, paths: list[str]):
@@ -1864,7 +1892,7 @@ class MuseEngine:
             "expression": self._FILE_INPUT_JS, "returnByValue": False})
         object_id = (res.get("result", {}).get("result", {}) or {}).get("objectId")
         if not object_id:
-            raise MuseGenerationError("找不到上传控件，已停止生成")
+            raise MuseGenerationError("Không tìm thấy ô tải tệp của Muse. Đã dừng trước khi gửi yêu cầu tạo nội dung.")
         self.page.send("DOM.setFileInputFiles",
                        {"files": paths, "objectId": object_id}, timeout=60)
 
@@ -1916,7 +1944,7 @@ class MuseEngine:
             raise
         except Exception as e:
             shutil.rmtree(upload_dir, ignore_errors=True)
-            raise MuseGenerationError("附加参考素材失败，已停止生成") from e
+            raise MuseGenerationError("Không thể đưa tệp tham chiếu vào ô tải lên của Muse. Đã dừng trước khi gửi yêu cầu tạo nội dung.") from e
 
         try:
             # A remove button proves attachment presence, not upstream processing success.
@@ -1924,12 +1952,15 @@ class MuseEngine:
             attached_count = 0
             while time.monotonic() < deadline:
                 attached_count = self.page.js(self._ATTACHED_COUNT_JS)
-                if int(attached_count or 0) >= len(files):
+                if int(attached_count or 0) == len(files):
                     break
                 time.sleep(0.3)
             else:
+                confirmed = int(attached_count or 0)
+                log.warning("Muse chưa xác nhận tệp tham chiếu: %s/%s sau 30 giây.", confirmed, len(files))
                 raise MuseGenerationError(
-                    f"参考素材上传未确认（{int(attached_count or 0)}/{len(files)}），已停止生成")
+                    f"Muse chưa xác nhận tệp tham chiếu ({confirmed}/{len(files)}) sau 30 giây. "
+                    "Đã dừng trước khi gửi yêu cầu tạo nội dung.")
             time.sleep(0.5)
             return {"dir": upload_dir, "hashes": hashes}
         except Exception:

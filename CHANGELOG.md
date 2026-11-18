@@ -1,5 +1,21 @@
 # Nhật ký và bàn giao mac2API
 
+## Dọn bản nháp và hiển thị lỗi Muse
+
+- Trước khi tạo ảnh/video, xác nhận ô nhập đã hết văn bản và tệp cũ. Bỏ qua tệp trong lịch sử. Nếu không xác minh được, dừng trước khi gửi.
+- Ghi chú tài khoản và chi tiết tác vụ dịch lỗi tải tệp tham chiếu cũ sang tiếng Việt. Khi có lỗi mới, nhật ký ghi số tệp đã xác nhận mà không ghi nội dung tệp.
+
+## Mô-đun web và tệp nhập MacFlow/Toonflow
+
+- Thêm định tuyến `muse/text`, `muse/image`, `muse/video`, `chatgpt/text`, `chatgpt/image`, `gemini-web/text` và `gemini-web/image` qua cùng API. Các tên Muse cũ và API chính thức đã cấu hình tiếp tục hoạt động.
+- ChatGPT Web và Gemini Web dùng hồ sơ Chrome đã đăng nhập trên cùng máy qua cổng DevTools cục bộ. Đã kiểm thử Chromium trên trang mô phỏng. Cần xác minh bằng tài khoản web thật trong môi trường của người dùng.
+- Tệp [mac2Api.ts](adapters/mac2Api.ts) cho màn hình nhập nhà cung cấp media. Adapter tạo và thăm dò tác vụ ảnh/video, lưu mã tác vụ để tiếp tục, hỗ trợ hủy chờ và dùng xác thực của mac2API.
+
+## Bản sửa kiểm tra cập nhật
+
+- Mặc định theo dõi fork `mktminhqpbga-glitch/mac2API`. Kiểm tra quan hệ commit để phân biệt bản mới, nguồn cũ hơn và nhánh đã tách. Khi không xác minh được, bảng quản trị không cho tự ghi đè.
+- Render lấy SHA từ thông tin bản dựng hoặc `RENDER_GIT_COMMIT`. Triển khai trên Render qua quy trình của Render.
+
 ## Bản làm việc ngày 19/11/2026
 
 - **Chromium tự tắt khi rảnh.** `MUSE2API_CHROMIUM_IDLE_SECONDS` mặc định 60 giây. Đồng hồ tính từ lúc thao tác dùng Chromium cuối cùng trả khe `GEN_LOCK`. Vòng kiểm tra không tắt khi còn khe đang dùng hoặc tác vụ ảnh/video đang chờ. Chỉ tắt tiến trình do ứng dụng khởi động. Yêu cầu Muse sau đó khởi động lại theo luồng sẵn có.
