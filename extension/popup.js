@@ -16,8 +16,8 @@ const ESSENTIAL = ['hatch_sess'];
  * 新增中文文案时，请在 I18N_EN（整句，可含 {name} 占位符）或 I18N_EN_PATTERNS（服务端返回的含变量文案）里补上英文。 */
 const LANG_STORE = 'muse2api_lang';
 const LANG = (() => {
-  try { const v = localStorage.getItem(LANG_STORE); if (v === 'zh' || v === 'en') return v; } catch (e) {}
-  return /^zh\b/i.test(navigator.language || '') ? 'zh' : 'en';
+  try { const v = localStorage.getItem(LANG_STORE); if (v === 'vi' || v === 'zh' || v === 'en') return v; } catch (e) {}
+  return 'vi';
 })();
 function setLang(v) {
   try { localStorage.setItem(LANG_STORE, v); } catch (e) {}
@@ -82,11 +82,46 @@ const I18N_EN_PATTERNS = [
   [/^缺少核心 cookie：(.*)，该账号可能无法生成$/s, 'Missing core cookies: $1; this account may not be able to generate'],
 ];
 
+const I18N_VI = {
+  "Muse2API Cookie 导入": "Nhập cookie Muse2API",
+  "把当前浏览器里 muse.ai 的登录态，一键同步到你的 muse2api 服务。": "Đồng bộ phiên đăng nhập Muse.ai từ trình duyệt này sang dịch vụ Muse2API của bạn.",
+  "服务地址（BASE URL）": "Địa chỉ dịch vụ (BASE URL)",
+  "账号标签（可留空）": "Nhãn tài khoản (tùy chọn)",
+  "例如 muse-main": "Ví dụ: muse-main",
+  "读取并导入": "Đọc và nhập",
+  "请先填服务地址": "Nhập địa chỉ dịch vụ trước",
+  "请先填 API Key": "Nhập API Key trước",
+  "正在读取 muse.ai 的 Cookie…": "Đang đọc cookie Muse.ai…",
+  "无法确认当前窗口的 Cookie 存储区。请在已登录 Muse 的窗口中打开扩展，并确认已允许扩展在无痕/InPrivate 模式运行。": "Không xác định được kho cookie của cửa sổ hiện tại. Hãy mở tiện ích trong cửa sổ đã đăng nhập Muse và cho phép chạy ở chế độ ẩn danh nếu cần.",
+  "正在读取当前{window}窗口的 muse.ai Cookie…": "Đang đọc cookie Muse.ai từ cửa sổ {window} hiện tại…",
+  "无痕/InPrivate": "ẩn danh/InPrivate",
+  "普通": "thông thường",
+  "\nCookie 来源：当前{window}窗口。导入仅保存登录态，请到管理页测试账号。": "\nNguồn cookie: cửa sổ {window} hiện tại. Hãy kiểm tra tài khoản trong trang quản trị sau khi nhập.",
+  "没读到 muse.ai 的 Cookie。\n请先在这个浏览器里打开并登录 https://muse.ai/ ，再回来点一次。": "Không tìm thấy cookie Muse.ai.\nHãy đăng nhập https://muse.ai/ trên trình duyệt này rồi thử lại.",
+  "读到 {n} 条 Cookie，但缺核心项：{missing}\n未读到登录会话，请检查当前浏览器的登录状态和扩展权限。": "Đã đọc {n} cookie nhưng thiếu mục chính: {missing}\nHãy kiểm tra phiên đăng nhập và quyền của tiện ích.",
+  "读到 {n} 条 Cookie，正在上传到 {base} …": "Đã đọc {n} cookie, đang gửi tới {base}…",
+  "API Key 不对（服务返回 401）。\n请到管理页「账号池」页顶部复制正确的 API Key。": "API Key không hợp lệ (HTTP 401).\nHãy sao chép khóa từ mục Quản lý tài khoản trong trang quản trị.",
+  "导入失败：HTTP {status}\n{body}": "Nhập thất bại (HTTP {status})\n{body}",
+  "(自动)": "(tự động)",
+  "未知": "chưa rõ",
+  "✓ 导入成功\n账号标签：{label}\n账号 ID：{id}\nCookie 条数：{count}\n有效期到：{expires}\n": "✓ Đã nhập thành công\nNhãn: {label}\nID tài khoản: {id}\nSố cookie: {count}\nCó hiệu lực đến: {expires}\n",
+  "\n注意：{warning}": "\nLưu ý: {warning}",
+  "出错了：{msg}\n\n常见原因：\n· 服务地址填错或服务没启动\n· 这个地址不是 https（或证书不被信任）\n· 浏览器拦截了跨域请求": "Lỗi: {msg}\n\nHãy kiểm tra địa chỉ dịch vụ, chứng chỉ HTTPS hoặc chính sách truy cập khác nguồn của trình duyệt.",
+  "未解析到任何 cookie，请检查格式": "Không đọc được cookie. Hãy kiểm tra định dạng",
+  "缺少 Authorization: Bearer <key>": "Thiếu Authorization: Bearer <key>",
+  "API key 无效": "API key không hợp lệ"
+};
+const I18N_VI_HTML = {
+  "steps": "<b>Trước khi nhập:</b><br>1. Đăng nhập <a href=\"https://muse.ai/\" target=\"_blank\" rel=\"noopener\">Muse.ai</a> trong cửa sổ này.<br>2. Điền địa chỉ dịch vụ và API Key từ mục Quản lý tài khoản.",
+  "foot": "Tiện ích dùng <code>chrome.cookies</code> để đọc cookie Muse.ai và gửi đến địa chỉ dịch vụ bạn đã nhập."
+};
+
 function t(s, vars) {
   let out = s;
-  if (LANG === 'en' && typeof s === 'string') {
-    if (Object.prototype.hasOwnProperty.call(I18N_EN, s)) out = I18N_EN[s];
-    else for (const [re, rep] of I18N_EN_PATTERNS) if (re.test(s)) { out = s.replace(re, rep); break; }
+  if (LANG !== 'zh' && typeof s === 'string') {
+    const dictionary = LANG === 'vi' ? I18N_VI : I18N_EN;
+    if (Object.prototype.hasOwnProperty.call(dictionary, s)) out = dictionary[s];
+    else for (const [re, rep] of I18N_EN_PATTERNS) if (re.test(s)) { out = s.replace(re, LANG === 'vi' ? 'Thiếu cookie chính: $1. Tài khoản có thể chưa tạo được nội dung' : rep); break; }
   }
   if (vars) out = out.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
   return out;
@@ -94,11 +129,11 @@ function t(s, vars) {
 
 function applyLang() {
   $('langSel').value = LANG;
-  if (LANG !== 'en') return;
-  document.documentElement.lang = 'en';
+  if (LANG === 'zh') return;
+  document.documentElement.lang = LANG;
   document.title = t(document.title);
   document.querySelectorAll('[data-i18n]').forEach((el) => {
-    const html = I18N_EN_HTML[el.dataset.i18n];
+    const html = (LANG === 'vi' ? I18N_VI_HTML : I18N_EN_HTML)[el.dataset.i18n];
     if (html) el.innerHTML = html;
   });
   document.querySelectorAll('[data-i18n-text]').forEach((el) => {
@@ -200,7 +235,7 @@ async function run() {
     if (missing.length) {
       log(t('读到 {n} 条 Cookie，但缺核心项：{missing}\n'
           + '未读到登录会话，请检查当前浏览器的登录状态和扩展权限。',
-          { n: names.length, missing: missing.join(LANG === 'en' ? ', ' : '、') }), 'warn');
+          { n: names.length, missing: missing.join(LANG === 'zh' ? '、' : ', ') }), 'warn');
       return;
     }
 
@@ -234,7 +269,7 @@ async function run() {
           label: a.label || label || t('(自动)'),
           id: a.id || '?',
           count: a.cookie_count || names.length,
-          expires: a.expires_at ? new Date(a.expires_at * 1000).toLocaleString() : t('未知'),
+          expires: a.expires_at ? new Date(a.expires_at * 1000).toLocaleString(LANG) : t('未知'),
         })
         + t('\nCookie 来源：当前{window}窗口。导入仅保存登录态，请到管理页测试账号。', { window: windowKind })
         + (data.warning ? t('\n注意：{warning}', { warning: t(data.warning) }) : ''), 'ok');

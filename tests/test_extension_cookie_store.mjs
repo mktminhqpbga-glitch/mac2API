@@ -5,7 +5,7 @@ import vm from 'node:vm';
 const source = fs.readFileSync(new URL('../extension/popup.js', import.meta.url), 'utf8');
 const cookie = (value, extra = {}) => ({name: 'hatch_sess', value, domain: '.muse.ai', path: '/', httpOnly: true, ...extra});
 
-function fixture({incognito = false, tab = true, stores, cookies, language = 'zh-CN'} = {}) {
+function fixture({incognito = false, tab = true, stores, cookies, locale = null} = {}) {
   const active = tab ? {id: 27, incognito} : undefined;
   const storeId = incognito ? 'private-7' : 'regular-3';
   const calls = {reads: [], uploads: []};
@@ -18,7 +18,7 @@ function fixture({incognito = false, tab = true, stores, cookies, language = 'zh
   element('key').value = 'fixture-key';
   const context = vm.createContext({
     document: {getElementById: element, querySelectorAll: () => [], documentElement: {}, title: ''},
-    navigator: {language}, localStorage: {getItem: () => null},
+    localStorage: {getItem: () => locale},
     chrome: {
       storage: {local: {get: async () => ({}), set: async () => {}}},
       tabs: {query: async () => active ? [active] : []},
@@ -54,7 +54,7 @@ for (const incognito of [false, true]) {
 }
 for (const options of [{tab: false}, {stores: [{id: 'wrong-default', tabIds: [99]}]}]) {
   const f = fixture(options);
-  await assert.rejects(f.run('grabCookies()'), /Cookie 存储区/);
+  await assert.rejects(f.run('grabCookies()'), /Không xác định được kho cookie/);
   assert.equal(f.calls.reads.length, 0, 'unknown store must fail closed');
   checks++;
 }
@@ -78,8 +78,8 @@ for (const options of [{tab: false}, {stores: [{id: 'wrong-default', tabIds: [99
   assert.equal(f.calls.uploads.length, 1);
   assert.equal(f.calls.uploads[0].body.cookies.hatch_sess, 'httpOnly%3Afixture%2Bvalue');
   assert.equal(f.calls.uploads[0].body.expires.hatch_sess, 2000000000);
-  assert.match(f.element('log').innerHTML, /Cookie 来源：当前无痕\/InPrivate窗口/);
-  assert.match(f.element('log').innerHTML, /请到管理页测试账号/);
+  assert.match(f.element('log').innerHTML, /Nguồn cookie: cửa sổ ẩn danh\/InPrivate hiện tại/);
+  assert.match(f.element('log').innerHTML, /kiểm tra tài khoản trong trang quản trị/);
   checks++;
 }
 for (const options of [{tab: false}, {cookies: [cookie('')]}]) {
@@ -90,7 +90,7 @@ for (const options of [{tab: false}, {cookies: [cookie('')]}]) {
   checks++;
 }
 {
-  const f = fixture({incognito: true, language: 'en-US'});
+  const f = fixture({incognito: true, locale: 'en'});
   await f.run('run()');
   assert.match(f.element('log').innerHTML, /current Incognito\/InPrivate window/);
   checks++;

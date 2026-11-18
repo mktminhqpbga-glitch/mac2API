@@ -78,9 +78,10 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
    raise AssertionError('Condition failed: '+expr)
   wait("document.querySelectorAll('#poolBody tr').length===8")
   measure="""(()=>{const m=document.querySelector('main'),w=document.querySelector('#poolBody').closest('.tblwrap'),n=document.querySelector('#poolBody td.ellip');return {viewport:innerWidth,mainWidth:m.getBoundingClientRect().width,bodyWidth:document.documentElement.scrollWidth,tableWidth:w.clientWidth,tableScroll:w.scrollWidth,noteDisplay:getComputedStyle(n).display,noteWhiteSpace:getComputedStyle(n).whiteSpace,buttons:document.querySelectorAll('#poolBody tr:first-child button').length}})()"""
-  for lang in (['zh'] if args.probe_only else ['zh','en']):
-   if lang=='en':
-    page.js("localStorage.setItem('muse2api_lang','en');location.reload()");wait("document.querySelectorAll('#poolBody tr').length===8")
+  for lang in (['zh'] if args.probe_only else ['zh','en','vi']):
+   if lang!='zh':
+    page.js(f"localStorage.setItem('muse2api_lang',{json.dumps(lang)});location.reload()")
+    wait(f"document.documentElement.lang==={json.dumps(lang)} && document.querySelectorAll('#poolBody tr').length===8")
    network.clear()
    server_state['mode']='update'
    page.js("loadRepoStatus(true)",await_promise=True)
@@ -90,6 +91,7 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
    page.js("window.__confirms=[];upgradeNow()")
    wait("window.__confirms.length===1")
    if lang=='en':check('Update and restart' in page.js("window.__confirms[0]"),'en: manual confirmation is not localized')
+   if lang=='vi':check('Cập nhật và khởi động lại' in page.js("window.__confirms[0]"),'vi: manual confirmation is not localized')
    check(not any(x['path']=='/admin/update/upgrade' for x in events),lang+': cancelled confirmation still upgraded')
    page.js("goTab('media')")
    wait("document.querySelectorAll('#mediaGrid .tile').length===2")
@@ -111,7 +113,7 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
    wait("document.querySelector('#taskBody').textContent.includes('fixture-task')")
    text=page.js("document.querySelector('#tab-tasks tbody').innerText")
    check('Fixture-0' in text,lang+': task account is not visible')
-   for word in (['Queue','Generate','Total']if lang=='en'else['排队','生成','总计']):check(word in text,lang+': task duration missing '+word)
+   for word in {'en': ['Queue','Generate','Total'], 'vi': ['Chờ','Tạo','Tổng'], 'zh': ['排队','生成','总计']}[lang]:check(word in text,lang+': task duration missing '+word)
    server_state['mode']='unknown'
    page.js("loadRepoStatus(true)",await_promise=True)
    badge=page.js("$('repoBadge').textContent")
@@ -145,7 +147,7 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
     wait("$('proxyServer').value==='' && $('proxyPassword').value===''")
   if not args.probe_only:
    assert not page.js('window.__errors')
-   print('PASS: full-width layout, desktop controls, contained mobile scrolling, Chinese/English and test-without-saving')
+   print('PASS: full-width layout, desktop controls, contained mobile scrolling, Chinese/English/Vietnamese and test-without-saving')
    print('FEATURE_ERRORS',json.dumps(feature_errors),flush=True)
    assert not feature_errors,feature_errors
  finally:

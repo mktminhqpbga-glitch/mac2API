@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 from contextlib import contextmanager
 import ipaddress
+import re
 import select
 import socket
 import socketserver
@@ -30,12 +31,21 @@ def normalize_server(value: str) -> str:
 
 
 def split_proxy_url(value: dict) -> dict:
-    """Normalize a pasted proxy URL before field validation; URL credentials take precedence."""
+    """Normalize a pasted URL or HTTP host:port:user:password before validation."""
     raw = value.get("server")
     if not isinstance(raw, str):
         return value
+    raw = raw.strip()
+    shorthand = raw.split(":", 3)
+    if (len(shorthand) == 4 and re.fullmatch(r"[A-Za-z0-9.-]+", shorthand[0])
+            and not raw.startswith(f"{shorthand[0]}://")):
+        host, port, username, password = shorthand
+        if not port.isascii() or not port.isdecimal() or not username or not password:
+            raise ValueError("Dùng IP:PORT:USER:PASS với cổng, tên đăng nhập và mật khẩu hợp lệ.")
+        return {**value, "server": normalize_server(f"http://{host}:{port}"),
+                "username": username, "password": password}
     try:
-        parsed = urlsplit(raw.strip())
+        parsed = urlsplit(raw)
         if parsed.username is None and parsed.password is None:
             return value
         origin = parsed._replace(netloc=parsed.netloc.rsplit("@", 1)[-1]).geturl()

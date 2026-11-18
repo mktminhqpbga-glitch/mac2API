@@ -106,6 +106,15 @@ class Store:
                 a["expires_at"] = int(ce["hatch_vml"])
         self.tasks: dict[str, dict] = _read(cfg.tasks_file, {})
 
+    def muse_prompt_language(self):
+        settings = _read(os.path.join(self.cfg.data_dir, "muse-prompt.json"), {})
+        language = settings.get("language") if isinstance(settings, dict) else None
+        return language if language in ("vi", "en", "zh") else "vi"
+
+    def save_muse_prompt_language(self, language):
+        with _LOCK:
+            _write(os.path.join(self.cfg.data_dir, "muse-prompt.json"), {"language": language})
+
     # ---------- 账号 ----------
     def add_account(self, cookies: dict, label: str = "",
                     cookies_exp: dict | None = None) -> dict:

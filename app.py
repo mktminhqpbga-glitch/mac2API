@@ -23,7 +23,7 @@ OpenAI 兼容:
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 import asyncio
 import copy
@@ -48,6 +48,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                Response, StreamingResponse)
 from pydantic import model_validator, BaseModel, Field, SecretStr, field_validator
 
+from chat_providers import ChatProviders, ProviderName, ProviderSettings
 from config import CFG
 from engine import (ESSENTIAL_COOKIES, MAX_REFERENCE_IMAGE_BYTES,
                     MAX_REFERENCE_IMAGES, MAX_REFERENCE_TOTAL_BYTES,
@@ -57,7 +58,8 @@ from engine import MuseProxyError, MuseSessionUnavailable
 from store import Store, account_expiry, min_expiry
 from generation_timing import QueuePolicy, QueueSettings, TaskTiming
 from proxy import normalize_server, request_proxy_context, split_proxy_url
-from thumbnails import (VIDEO_FORMATS, ThumbnailUnavailable, clear_thumbnail,
+from media_storage import CAPACITY_BYTES, CLEANUP_BYTES, delete_media_file, media_entries, prune_media
+from thumbnails import (VIDEO_FORMATS, ThumbnailUnavailable,
                         source_version, video_thumbnail)
 
 import sys
@@ -88,6 +90,7 @@ app.add_middleware(CORSMiddleware,
                    max_age=600)
 
 store = Store(CFG)
+chat_providers = ChatProviders(CFG.data_dir)
 engine = MuseEngine(CFG)
 engine.proxy_resolver = lambda aid: (store.get_account(aid) or {}).get("proxy")
 
@@ -719,6 +722,91 @@ def _reference_kinds(prepared: list[str]) -> list[str]:
     return [reference_kind(ref[5:].split(";", 1)[0]) for ref in prepared]
 
 
+MusePromptLanguage = Literal["vi", "en", "zh"]
+
+
+class MusePromptSettings(BaseModel):
+    language: MusePromptLanguage
+
+
+_MUSE_PROMPT_LABELS = {
+    "vi": {"image": "ảnh", "video": "video", "audio": "âm thanh", "document": "tài liệu"},
+    "en": {"image": "image", "video": "video", "audio": "audio clip", "document": "document"},
+}
+
+
+def _media_prompt_localized(r, refs, kinds, language, *, video=False):
+    """Build the translated media instructions around the caller's original description."""
+    vi = language == "vi"
+    labels = _MUSE_PROMPT_LABELS[language]
+    parts = []
+    if refs:
+        if video:
+            parts.append("Tạo video chỉ từ các tệp tham chiếu vừa tải lên và mô tả bên dưới."
+                         if vi else "Create a video using only the newly uploaded references and the description below.")
+        else:
+            parts.append("Tạo hoặc chỉnh sửa một ảnh chỉ từ các tệp tham chiếu vừa tải lên và mô tả bên dưới."
+                         if vi else "Generate or edit one image using only the newly uploaded references and the description below.")
+        parts.append("Dùng từng tệp theo vai trò trong mô tả. Không dùng tệp từ cuộc trò chuyện trước."
+                     if vi else "Use each file as specified in the description. Do not use files from earlier conversations.")
+        seen = collections.Counter()
+        for index, kind in enumerate(kinds, 1):
+            seen[kind] += 1
+            old_token = f"[{_KIND_TOKENS[kind]}{seen[kind]}]"
+            if old_token in r.prompt:
+                parts.append(f"{old_token} là tệp đính kèm số {index} ({labels[kind]})."
+                             if vi else f"{old_token} is attachment {index} ({labels[kind]}).")
+            else:
+                parts.append(f"Tệp đính kèm số {index}: {labels[kind]}."
+                             if vi else f"Attachment {index}: {labels[kind]}.")
+        if video and kinds == ["image"]:
+            parts.append("Dùng đúng ảnh vừa tải lên làm khung hình mở đầu."
+                         if vi else "Use the newly uploaded image as the opening frame.")
+        elif video and all(kind == "image" for kind in kinds):
+            parts.append("Dùng ảnh đầu tiên làm khung hình mở đầu nếu mô tả không chỉ định khác. Dùng các ảnh còn lại để tham chiếu chủ thể, bối cảnh và phong cách."
+                         if vi else "Use the first image as the opening frame unless specified otherwise. Use other images as subject, scene and style references.")
+        if not video and "image" in kinds:
+            parts.append("Ảnh kết quả không có chữ, hình mờ, chữ ký, nhãn góc hoặc logo từ ảnh tham chiếu."
+                         if vi else "Return a clean image without text, watermarks, signatures, corner labels or logos from the references.")
+    elif video:
+        parts.append("Tạo một video mới từ mô tả văn bản. Không dùng ảnh hoặc ngữ cảnh cũ."
+                     if vi else "Create a new video from the text description. Do not use historical images or context.")
+    else:
+        parts.append("Tạo một ảnh mới từ mô tả văn bản. Không tìm ảnh cũ hoặc yêu cầu ảnh gốc."
+                     if vi else "Create one new image from the text description. Do not look up older images or ask for an original image.")
+
+    size = (r.size or "").strip().lower()
+    ratio = (r.aspect_ratio or "").strip().lower()
+    if any(value in ratio or value in size for value in ("9:16", "9/16", "portrait", "竖屏", "720x1280", "1080x1920")):
+        orientation = ("Khung hình dọc 9:16 phủ kín màn hình, cao hơn rộng, không nằm ngang."
+                       if vi else "Use a full-screen vertical 9:16 frame, taller than wide, never landscape.")
+        parts.append(orientation)
+        if video:
+            parts.append("Dùng khung 720x1280, không có viền đen." if vi else "Use a 720x1280 frame without black bars.")
+    elif any(value in ratio or value in size for value in ("16:9", "16/9", "landscape", "横屏", "1280x720", "1920x1080")):
+        parts.append("Dùng khung hình ngang 16:9." if vi else "Use a widescreen 16:9 landscape frame.")
+    elif not video:
+        if any(value in ratio or value in size for value in ("1:1", "square", "正方形", "1024x1024")):
+            parts.append("Dùng khung hình vuông 1:1." if vi else "Use a square 1:1 frame.")
+        elif any(value in ratio or value in size for value in ("4:3", "4/3")):
+            parts.append("Dùng tỷ lệ 4:3." if vi else "Use a 4:3 aspect ratio.")
+        elif any(value in ratio or value in size for value in ("3:4", "3/4")):
+            parts.append("Dùng khung hình dọc 3:4." if vi else "Use a 3:4 portrait frame.")
+        elif ratio or size:
+            shape = (r.aspect_ratio or r.size)
+            parts.append(f"Kích thước hoặc tỷ lệ: {shape}." if vi else f"Size or aspect ratio: {shape}.")
+    if video:
+        duration = r.duration or 6
+        parts.append(f"Thời lượng chính xác {duration} giây." if vi else f"Duration must be exactly {duration} seconds.")
+        if r.resolution:
+            parts.append(f"Độ phân giải: {r.resolution}." if vi else f"Resolution: {r.resolution}.")
+    parts.append("Viết lời xác nhận bằng tiếng Việt." if vi else "Write the confirmation in English.")
+    parts.append(r.prompt)
+    if r.extra:
+        parts.append(r.extra)
+    return "\n".join(parts)
+
+
 _KIND_LABELS = {"image": ("张", "图片"), "video": ("段", "视频"),
                 "audio": ("段", "音频"), "document": ("份", "文档")}
 
@@ -743,10 +831,12 @@ def _reference_legend(kinds: list[str]) -> str:
         parts.append(f"[{_KIND_TOKENS[kind]}{seen[kind]}] 是第 {index} 个附件（{_KIND_LABELS[kind][1]}）")
     return "附件对照：" + "，".join(parts)
 
-def build_image_prompt(r: ImageRequest, kinds: list[str] | None = None) -> str:
+def build_image_prompt(r: ImageRequest, kinds: list[str] | None = None, *, language: MusePromptLanguage = "zh") -> str:
     refs = _image_references(r)
     has_ref = bool(refs)
     kinds = kinds or ["image"] * len(refs)
+    if language != "zh":
+        return _media_prompt_localized(r, refs, kinds, language)
     if has_ref and any(k != "image" for k in kinds):
         parts = [f"基于我本次上传附带的参考素材（{_describe_kinds(kinds)}；{_reference_legend(kinds)}；"
                  f"只使用本次上传的这些附件，各附件的用途以下面的描述为准）"
@@ -783,7 +873,7 @@ def build_image_prompt(r: ImageRequest, kinds: list[str] | None = None) -> str:
     return "，".join(parts)
 
 
-def _content_text(content) -> str:
+def _content_text(content, language: MusePromptLanguage = "zh") -> str:
     """把 OpenAI 的 content 归一成纯文本（兼容多模态 list 形式）。"""
     if content is None:
         return ""
@@ -797,33 +887,38 @@ def _content_text(content) -> str:
                 if t in (None, "text", "input_text", "output_text"):
                     parts.append(str(item.get("text") or ""))
                 elif t == "image_url":
-                    parts.append("[图片]")
+                    parts.append({"vi": "[Ảnh]", "en": "[Image]", "zh": "[图片]"}[language])
             elif isinstance(item, str):
                 parts.append(item)
         return "\n".join(p for p in parts if p)
     return str(content)
 
 
-def build_chat_prompt(messages: list[ChatMessage]) -> str:
+def build_chat_prompt(messages: list[ChatMessage], *, language: MusePromptLanguage = "zh") -> str:
     """把 messages 拼成发给 muse.ai 的一段提示词。
 
     muse.ai 网页本身是个带上下文的会话，但本 API 是无状态的（每次可能落到
     不同账号/页面），所以把历史拼进 prompt 最可控 —— 这正好匹配 Codex 这类
     「每轮都带全量历史」的客户端。
     """
+    context, assistant, user, tool_result, tool_request = {
+        "vi": ("Bối cảnh và yêu cầu", "Trợ lý", "Người dùng", "[Kết quả công cụ]", "[Yêu cầu gọi công cụ]"),
+        "en": ("Context and task instructions", "Assistant", "User", "[Tool result]", "[Tool call requested]"),
+        "zh": ("背景与任务设定", "助手", "用户", "【工具执行结果】", "【请求调用工具】"),
+    }[language]
     system, turns = [], []
     for m in messages:
         role = (m.role or "").strip().lower()
-        text = _content_text(m.content).strip()
+        text = _content_text(m.content, language).strip()
         if role == "tool":
             # 工具执行结果 → 当成"用户提供的信息"发过去
             if text:
-                turns.append(("user", "【工具执行结果】\n" + text))
+                turns.append(("user", tool_result + "\n" + text))
             continue
         if not text:
             # 部分客户端的 assistant 消息只带 tool_calls、没有正文
             if role == "assistant" and m.tool_calls:
-                turns.append(("assistant", "【请求调用工具】" + json.dumps(
+                turns.append(("assistant", tool_request + json.dumps(
                     m.tool_calls, ensure_ascii=False)[:600]))
             continue
         if role in ("system", "developer"):
@@ -836,13 +931,14 @@ def build_chat_prompt(messages: list[ChatMessage]) -> str:
         return turns[0][1]
 
     parts = []
+    separator = "：" if language == "zh" else ":"
     if system:
         sys_text = "\n\n".join(system)
         sys_text = sys_text.replace("danger-full-access", "standard-workspace-access")
-        parts.append(f"背景与任务设定：\n{sys_text}")
+        parts.append(f"{context}{separator}\n{sys_text}")
     for role, text in turns:
-        label = "助手" if role == "assistant" else "用户"
-        parts.append(f"{label}：\n{text}")
+        label = assistant if role == "assistant" else user
+        parts.append(f"{label}{separator}\n{text}")
     return "\n\n".join(parts)
 
 
@@ -866,25 +962,43 @@ _TOOL_PROTOCOL_HEAD = """你可以根据需要调用以下工具来协助用户�
 """
 
 
-def _describe_params(params) -> str:
+_TOOL_PROMPT_TEXT = {
+    "zh": (_TOOL_PROTOCOL_HEAD, "参数：", "（无参数）", "必填", "可选"),
+    "vi": (
+        "Nếu cần gọi công cụ, chỉ trả khối mã JSON như ví dụ bên dưới. "
+        "Với nhiều lượt gọi, trả một mảng JSON. Nếu không cần công cụ, trả lời tự nhiên.\n"
+        '```json\n{"name": "<tên công cụ>", "arguments": {}}\n```\n\nCông cụ khả dụng:\n',
+        "Tham số:", "(không có tham số)", "bắt buộc", "tùy chọn",
+    ),
+    "en": (
+        "To call a tool, return only a JSON code block as shown below. "
+        "Return a JSON array for multiple calls. If no tool is needed, answer naturally.\n"
+        '```json\n{"name": "<tool name>", "arguments": {}}\n```\n\nAvailable tools:\n',
+        "Parameters:", "(no parameters)", "required", "optional",
+    ),
+}
+
+
+def _describe_params(params, language: MusePromptLanguage = "zh") -> str:
     """把 JSON Schema 的参数描述成易读的多行文本。"""
+    _, _, empty, mandatory, optional = _TOOL_PROMPT_TEXT[language]
     if not isinstance(params, dict):
-        return "      （无参数）"
+        return "      " + empty
     props = params.get("properties") or {}
     required = set(params.get("required") or [])
     if not props:
-        return "      （无参数）"
+        return "      " + empty
     lines = []
     for name, spec in props.items():
         spec = spec if isinstance(spec, dict) else {}
         lines.append("      - %s (%s, %s)%s" % (
             name, spec.get("type") or "any",
-            "必填" if name in required else "可选",
+            mandatory if name in required else optional,
             (" " + spec["description"]) if spec.get("description") else ""))
     return "\n".join(lines)
 
 
-def build_tools_prompt(tools: list | None) -> str:
+def build_tools_prompt(tools: list | None, *, language: MusePromptLanguage = "zh") -> str:
     """把 tools 定义翻译成提示词片段（没有工具时返回空串）。
 
     同时兼容 Chat Completions 的 `{"type":"function","function":{...}}`
@@ -892,6 +1006,7 @@ def build_tools_prompt(tools: list | None) -> str:
     """
     if not tools:
         return ""
+    header, parameters, *_ = _TOOL_PROMPT_TEXT[language]
     items = []
     for t in tools:
         if not isinstance(t, dict):
@@ -900,12 +1015,12 @@ def build_tools_prompt(tools: list | None) -> str:
         if not fn.get("name"):
             continue
         desc = fn.get("description") or ""
-        items.append("%d. %s%s\n   参数：\n%s" % (
+        items.append("%d. %s%s\n   %s\n%s" % (
             len(items) + 1, fn["name"], (" — " + desc) if desc else "",
-            _describe_params(fn.get("parameters"))))
+            parameters, _describe_params(fn.get("parameters"), language)))
     if not items:
         return ""
-    return _TOOL_PROTOCOL_HEAD + "\n".join(items) + "\n"
+    return header + "\n".join(items) + "\n"
 
 
 _FENCE_RE = re.compile(r"```(?:json|JSON)?\s*([\s\S]*?)```")
@@ -977,7 +1092,7 @@ def parse_tool_calls(text: str) -> tuple[list[dict] | None, str]:
     return None, text
 
 
-def build_video_prompt(r: VideoRequest, kinds: list[str] | None = None) -> str:
+def build_video_prompt(r: VideoRequest, kinds: list[str] | None = None, *, language: MusePromptLanguage = "zh") -> str:
     user_prompt = r.prompt.strip()
     ar = (r.aspect_ratio or "").strip().lower()
     sz = (r.size or "").strip().lower()
@@ -985,6 +1100,8 @@ def build_video_prompt(r: VideoRequest, kinds: list[str] | None = None) -> str:
     refs = _video_references(r)
     has_ref = bool(refs)
     kinds = kinds or ["image"] * len(refs)
+    if language != "zh":
+        return _media_prompt_localized(r, refs, kinds, language, video=True)
     if any(k != "image" for k in kinds):
         # 不再默认「第一张图作起始画面」：实测会把模型拉回图片场景、忽略参考视频
         reference_instruction = (
@@ -1277,7 +1394,11 @@ def readyz():
 
 @app.get("/v1/models")
 def models(_=Depends(auth)):
-    return {"object": "list", "data": MODELS}
+    external = [
+        {"id": item["model_id"], "object": "model", "owned_by": item["id"]}
+        for item in chat_providers.status() if item["configured"]
+    ]
+    return {"object": "list", "data": [*MODELS, *external]}
 
 
 # ------------------------- 生图 -------------------------
@@ -1380,7 +1501,7 @@ def _queue_image(req: ImageRequest, prompt: str, reference_images: list[str],
 def create_image_task(req: ImageRequest,
                       idempotency_key: str | None = Header(default=None), _=Depends(auth)):
     refs = _prepare_reference_images(_image_references(req))
-    return _queue_image(req, build_image_prompt(req, _reference_kinds(refs)), refs, idempotency_key)
+    return _queue_image(req, build_image_prompt(req, _reference_kinds(refs), language=store.muse_prompt_language()), refs, idempotency_key)
 
 
 @app.get("/v1/images/tasks/{task_id}")
@@ -1401,7 +1522,7 @@ async def images_generations(req: ImageRequest, _=Depends(auth)):
     ref_images = await asyncio.to_thread(
         _prepare_reference_images, _image_references(req))
 
-    prompt = build_image_prompt(req, _reference_kinds(ref_images))
+    prompt = build_image_prompt(req, _reference_kinds(ref_images), language=store.muse_prompt_language())
     timeout = req.timeout or CFG.image_timeout
     if req.async_:
         return _queue_image(req, prompt, ref_images)
@@ -1499,7 +1620,7 @@ async def images_edits(request: Request, _=Depends(auth)):
     )
     ref_image_data = await asyncio.to_thread(
         _prepare_reference_images, ref_image_data)
-    full_prompt = build_image_prompt(req_obj, _reference_kinds(ref_image_data))
+    full_prompt = build_image_prompt(req_obj, _reference_kinds(ref_image_data), language=store.muse_prompt_language())
     gen_timeout = timeout or CFG.image_timeout
     if req_obj.async_:
         return _queue_image(req_obj, full_prompt, ref_image_data)
@@ -1522,7 +1643,7 @@ async def create_video(req: VideoRequest, _=Depends(auth)):
     ref_images = await asyncio.to_thread(
         _prepare_reference_images, _video_references(req))
 
-    prompt = build_video_prompt(req, _reference_kinds(ref_images))
+    prompt = build_video_prompt(req, _reference_kinds(ref_images), language=store.muse_prompt_language())
     timeout = req.timeout or CFG.video_timeout
     task = store.create_task("video", req.prompt)
     store.update_task(task["id"], api_prompt=prompt, queue_elapsed=0.0)
@@ -1627,7 +1748,7 @@ _SSE_HEADERS = {
 
 
 @app.post("/v1/chat/completions")
-async def chat_completions(req: ChatRequest, _=Depends(auth)):
+async def chat_completions(req: ChatRequest, request: Request, _=Depends(auth)):
     """OpenAI 兼容的对话接口 —— 各类智能体客户端都能接。
 
     说明：muse.ai 网页是**自动路由**的 agent，界面上没有模型选择器，所有请求
@@ -1639,19 +1760,28 @@ async def chat_completions(req: ChatRequest, _=Depends(auth)):
 
     对话与生图/生视频共用同一个浏览器实例，靠 `GEN_LOCK` 串行。
     """
-    prompt = build_chat_prompt(req.messages) or (req.prompt or "").strip()
+    provider_route = chat_providers.route(req.model)
+    if provider_route:
+        provider, model_id = provider_route
+        payload = await request.json()
+        payload["stream"] = req.stream
+        timeout = max(1, min(req.timeout or CFG.chat_timeout, 600))
+        return await chat_providers.chat(provider, model_id, payload, timeout)
+
+    language = store.muse_prompt_language()
+    prompt = build_chat_prompt(req.messages, language=language) or (req.prompt or "").strip()
     if not prompt:
         raise HTTPException(400, "messages 为空")
 
     # 工具调用协议默认不注入 —— 实测 muse.ai 的助手会明确拒绝输出"伪工具调用"，
     # 注入反而污染正常回答；详见 config.py 的 tool_protocol 注释。
-    tool_note = build_tools_prompt(req.tools) if CFG.tool_protocol else ""
+    tool_note = build_tools_prompt(req.tools, language=language) if CFG.tool_protocol else ""
     if tool_note:
         # 放在末尾：开头是 agent 自己的 system 提示，夹在中间容易被忽略；
         # 紧贴用户消息之前，模型对末尾指令的遵守度明显更高。
         prompt = prompt + "\n\n" + tool_note
 
-    model = resolve_model(req.model, default="muse-spark")
+    model = resolve_model(req.model.removeprefix("muse/"), default="muse-spark")
     timeout = int(req.timeout or CFG.chat_timeout)
     acc = store.pick_account(rotate=True)
     if not acc:
@@ -1809,11 +1939,13 @@ async def responses_api(req: ResponsesRequest, _=Depends(auth)):
     只实现 Codex 实际用到的子集：文本进 → 文本出（含流式事件）。
     muse.ai 不会返回结构化的 tool_calls，关于工具调用的边界见 README。
     """
-    prompt = build_chat_prompt(_responses_messages(req))
+    if chat_providers.route(req.model):
+        raise HTTPException(400, "Hãy dùng /v1/chat/completions cho OpenAI hoặc Gemini.")
+    prompt = build_chat_prompt(_responses_messages(req), language=store.muse_prompt_language())
     if not prompt:
         raise HTTPException(400, "input 为空")
 
-    model = resolve_model(req.model, default="muse-spark")
+    model = resolve_model(req.model.removeprefix("muse/"), default="muse-spark")
     timeout = int(req.timeout or CFG.chat_timeout)
     acc = store.pick_account(rotate=True)
     if not acc:
@@ -1890,12 +2022,23 @@ async def responses_api(req: ResponsesRequest, _=Depends(auth)):
 
 @app.get("/v1/media/{name}")
 def get_media(name: str):
-    if "/" in name or "\\" in name or ".." in name:
+    if name.startswith(".") or "/" in name or "\\" in name or ".." in name:
         raise HTTPException(400, "非法文件名")
     p = os.path.join(CFG.media_dir, name)
-    if not os.path.isfile(p):
+    if os.path.islink(p) or not os.path.isfile(p):
         raise HTTPException(404, "文件不存在")
     return FileResponse(p)
+
+
+@app.get("/admin/muse-prompt")
+def get_muse_prompt_settings(_=Depends(auth)):
+    return {"language": store.muse_prompt_language()}
+
+
+@app.put("/admin/muse-prompt")
+def update_muse_prompt_settings(settings: MusePromptSettings, _=Depends(auth)):
+    store.save_muse_prompt_language(settings.language)
+    return settings
 
 
 @app.get("/admin/generation-queue")
@@ -1921,14 +2064,22 @@ def get_media_thumbnail(name: str):
                         headers={"Cache-Control": "public, max-age=86400"})
 
 
-def _clear_media_thumbnail(name: str):
-    try:
-        clear_thumbnail(os.path.join(CFG.data_dir, "thumbnails"), name)
-    except OSError:
-        log.warning("Could not remove cached thumbnail for %s", name)
-
-
 # ------------------------- 管理：总览 -------------------------
+@app.get("/admin/chat-providers")
+def list_chat_providers(_=Depends(auth)):
+    return {"providers": chat_providers.status()}
+
+
+@app.put("/admin/chat-providers/{provider}")
+def save_chat_provider(provider: ProviderName, settings: ProviderSettings, _=Depends(auth)):
+    return chat_providers.save(provider, settings)
+
+
+@app.post("/admin/chat-providers/{provider}/test")
+async def test_chat_provider(provider: ProviderName, _=Depends(auth)):
+    return await chat_providers.test(provider)
+
+
 @app.get("/admin/status")
 def admin_status(_=Depends(auth)):
     base = _public_base()
@@ -1937,8 +2088,8 @@ def admin_status(_=Depends(auth)):
         "stats": store.stats(),
         "generation_queue": QUEUE_POLICY.settings(),
         "tasks": store.list_tasks(20),
-        "media_count": len(os.listdir(CFG.media_dir))
-        if os.path.isdir(CFG.media_dir) else 0,
+        "media_count": len(media_entries(CFG.media_dir)) if os.path.isdir(CFG.media_dir) else 0,
+        "muse_prompt_language": store.muse_prompt_language(),
         "browser_running": bool(engine.proc and engine.proc.poll() is None),
         "essential_cookies": list(ESSENTIAL_COOKIES),
         "base_url": f"{base}/v1" if base else "",
@@ -2044,6 +2195,7 @@ def test_account_proxy(aid: str, req: ProxyTestRequest | None = None, _=Depends(
         identity = _proxy_test_identity(proxy, acc.get("cookies"))
         result = {"ok": False, "proxy_configured": True, "proxy_reachable": False,
                   "exit_ip": None, "session_ok": None, "workspace_status": None}
+        authentication_failed = "Xác thực proxy thất bại (HTTP 407). Hãy kiểm tra tên đăng nhập và mật khẩu proxy."
         try:
             # Fixed HTTPS endpoint receives no Muse cookies or proxy credentials.
             with request_proxy_context(proxy) as proxy_options, requests.Session() as session:
@@ -2051,6 +2203,8 @@ def test_account_proxy(aid: str, req: ProxyTestRequest | None = None, _=Depends(
                 response = session.get("https://api.ipify.org?format=json",
                                        timeout=(5, 10), allow_redirects=False,
                                        **proxy_options)
+            if response.status_code == 407:
+                raise MuseProxyError(authentication_failed)
             if response.status_code != 200:
                 raise MuseProxyError("代理出口检测未成功，请检查代理连接或认证")
             result["exit_ip"] = str(ipaddress.ip_address(response.json()["ip"]))
@@ -2068,6 +2222,11 @@ def test_account_proxy(aid: str, req: ProxyTestRequest | None = None, _=Depends(
             result.update(session_ok=False, message=str(exc))
         except MuseGenerationError as exc:
             result.update(session_ok=False, message=str(exc))
+        except requests.exceptions.ProxyError as exc:
+            if re.search(r"\bTunnel connection failed: 407\b", str(exc), re.IGNORECASE):
+                result["message"] = authentication_failed
+            else:
+                result["message"] = "Không kết nối được qua proxy. Hãy kiểm tra địa chỉ, cổng và kết nối mạng."
         except (requests.RequestException, ValueError, KeyError, TypeError):
             result["message"] = "代理出口检测失败，请检查代理地址、认证和网络"
         recorded = {**result, "checked_at": int(time.time())}
@@ -2352,24 +2511,20 @@ def clear_tasks(payload: dict = Body(default={}), _=Depends(auth)):
 
 @app.get("/admin/media")
 def admin_media(_=Depends(auth)):
-    d = CFG.media_dir
     items = []
-    if os.path.isdir(d):
-        for name in os.listdir(d):
-            p = os.path.join(d, name)
-            if not os.path.isfile(p):
-                continue
-            ext = os.path.splitext(name)[1].lower()
-            stat = os.stat(p)
-            is_video = ext in VIDEO_FORMATS
-            item = {"name": name, "url": media_url(name), "bytes": stat.st_size,
-                    "mtime": int(stat.st_mtime), "kind": "video" if is_video else "image"}
-            if is_video:
-                from urllib.parse import quote
-                item["thumbnail_url"] = f"/v1/media/{quote(name, safe='')}/thumbnail?v={source_version(stat)}"
-            items.append(item)
-    items.sort(key=lambda x: x["mtime"], reverse=True)
-    return {"media": items, "count": len(items)}
+    entries = media_entries(CFG.media_dir)
+    for path, stat in reversed(entries):
+        name = path.name
+        is_video = path.suffix.lower() in VIDEO_FORMATS
+        item = {"name": name, "url": media_url(name), "bytes": stat.st_size,
+                "mtime": int(stat.st_mtime), "kind": "video" if is_video else "image"}
+        if is_video:
+            from urllib.parse import quote
+            item["thumbnail_url"] = f"/v1/media/{quote(name, safe='')}/thumbnail?v={source_version(stat)}"
+        items.append(item)
+    return {"media": items, "count": len(items),
+            "used_bytes": sum(info.st_size for _, info in entries),
+            "capacity_bytes": CAPACITY_BYTES, "cleanup_bytes": CLEANUP_BYTES}
 
 
 @app.post("/admin/media/delete")
@@ -2383,14 +2538,13 @@ def delete_media(payload: dict = Body(default={}), _=Depends(auth)):
     removed = 0
     errors = []
     for name in names:
-        if not isinstance(name, str) or "/" in name or "\\" in name or ".." in name:
+        if not isinstance(name, str) or name.startswith(".") or "/" in name or "\\" in name or ".." in name:
             errors.append(f"非法文件名: {name}")
             continue
         p = os.path.join(d, name)
         if os.path.isfile(p):
             try:
-                os.remove(p)
-                _clear_media_thumbnail(name)
+                delete_media_file(p)
                 removed += 1
             except OSError as e:
                 errors.append(f"{name}: {str(e)}")
@@ -2399,14 +2553,13 @@ def delete_media(payload: dict = Body(default={}), _=Depends(auth)):
 
 @app.delete("/admin/media/{name}")
 def delete_single_media(name: str, _=Depends(auth)):
-    if "/" in name or "\\" in name or ".." in name:
+    if name.startswith(".") or "/" in name or "\\" in name or ".." in name:
         raise HTTPException(400, "非法文件名")
     p = os.path.join(CFG.media_dir, name)
     if not os.path.isfile(p):
         raise HTTPException(404, "文件不存在")
     try:
-        os.remove(p)
-        _clear_media_thumbnail(name)
+        delete_media_file(p)
         return {"status": "ok", "deleted": name}
     except OSError as e:
         raise HTTPException(500, f"删除失败: {e}")
@@ -2631,7 +2784,7 @@ REPO_URL = f"https://github.com/{REPO_SLUG}"
 MANAGED_DEPLOYMENT = os.environ.get("MUSE2API_MANAGED_DEPLOYMENT", "0") == "1"
 TRACKED_REPO_PATHS = [
     "app.py", "engine.py", "store.py", "cdp.py", "config.py", "proxy.py",
-    "generation_timing.py", "thumbnails.py", "GENERATION_QUEUE.md", "VERSION_REPORTING.md",
+    "generation_timing.py", "thumbnails.py", "media_storage.py", "chat_providers.py", "GENERATION_QUEUE.md", "VERSION_REPORTING.md",
     "admin.html", "README.md", "version.json", "requirements.txt",
     "Dockerfile", "docker-compose.yml", ".env.example", ".gitignore",
     "LICENSE", "extension", "deploy", "tools",
@@ -2898,6 +3051,10 @@ async def _startup():
         CFG.api_key = new_key
         _persist_env("MUSE2API_KEY", new_key)
         log.info("🔑 未检测到 MUSE2API_KEY，已自动生成初始密钥: %s", new_key)
+    try:
+        await asyncio.to_thread(prune_media, CFG.media_dir)
+    except OSError:
+        log.exception("Could not prune the media library during startup")
     asyncio.create_task(_keepalive_loop())
 
 

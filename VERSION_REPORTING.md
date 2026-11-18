@@ -1,7 +1,7 @@
-# Installed version and explicit updates
+# Phiên bản đã cài và cập nhật
 
-Version checks report installed `version.json` and local commit separately from the configured remote. They never download code, trigger a restart, mark an unverified install as current, or silently replace the local SHA with remote HEAD. Failed checks return an unknown state.
+Kiểm tra phiên bản báo riêng `version.json`, commit cục bộ và trạng thái kho cập nhật. Thao tác chỉ đọc. Khi kiểm tra thất bại, trạng thái phiên bản là chưa xác minh.
 
-`MUSE2API_REPOSITORY` defaults to `czg86389-hub/muse2api`; `MUSE2API_REPO_REF` defaults to `main`. Fork deployments can override both. Build Docker images with `--build-arg BUILD_SHA=$(git rev-parse HEAD)` to embed immutable provenance, which takes precedence over an old persistent `.installed_sha` file. Set `MUSE2API_MANAGED_DEPLOYMENT=1` for image-managed deployments; in-container upgrades are then rejected and the UI directs updates through image builds.
+`MUSE2API_REPOSITORY` mặc định là `czg86389-hub/muse2api` và `MUSE2API_REPO_REF` mặc định là `main`. Có thể đổi hai biến khi triển khai fork. Khi dựng image Docker, dùng `--build-arg BUILD_SHA=$(git rev-parse HEAD)` để nhúng commit. SHA nhúng được ưu tiên hơn tệp `.installed_sha` cũ. Đặt `MUSE2API_MANAGED_DEPLOYMENT=1` để cập nhật bằng bản dựng image.
 
-Explicit source-install upgrades pin a verified full commit SHA, check Git command results, preserve `.env` and `data/`, and record the installed SHA only after success. They are rejected while tasks are active or queued. The legacy silent-update behavior is removed from both the status API and browser; a status refresh is read-only.
+Khi nâng cấp bản cài từ mã nguồn, hệ thống ghim SHA đầy đủ đã xác minh, kiểm tra kết quả lệnh Git và giữ `.env` cùng `data/`. SHA mới được ghi sau khi nâng cấp thành công. Chờ hàng đợi trống và tác vụ đang chạy kết thúc trước khi nâng cấp.

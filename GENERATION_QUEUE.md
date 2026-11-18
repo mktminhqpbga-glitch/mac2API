@@ -1,9 +1,9 @@
-# Independent queue and generation timeouts
+# Thời gian chờ và thời gian tạo nội dung
 
-Image/video generation budgets start only after acquiring both a concurrency slot and an account. Initial slot/account waits and retry-account waits consume the separate queue budget, not generation time.
+Thời gian tạo ảnh hoặc video bắt đầu khi tác vụ có cả khe xử lý và tài khoản. Thời gian chờ ban đầu và thời gian chờ tài khoản khi thử lại tính vào ngân sách hàng đợi.
 
-The account-pool panel exposes the independent queue timeout. Authenticated `GET/PUT /admin/generation-queue` reads or saves `{ "queue_timeout": 3600 }` in `data/generation-queue.json`; `0` means unlimited waiting. A changed queue timeout applies to new jobs. Existing image/video generation-timeout settings remain unchanged.
+Trong mục Quản lý tài khoản, đặt thời gian chờ riêng. API có xác thực `GET/PUT /admin/generation-queue` đọc hoặc lưu `{"queue_timeout":3600}` trong `data/generation-queue.json`. Giá trị `0` cho phép chờ không giới hạn. Cài đặt áp dụng cho tác vụ mới. Các giới hạn tạo ảnh và video được cấu hình riêng.
 
-Task records retain account, attempt, original error, queue duration, generation-only elapsed time and total elapsed time. An original upstream failure is not overwritten when the retry deadline expires. Old task records retain their historical duration display.
+Bản ghi tác vụ giữ tài khoản, lần thử, lỗi gốc, thời gian chờ, thời gian tạo và tổng thời gian. Nếu hết thời gian thử lại, hệ thống giữ lỗi gốc. Bản ghi cũ tiếp tục hiển thị thời lượng đã lưu.
 
-Video tasks are asynchronous. For images that may wait longer than an HTTP client timeout, use `/v1/images/tasks` and poll the existing task ID; do not resubmit merely because a polling request timed out.
+Video luôn chạy bất đồng bộ. Với ảnh có thể chạy lâu hơn thời gian chờ HTTP của client, dùng `/v1/images/tasks` và kiểm tra trạng thái bằng mã tác vụ. Nếu lần kiểm tra bị timeout, hãy tiếp tục dùng mã cũ để tránh tạo trùng.

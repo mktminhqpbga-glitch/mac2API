@@ -147,7 +147,7 @@ with tempfile.TemporaryDirectory() as home:
                         prompt="x", **{"async": True})
         assert asyncio.run(app.images_edits(FakeMultipart(form), None)) == {"ok": True}
         assert app._reference_kinds(captured["refs"]) == ["image", "video", "audio"]
-        assert "1 段视频" in captured["prompt"]
+        assert "Tệp đính kèm số 2: video." in captured["prompt"]
 
         bad = FakeForm({"audio": [FakeUpload(b"x", "text/html")]}, prompt="x", **{"async": True})
         try:

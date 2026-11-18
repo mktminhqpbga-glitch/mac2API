@@ -34,6 +34,7 @@ import uuid
 import unicodedata
 
 from cdp import CDP, http_json
+from media_storage import save_media
 from proxy import HTTPProxyRelay, request_proxy_context
 
 log = logging.getLogger("muse2api")
@@ -1966,13 +1967,14 @@ class MuseEngine:
             if data:
                 ext = self._pick_ext(mime, url, expect)
                 name = f"{uuid.uuid4().hex}{ext}"
-                dst = os.path.join(self.cfg.media_dir, name)
-                with open(dst, "wb") as f:
-                    f.write(data)
                 kind = "video" if ext in (".mp4", ".webm", ".mov") else "image"
                 if expect == "video" and kind != "video":
                     raise MuseGenerationError(f"期望生成视频，但提取成品类型为图片 ({ext})，拒绝以图片冒充视频交付")
-                return {"path": dst, "filename": name, "size": len(data), "ext": ext, "mime": mime,
+                try:
+                    dst, size = save_media(self.cfg.media_dir, name, data=data)
+                except (OSError, ValueError) as exc:
+                    raise MuseGenerationError(f"Không lưu được tệp vào kho media: {exc}") from exc
+                return {"path": dst, "filename": name, "size": size, "ext": ext, "mime": mime,
                         "kind": kind,
                         "via": "blob", "attachment": att.get("tid"),
                         "w": att.get("w"), "h": att.get("h")}
@@ -1990,12 +1992,14 @@ class MuseEngine:
                 continue
             ext = os.path.splitext(path)[1].lower() or ".bin"
             name = f"{uuid.uuid4().hex}{ext}"
-            dst = os.path.join(self.cfg.media_dir, name)
-            shutil.move(path, dst)
             kind = "video" if ext in (".mp4", ".webm", ".mov") else "image"
             if expect == "video" and kind != "video":
                 raise MuseGenerationError(f"期望生成视频，但下载成品类型为图片 ({ext})，拒绝以图片冒充视频交付")
-            return {"path": dst, "filename": name, "size": os.path.getsize(dst), "ext": ext, "mime": "",
+            try:
+                dst, size = save_media(self.cfg.media_dir, name, source=path)
+            except (OSError, ValueError) as exc:
+                raise MuseGenerationError(f"Không lưu được tệp vào kho media: {exc}") from exc
+            return {"path": dst, "filename": name, "size": size, "ext": ext, "mime": "",
                     "kind": kind,
                     "via": "download", "attachment": att.get("tid"),
                     "w": att.get("w"), "h": att.get("h")}

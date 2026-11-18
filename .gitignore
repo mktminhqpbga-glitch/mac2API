@@ -64,3 +64,10 @@ Thumbs.db
 
 # Independent generation queue settings
 data/generation-queue.json
+
+# API keys saved from the chat provider panels
+data/chat-providers.json
+data/.chat-providers-*
+
+# Muse instruction language saved from the dashboard
+data/muse-prompt.json

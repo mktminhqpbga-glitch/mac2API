@@ -1,5 +1,6 @@
 """Full proxy URLs and non-persistent draft connectivity tests; no real credentials/network."""
 import asyncio,copy,hashlib,json,os,sys,tempfile
+import requests
 from pathlib import Path
 from unittest.mock import patch,Mock
 from contextlib import contextmanager
@@ -10,6 +11,7 @@ with tempfile.TemporaryDirectory() as home:
  import app
  from test_async_images import Client
  examples=[
+ ('192.0.2.10:8080:fixture:p@ss:/#%', 'http://192.0.2.10:8080', 'fixture', 'p@ss:/#%'),
  ('socks5://fixture:example-password@127.0.0.1:1080','socks5://127.0.0.1:1080','fixture','example-password'),
  ('socks5h://user:p%40ss%3A%2F%23%25@proxy.example:1080','socks5h://proxy.example:1080','user','p@ss:/#%'),
  ('http://us%65r:p%40ss@[::1]:8080','http://[::1]:8080','user','p@ss'),
@@ -46,13 +48,31 @@ with tempfile.TemporaryDirectory() as home:
    assert app.store.get_account(a['id'])==before
    assert Path(app.CFG.accounts_file).read_bytes()==before_bytes
    print('PASS: unsaved draft test uses entered route, redacts credentials and changes no account bytes')
+   shorthand={'proxy':{'server':'192.0.2.10:8080:draft:p@ss:fixture'}}
+   for failure in (Mock(status_code=407), requests.exceptions.ProxyError(
+       'Proxy connection failed (Tunnel connection failed: 407 Proxy Authentication Required)')):
+    fake_session.get.return_value=failure
+    fake_session.get.side_effect=failure if isinstance(failure, Exception) else None
+    with patch('requests.Session',return_value=fake_session),patch.object(app.engine,'renew_session_http') as session:
+     reply=await client.post('/admin/accounts/'+a['id']+'/proxy/test',json=shorthand)
+    result=reply.json()
+    assert reply.status_code==200 and not result['proxy_reachable'] and result['session_ok'] is None
+    assert 'HTTP 407' in result['message'] and 'mật khẩu' in result['message']
+    assert 'p@ss:fixture' not in json.dumps(result) and not session.called
+    assert Path(app.CFG.accounts_file).read_bytes()==before_bytes
+   fake_session.get.side_effect=None
+   print('PASS: shorthand draft reports HTTP 407 without testing Muse, exposing credentials or saving')
+   r=await client.request('PATCH','/admin/accounts/'+a['id'],json_data=shorthand)
+   assert r.status_code==200,r.body
+   assert r.json()['proxy']['server']=='http://192.0.2.10:8080'
+   assert app.store.get_account(a['id'])['proxy']['password']=='p@ss:fixture'
    r=await client.request('PATCH','/admin/accounts/'+a['id'],json_data=payload)
    assert r.status_code==200,r.body
    public=r.json()
    assert public['proxy']['server']=='socks5://127.0.0.1:1081' and public['proxy']['has_password']
    assert 'draft-secret' not in json.dumps(public)
    assert app.store.get_account(a['id'])['proxy']['password']=='draft-secret'
-   for bad in ['https://draft:do-not-echo@host:443','socks5://draft:do-not-echo@host:99999','socks5://draft:do-not-echo@host:1080/path']:
+   for bad in ['192.0.2.10:99999:draft:do-not-echo','192.0.2.10:8080::do-not-echo','https://draft:do-not-echo@host:443','socks5://draft:do-not-echo@host:99999','socks5://draft:do-not-echo@host:1080/path']:
     r=await client.request('PATCH','/admin/accounts/'+a['id'],json_data={'proxy':{'server':bad}})
     assert r.status_code==422
     assert 'do-not-echo' not in json.dumps(r.json())

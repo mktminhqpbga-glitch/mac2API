@@ -231,7 +231,8 @@
         <input id="key" type="password" placeholder="粘贴 m2a_ 开头的密钥" autocomplete="off">
         <button class="ghost mini" onclick="saveKey()">保存</button>
       </span>
-      <select id="langSel" class="langsel" data-no-i18n onchange="setLang(this.value)" title="Language / 语言">
+      <select id="langSel" class="langsel" data-no-i18n onchange="setLang(this.value)" title="Ngôn ngữ / Language / 语言">
+        <option value="vi">Tiếng Việt</option>
         <option value="zh">中文</option>
         <option value="en">English</option>
       </select>
@@ -288,6 +289,8 @@
 
   <nav class="tabs">
     <button class="active" data-t="pool">账号池</button>
+    <button data-t="openai">OpenAI (ChatGPT)</button>
+    <button data-t="gemini">Google Gemini</button>
     <button data-t="cookie">获取 Cookie</button>
     <button data-t="tasks">任务记录</button>
     <button data-t="media">媒体库</button>
@@ -296,6 +299,36 @@
   </nav>
 
   <div class="card" id="extensionUpgradeNotice" style="border-color:var(--warn)" role="note" data-i18n="extension-upgrade-notice"><b>重要：请手动升级浏览器插件至 1.0.3</b><br>更新服务不会自动升级已加载的扩展。下载新包，替换原扩展目录文件，再到 <code>chrome://extensions</code> 或 <code>edge://extensions</code> 点击“重新加载”。不同浏览器个人资料需分别升级。<br><a href="/admin/extension">下载扩展 1.0.3</a>；油猴用户请升级脚本至 1.1.2。</div>
+
+
+  <section class="tab" id="tab-openai"></section>
+  <section class="tab" id="tab-gemini"></section>
+  <template id="chatProviderTemplate">
+    <div class="card">
+      <h3 data-provider-title></h3>
+      <p class="hint" data-provider-status role="status"></p>
+      <p class="hint" data-provider-model-id></p>
+      <form data-provider-settings>
+        <div class="row">
+          <label>Model mặc định <input name="model" required maxlength="200"></label>
+          <label>API Key của nhà cung cấp <input name="providerKey" type="password" autocomplete="new-password" maxlength="4096" placeholder="Để trống để giữ khóa hiện tại"></label>
+        </div>
+        <div class="row">
+          <button type="submit">Lưu cấu hình</button>
+          <button type="button" class="ghost" data-provider-test>Kiểm tra kết nối và model</button>
+          <button type="button" class="ghost" data-provider-remove>Xóa khóa đã lưu</button>
+        </div>
+      </form>
+    </div>
+    <div class="card">
+      <h3>Thử chat</h3>
+      <form data-provider-chat>
+        <label>Nội dung <textarea name="prompt" required rows="3"></textarea></label>
+        <button type="submit">Gửi</button>
+      </form>
+      <pre class="out" data-provider-output role="status" style="white-space:pre-wrap;overflow-wrap:anywhere" hidden></pre>
+    </div>
+  </template>
 
   <!-- ==================== 账号池 ==================== -->
   <section class="tab active" id="tab-pool">
@@ -336,6 +369,22 @@
       <div class="stat r"><div class="k">异常</div><div class="v" id="sBad">0</div></div>
       <div class="stat y"><div class="k">已禁用</div><div class="v" id="sDis">0</div></div>
       <div class="stat"><div class="k">媒体文件</div><div class="v" id="sMedia">0</div></div>
+    </div>
+
+    <div class="card">
+      <form id="musePromptForm">
+        <label for="musePromptLanguage">Muse 提示词指令语言</label>
+        <div class="row">
+          <select id="musePromptLanguage" data-no-i18n>
+            <option value="vi">Tiếng Việt</option>
+            <option value="en">English</option>
+            <option value="zh">中文</option>
+          </select>
+          <button id="musePromptSave" type="submit" disabled>保存指令语言</button>
+        </div>
+        <p class="hint">仅更改 mac2API 添加的 Muse 指令，保留你发送的内容。</p>
+        <p class="hint" id="musePromptStatus" role="status"></p>
+      </form>
     </div>
 
     <div class="card" id="generationQueuePanel">
@@ -567,6 +616,7 @@
         <div>
           <h3 style="margin:0 0 4px">媒体库 <span class="tag" id="mediaCount">0</span></h3>
           <div class="hint" style="margin:0">所有已生成并落盘的图片 / 视频，可直接下载或把链接给下游项目使用。</div>
+          <div class="hint" id="mediaStorage" role="status" hidden></div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <button class="ghost mini" onclick="loadMedia()">刷新</button>
@@ -813,8 +863,8 @@ t = requests.post(<span class="s">"BASE/v1/videos"</span>, json={<span class="s"
  * 新增中文文案时，请在 I18N_EN（整句）或 I18N_EN_PATTERNS（含变量）里补上英文。 */
 const LANG_STORE = 'muse2api_lang';
 const LANG = (() => {
-  try { const v = localStorage.getItem(LANG_STORE); if (v === 'zh' || v === 'en') return v; } catch (e) {}
-  return /^zh\b/i.test(navigator.language || '') ? 'zh' : 'en';
+  try { const v = localStorage.getItem(LANG_STORE); if (v === 'vi' || v === 'zh' || v === 'en') return v; } catch (e) {}
+  return 'vi';
 })();
 function setLang(v){
   try { localStorage.setItem(LANG_STORE, v); } catch (e) {}
@@ -822,6 +872,10 @@ function setLang(v){
 }
 /* 整句：中文 → 英文 */
 const I18N_EN = {
+  "Muse 提示词指令语言": "Muse instruction language",
+  "保存指令语言": "Save instruction language",
+  "仅更改 mac2API 添加的 Muse 指令，保留你发送的内容。": "Applies to instructions mac2API adds for Muse. Your input is preserved.",
+  "Muse 指令语言已保存。": "Muse instruction language saved.",
   "排队与生成时限": "Queue and generation timeouts",
   "排队不占用生成时限。任务获得并发槽位和账号后开始计算生成时间；重试时等待账号也不计入。": "Queue time does not consume the generation budget. Execution starts after acquiring a slot and account; retry account waits are excluded too.",
   "独立排队时限（秒，0 为不限）": "Separate queue timeout (seconds; 0 = unlimited)",
@@ -839,7 +893,7 @@ const I18N_EN = {
   "请输入代理链接或先保存该账号的代理": "Enter a proxy URL or save a proxy for this account first",
   "正在通过当前输入的代理检测出口与 Muse 会话…": "Checking egress and Muse session through the entered proxy…",
   "取消": "Cancel",
-  "http://proxy.example.com:8080 或 socks5://proxy.example.com:1080": "http://proxy.example.com:8080 or socks5://proxy.example.com:1080",
+  "192.0.2.10:8080:user:pass 或 socks5://proxy.example.com:1080": "192.0.2.10:8080:user:pass or socks5://proxy.example.com:1080",
   "请先保存该账号的代理": "Save a proxy for this account first",
   "账号正在执行任务或检测，请稍后再试": "The account is running a task or check; retry later",
   "账号正在执行任务或检测，请稍后再修改代理": "The account is running a task or check; wait before changing its proxy",
@@ -1375,13 +1429,587 @@ const I18N_EN_PATTERNS = ([
   ["CDP (\\S+) 超时", "CDP $1 timed out"],
   ["✗ (.+)", "✗ $1"],
 ]).map(([re, rep]) => [new RegExp('^' + re + '$', 's'), rep]);
+const I18N_VI_PATTERNS = [
+  ["账号代理请求失败 \\((.*?)\\)；请检查代理连接或认证，未回退直连", "Yêu cầu qua proxy thất bại ($1). Hãy kiểm tra kết nối hoặc xác thực. Tuyến proxy được giữ nguyên"],
+  ["经账号代理唤醒或确认 VM 失败 \\((.*?)\\)；未回退直连", "Không thể đánh thức hoặc xác minh máy ảo qua proxy ($1)"],
+  ["代理异常: (.*)", "Lỗi proxy: $1"],
+  ["出口 IP：(.*)", "IP đầu ra: $1"],
+  ["工作区状态：(.*)", "Trạng thái không gian làm việc: $1"],
+  ["(\\d+) 秒前", "$1 giây trước"],
+  ["(\\d+) 分钟前", "$1 phút trước"],
+  ["(\\d+) 小时前", "$1 giờ trước"],
+  ["(\\d+) 天前", "$1 ngày trước"],
+  ["查询 (\\d+) 秒前", "Đã kiểm tra $1 giây trước"],
+  ["查询 (\\d+) 分钟前", "Đã kiểm tra $1 phút trước"],
+  ["查询 (\\d+) 小时前", "Đã kiểm tra $1 giờ trước"],
+  ["查询 (\\d+) 天前", "Đã kiểm tra $1 ngày trước"],
+  ["服务返回了无法解析的响应 \\(HTTP (\\d+)\\)，请稍后重试或查看服务器日志", "Không đọc được phản hồi (HTTP $1). Hãy thử lại hoặc xem nhật ký máy chủ"],
+  ["(python get_muse_cookie\\.py .*--key )你的API_KEY( .*)", "$1API_KEY_CUA_BAN$2"],
+  ["包含 (\\d+) 个文件：", "Có $1 tệp: "],
+  ["计划：(.*)", "Gói: $1"],
+  ["周限额重置：(.*)", "Đặt lại hạn mức tuần: $1"],
+  ["周用量：已用 (.*)%", "Mức sử dụng trong tuần: $1%"],
+  ["额外代币：剩 (.*)（已用 (.*)%）", "Token bổ sung: còn $1 (đã dùng $2%)"],
+  ["查询时间：(.*)", "Kiểm tra lúc: $1"],
+  ["(.*) · 已用 ([\\d.?]+)%", "$1 · đã dùng $2%"],
+  ["额度：(.*?)，周用量已用 (.*?)%，额外剩 (.*)", "Hạn mức: $1, đã dùng $2% mức tuần, còn $3 bổ sung"],
+  ["额度：(.*?)，周用量已用 (.*?)%", "Hạn mức: $1, đã dùng $2% mức tuần"],
+  ["已于 (.*?) 过期（按 hatch_vml 约 2 天寿命推算，未取到精确 expires）", "Đã hết hạn lúc $1 (ước tính theo hạn của hatch_vml)"],
+  ["已于 (.*?) 过期（hatch_vml 实测到期时间）", "Đã hết hạn lúc $1 (theo hạn của hatch_vml)"],
+  ["到期时间：(.*?)（按 hatch_vml 约 2 天寿命推算，未取到精确 expires）", "Hết hạn lúc $1 (ước tính theo hạn của hatch_vml)"],
+  ["到期时间：(.*?)（hatch_vml 实测到期时间）", "Hết hạn lúc $1 (theo hạn của hatch_vml)"],
+  ["剩 ([\\d.]+) 天", "Còn $1 ngày"],
+  ["剩 (\\d+) 小时", "Còn $1 giờ"],
+  ["(\\d+) 个账号已过期", "$1 tài khoản đã hết hạn"],
+  ["，另有 (\\d+) 个即将过期（(.*)）。过期的账号无法生成，请重新登录一次（约 30 秒）。", ", còn $1 tài khoản sắp hết hạn ($2). Hãy đăng nhập lại để tiếp tục tạo nội dung."],
+  ["，(.*)。过期的账号无法生成，请重新登录一次（约 30 秒）。", ", $1. Hãy đăng nhập lại để tiếp tục tạo nội dung."],
+  ["成功导入 (\\d+) 个账号", "Đã nhập $1 tài khoản"],
+  ["([✓✗] )(.*?)；额度读取失败：(.*)", "$1$2. Không đọc được hạn mức: $3"],
+  ["([✓✗] )(.*?)；额度已刷新：(.*?)%", "$1$2. Đã làm mới hạn mức: $3%"],
+  ["✗ 保活失败: (.*)", "✗ Duy trì phiên thất bại: $1"],
+  ["✓ 成功保活 (\\d+) 个账号，跳过 (\\d+) 个", "✓ Đã duy trì phiên cho $1 tài khoản và bỏ qua $2 tài khoản"],
+  ["Cookie 已更新（(\\d+) 条）", "Đã cập nhật cookie ($1)"],
+  ["确定删除账号「(.*)」？此操作不可撤销。", "Xóa tài khoản “$1”? Thao tác này không thể hoàn tác."],
+  ["已清空 (\\d+) 条记录", "Đã xóa $1 bản ghi"],
+  ["确定要删除媒体文件「(.*)」？此操作无法撤销。", "Xóa tệp “$1”? Thao tác này không thể hoàn tác."],
+  ["确定要永久删除选中的 (\\d+) 个媒体文件？此操作无法撤销。", "Xóa vĩnh viễn $1 tệp đã chọn? Thao tác này không thể hoàn tác."],
+  ["已成功删除 (\\d+) 个文件", "Đã xóa $1 tệp"],
+  ["读取失败：(.*)", "Không đọc được: $1"],
+  ["生成失败：(.*)", "Tạo thất bại: $1"],
+  ["额度查询失败：(.*)", "Kiểm tra hạn mức thất bại: $1"],
+  ["加载失败：(.*)", "Tải thất bại: $1"],
+  ["导入失败：(.*)", "Nhập thất bại: $1"],
+  ["测试失败：(.*)", "Kiểm tra thất bại: $1"],
+  ["保活执行失败：(.*)", "Duy trì phiên thất bại: $1"],
+  ["保活失败：(.*)", "Duy trì phiên thất bại: $1"],
+  ["操作失败：(.*)", "Thao tác thất bại: $1"],
+  ["改名失败：(.*)", "Đổi tên thất bại: $1"],
+  ["批量删除失败：(.*)", "Xóa hàng loạt thất bại: $1"],
+  ["删除失败：(.*)", "Xóa thất bại: $1"],
+  ["更新失败：(.*)", "Cập nhật thất bại: $1"],
+  ["清空失败：(.*)", "Xóa toàn bộ thất bại: $1"],
+  ["在线更新失败：(.*)", "Cập nhật trực tuyến thất bại: $1"],
+  ["任务 (.*?) · (.*?) · 已等待 (\\d+) 秒", "Tác vụ $1 · $2 · đã chờ $3 giây"],
+  ["任务 (.*?) · 已等待 (\\d+)s（视频通常 60–120 秒）…", "Tác vụ $1 · đã chờ $2 giây (video thường mất 60–120 giây)…"],
+  ["🔔 发现新版本 (\\S+) \\((.*)\\)", "🔔 Có phiên bản $1 mới ($2)"],
+  ["发现新更新 \\((.*)\\)", "Có bản cập nhật ($1)"],
+  ["🔔 官方仓库发布了新更新 \\((.*?)\\)：(.*)", "🔔 Kho nguồn có bản cập nhật ($1): $2"],
+  ["✓ 已是最新 (\\S+) \\((.*)\\)", "✓ Đã cập nhật $1 ($2)"],
+  ["(.*) · 已是最新", "$1 · Đã cập nhật"],
+  ["✨ 当前版本核心特性 \\((.*)\\)：", "✨ Tính năng chính của bản $1:"],
+  ["✓ (.*)，服务正在重启，就绪后将自动刷新页面…", "✓ $1. Dịch vụ đang khởi động lại. Trang sẽ tự làm mới…"],
+  ["(\\S+) \\((.*?)\\) → (\\S+) \\((.*?)\\)", "$1 ($2) → $3 ($4)"],
+  ["(.*) 等 (\\d+) 个", "$1 và các mục khác ($2 mục)"],
+  ["([✓✗] )(.*)", "$1$2"],
+  ["✓ 会话有效，可正常生成；额度已刷新：(.*?)%", "✓ Phiên hợp lệ. Đã làm mới hạn mức: $1%"],
+  ["✓ 会话有效，可正常生成；额度读取失败：(.*)", "✓ Phiên hợp lệ. Không đọc được hạn mức: $1"],
+  ["✓ 已成功更新至最新版本 (.+?) \\(([^()]*)\\)，服务正在重启，就绪后将自动刷新页面…", "✓ Đã cập nhật lên $1 ($2). Trang sẽ tự làm mới khi dịch vụ sẵn sàng…"],
+  ["✗ 保活失败: (.*)", "✗ Duy trì phiên thất bại: $1"],
+  ["指定账号 (.+?) 不存在或已禁用", "Tài khoản $1 không tồn tại hoặc đã tắt"],
+  ["请求参数校验失败：(.*)", "Tham số yêu cầu không hợp lệ: $1"],
+  ["会话正常 \\(VM: (.*?)\\)", "Phiên hợp lệ (VM: $1)"],
+  ["会话有效 · 自动保活 \\(VM: (.*?)\\)", "Phiên hợp lệ · Tự duy trì phiên (VM: $1)"],
+  ["任务异常: (.*)", "Lỗi tác vụ: $1"],
+  ["生成失败: (.*)", "Tạo thất bại: $1"],
+  ["助手超时: (.*)", "Hết thời gian chờ trợ lý: $1"],
+  ["内部错误: (.*)", "Lỗi nội bộ: $1"],
+  ["缺少核心 cookie：(.*?)，该账号可能无法生成", "Thiếu cookie chính: $1. Tài khoản có thể chưa tạo được nội dung"],
+  ["(\\w+)；额度缓存未更新", "$1. Dữ liệu hạn mức chưa cập nhật"],
+  ["测试未确认（保留账号状态）: (.*)", "Chưa xác minh kiểm tra (giữ trạng thái tài khoản): $1"],
+  ["保活认证失败: (.*)", "Xác thực khi duy trì phiên thất bại: $1"],
+  ["保活未确认（保留账号状态）: (.*)", "Chưa xác minh duy trì phiên (giữ trạng thái tài khoản): $1"],
+  ["额度查询失败: (.*)", "Kiểm tra hạn mức thất bại: $1"],
+  ["非法文件名: (.*)", "Tên tệp không hợp lệ: $1"],
+  ["删除失败: (.*)", "Xóa thất bại: $1"],
+  ["下载 GitHub 更新包失败 \\(HTTP (\\d+)\\)", "Không tải được gói cập nhật GitHub (HTTP $1)"],
+  ["已成功更新至最新版本 (.+?) \\(([^()]*)\\)", "Đã cập nhật lên phiên bản $1 ($2)"],
+  ["Git commit 失败: (.*)", "Git commit thất bại: $1"],
+  ["Git push 失败: (.*)", "Git push thất bại: $1"],
+  ["Chromium 启动失败: (.*)", "Khởi động Chromium thất bại: $1"],
+  ["/api/session 网络请求失败 \\((\\w+)\\)；请检查服务器网络/代理后重试", "Yêu cầu /api/session thất bại ($1). Hãy kiểm tra mạng hoặc proxy rồi thử lại"],
+  ["/api/session HTTP (\\d+)：访问被拒绝，请检查服务器出口/地区/访问限制；不能据此判定 Cookie 失效", "/api/session HTTP $1: bị từ chối. Kiểm tra IP đầu ra, khu vực và quyền truy cập. Cookie chưa được xác minh"],
+  ["/api/session HTTP (\\d+)：上游请求未成功，请稍后重试并检查服务器网络", "/api/session HTTP $1: yêu cầu tới Muse thất bại. Hãy kiểm tra mạng và thử lại sau"],
+  ["模型未生成媒体，仅返回文本: (.*)", "Model chỉ trả văn bản: $1"],
+  ["未能取回生成结果: 未知", "Không lấy được kết quả: nguyên nhân chưa rõ"],
+  ["未能取回生成结果: 解析失败 (.*)", "Không lấy được kết quả: không đọc được dữ liệu $1"],
+  ["未能取回生成结果: (.*)", "Không lấy được kết quả: $1"],
+  ["期望生成视频，但提取成品类型为图片 \\((.*?)\\)，拒绝以图片冒充视频交付", "Yêu cầu tạo video nhưng chỉ trích xuất được ảnh ($1)"],
+  ["期望生成视频，但下载成品类型为图片 \\((.*?)\\)，拒绝以图片冒充视频交付", "Yêu cầu tạo video nhưng tệp tải về là ảnh ($1)"],
+  ["CDP (\\S+) 超时", "CDP $1 hết thời gian chờ"],
+  ["✗ (.+)", "✗ $1"],
+].map(([re, rep]) => [new RegExp('^' + re + '$', 's'), rep]);
+const I18N_VI = {
+  "Muse 提示词指令语言": "Ngôn ngữ chỉ dẫn Muse",
+  "保存指令语言": "Lưu ngôn ngữ chỉ dẫn",
+  "仅更改 mac2API 添加的 Muse 指令，保留你发送的内容。": "Áp dụng cho phần chỉ dẫn mac2API thêm khi gửi sang Muse. Nội dung bạn gửi được giữ nguyên.",
+  "Muse 指令语言已保存。": "Đã lưu ngôn ngữ chỉ dẫn Muse.",
+  "有更新": "Có bản cập nhật",
+  "已是最新": "Đã cập nhật",
+  "版本状态待确认": "Chưa xác minh phiên bản",
+  "当前已部署版本：": "Phiên bản đã cài: ",
+  "更新来源：": "Nguồn cập nhật: ",
+  "远端版本：": "Phiên bản từ xa: ",
+  "远端提交读取失败": "Không đọc được commit từ xa",
+  "可选的网关路由缓存（不是登录必要项）": "Bộ nhớ đệm định tuyến tùy chọn",
+  "可选设备标识（匿名访客也有，不是登录凭证）": "ID thiết bị tùy chọn (khách ẩn danh cũng có)",
+  "请从配置的仓库分支重建并切换镜像。": "Hãy dựng lại image từ nhánh đã cấu hình rồi chuyển sang image mới.",
+  "此实例通过镜像部署，更新需从上述分支构建并切换容器。": "Dịch vụ dùng image. Hãy dựng image từ nhánh trên và thay container để cập nhật.",
+  "此实例通过镜像部署，请从配置的仓库分支更新容器": "Hãy dựng lại image từ nhánh đã cấu hình để cập nhật container",
+  "修复工作区暂未分配时丢弃新 Cookie 的问题；保存轮换后的登录态，但不把未确认会话标成成功。": "Giữ cookie mới khi Muse chưa cấp không gian làm việc. Phiên vẫn cần được xác minh.",
+  "浏览器插件升级至 1.0.3：按当前普通/无痕窗口读取 Cookie，避免导入另一个窗口的账号；找不到存储区时停止导入。": "Tiện ích 1.0.3 đọc cookie của cửa sổ hiện tại, kể cả cửa sổ ẩn danh. Nếu không xác định được kho cookie, thao tác nhập sẽ dừng.",
+  "图片和视频采用独立排队时限（默认 3600 秒，0 为不限）；排队不消耗生成预算，失败记录保留账号、尝试次数和原始错误。": "Ảnh và video có thời gian chờ riêng (mặc định 3600 giây, 0 là không giới hạn). Tác vụ thất bại giữ tài khoản, số lần thử và lỗi gốc.",
+  "检查更新只读：如实区分本地版本/提交与远端状态；有更新时提醒，由管理员手动确认升级，任务排队或运行期间拒绝更新。": "Kiểm tra cập nhật chỉ đọc thông tin. Quản trị viên xác nhận nâng cấp khi hàng đợi và tác vụ đang chạy đều trống.",
+  "媒体库只加载视频缩略图，点击后才加载所选视频，关闭预览释放播放器；源部署需 FFmpeg，Docker 用户请重建镜像。": "Thư viện tải hình thu nhỏ trước và chỉ tải video khi phát. Bản cài từ mã nguồn cần FFmpeg. Với Docker, hãy dựng lại image.",
+  "组合修复聊天与媒体的资源获取顺序、排队设置跨域 PUT 和固定提交版本读取；继续保留独立代理、轮询及会话健康检查。": "Đã sửa thứ tự lấy tài nguyên chat và media, hỗ trợ PUT khi kiểm tra CORS và gắn thông tin phiên bản với commit cụ thể.",
+  "请先更新服务，再手动升级插件 1.0.3：替换原目录并重新加载；每个浏览器个人资料分别升级，无痕模式还需允许扩展运行。油猴脚本仍为 1.1.2。": "Cập nhật dịch vụ rồi thay tệp và tải lại tiện ích 1.0.3 trong từng hồ sơ. Cấp quyền chạy ẩn danh nếu cần. Tập lệnh Tampermonkey vẫn là 1.1.2.",
+  "排队与生成时限": "Thời gian chờ và tạo nội dung",
+  "排队不占用生成时限。任务获得并发槽位和账号后开始计算生成时间；重试时等待账号也不计入。": "Thời gian xếp hàng được tính riêng. Tác vụ bắt đầu tính thời gian tạo khi có cả khe xử lý và tài khoản. Thời gian chờ tài khoản khi thử lại cũng tính vào thời gian xếp hàng.",
+  "独立排队时限（秒，0 为不限）": "Giới hạn chờ riêng (giây, 0 là không giới hạn)",
+  "保存排队设置": "Lưu cài đặt hàng đợi",
+  "排队设置已保存": "Đã lưu cài đặt hàng đợi",
+  "播放视频": "Phát video",
+  "关闭预览": "Đóng xem trước",
+  "代理配置已保存，账号浏览器状态待测试": "Đã lưu proxy. Hãy kiểm tra tài khoản trong trình duyệt",
+  "代理地址或完整链接": "Địa chỉ hoặc URL đầy đủ của proxy",
+  "可直接粘贴包含用户名和密码的 HTTP、SOCKS5 或 SOCKS5h 链接，立即测试，无需先保存。": "Dán IP:PORT:USER:PASS cho proxy HTTP hoặc URL HTTP, SOCKS5 hay SOCKS5h. Bạn có thể kiểm tra trước khi lưu.",
+  "手动填写认证信息（可选）": "Nhập thông tin xác thực thủ công (tùy chọn)",
+  "测试连通性": "Kiểm tra kết nối",
+  "请输入代理链接": "Nhập URL proxy",
+  "请输入代理链接或先保存该账号的代理": "Nhập URL hoặc lưu proxy cho tài khoản trước",
+  "正在通过当前输入的代理检测出口与 Muse 会话…": "Đang kiểm tra IP đầu ra và phiên Muse qua proxy vừa nhập…",
+  "取消": "Hủy",
+  "192.0.2.10:8080:user:pass 或 socks5://proxy.example.com:1080": "192.0.2.10:8080:user:pass hoặc socks5://proxy.example.com:1080",
+  "请先保存该账号的代理": "Hãy lưu proxy cho tài khoản trước",
+  "账号正在执行任务或检测，请稍后再试": "Tài khoản đang chạy tác vụ hoặc kiểm tra. Hãy thử lại sau",
+  "账号正在执行任务或检测，请稍后再修改代理": "Tài khoản đang chạy tác vụ hoặc kiểm tra. Hãy đợi trước khi đổi proxy",
+  "代理已修改，请重新测试": "Proxy đã đổi. Hãy kiểm tra lại tài khoản",
+  "请先保存该账号的 HTTP 代理": "Hãy lưu proxy HTTP cho tài khoản trước",
+  "代理出口检测未成功，请检查代理连接或认证": "Chưa kiểm tra được IP đầu ra. Hãy kiểm tra kết nối hoặc thông tin xác thực",
+  "代理出口与 Muse 会话检查通过；生成能力请使用账号测试和实际任务验证": "Đã xác minh IP đầu ra và phiên Muse. Hãy kiểm tra trình duyệt và chạy tác vụ thực tế để xác nhận khả năng tạo nội dung",
+  "代理可连接，但 Muse 会话认证失败，请重新导入 Cookie": "Proxy kết nối được nhưng xác thực phiên Muse thất bại. Hãy nhập lại cookie",
+  "代理出口检测失败，请检查代理地址、认证和网络": "Kiểm tra IP đầu ra thất bại. Hãy kiểm tra máy chủ, thông tin xác thực và mạng",
+  "账号代理认证失败 (HTTP 407)，请检查代理用户名和密码": "Xác thực proxy thất bại (HTTP 407). Hãy kiểm tra tên đăng nhập và mật khẩu",
+  "账号代理认证失败 (HTTP 407)，未完成 VM 唤醒": "Xác thực proxy thất bại (HTTP 407). Chưa đánh thức được máy ảo",
+  "账号代理认证失败 (HTTP 407)，未完成 VM 状态确认": "Xác thực proxy thất bại (HTTP 407). Chưa xác minh trạng thái máy ảo",
+  "账号代理浏览器连接失败，请检查节点或认证；未回退直连": "Trình duyệt không kết nối được qua proxy. Hãy kiểm tra máy chủ hoặc thông tin xác thực. Kết nối trực tiếp đã không được sử dụng",
+  "代理未测试": "Chưa kiểm tra proxy",
+  "代理已连通": "Proxy kết nối được",
+  "代理未通过": "Proxy gặp lỗi",
+  "代理未确认": "Chưa xác minh proxy",
+  "账号代理": "Proxy tài khoản",
+  "该账号的浏览器、会话检测与保活使用同一代理。代理失败会报告错误，不会自动直连。": "Trình duyệt, kiểm tra phiên và duy trì đăng nhập dùng cùng proxy. Khi proxy lỗi, hệ thống báo lỗi và giữ nguyên tuyến kết nối.",
+  "连接方式": "Chế độ kết nối",
+  "默认网络": "Mạng mặc định",
+  "指定代理": "Dùng proxy",
+  "代理": "Proxy",
+  "代理地址": "Máy chủ proxy",
+  "代理用户名（可选）": "Tên đăng nhập proxy (tùy chọn)",
+  "代理密码": "Mật khẩu proxy",
+  "支持 HTTP 与 SOCKS5（socks5/socks5h）代理及用户名/密码认证。127.0.0.1 指部署服务器，不是你的电脑。": "Hỗ trợ HTTP và SOCKS5 (socks5/socks5h) với thông tin xác thực tùy chọn. 127.0.0.1 là địa chỉ cục bộ của máy chạy dịch vụ.",
+  "密码不会回显。地址与用户名不变时，留空保留已保存密码；修改地址或用户名后请重新输入密码。": "Để trống để giữ mật khẩu đã lưu nếu máy chủ và tên đăng nhập vẫn như cũ. Nhập lại mật khẩu khi thay đổi một trong hai.",
+  "账号正在执行任务时，请稍后再修改代理。保存后，下次请求使用新设置。": "Đợi tác vụ hiện tại kết thúc trước khi đổi proxy. Cài đặt đã lưu áp dụng từ yêu cầu tiếp theo.",
+  "测试已保存代理": "Kiểm tra proxy đã lưu",
+  "移除代理": "Xóa proxy",
+  "代理已保存，下次请求生效": "Đã lưu proxy, áp dụng từ yêu cầu tiếp theo",
+  "代理已移除，恢复默认网络": "Đã xóa proxy và khôi phục mạng mặc định",
+  "请先保存代理设置，再重新打开此窗口测试": "Lưu cài đặt proxy, rồi mở lại hộp thoại để kiểm tra",
+  "代理连通：已确认": "Kết nối proxy: thành công",
+  "代理连通：未通过": "Kết nối proxy: thất bại",
+  "代理连通：未确认": "Kết nối proxy: chưa xác minh",
+  "Muse 会话：已确认": "Phiên Muse: đã xác minh",
+  "Muse 会话：未通过": "Phiên Muse: thất bại",
+  "Muse 会话：未确认": "Phiên Muse: chưa xác minh",
+  "账号或任务正在使用中，请稍后重试 (HTTP 409)": "Tài khoản hoặc tác vụ đang bận. Hãy thử lại sau (HTTP 409)",
+  "muse2api · 账号池控制台": "Muse2API · Bảng quản lý tài khoản",
+  "Muse 网页额度 · 反代 API": "Hạn mức Muse · API trung gian",
+  "打开 GitHub 开源仓库 (https://github.com/czg86389-hub/muse2api)": "Mở kho GitHub (https://github.com/czg86389-hub/muse2api)",
+  "GitHub 仓库": "Kho GitHub",
+  "查看官方仓库最新版本状态与更新通知": "Xem phiên bản mới nhất và thông báo cập nhật từ kho nguồn",
+  "版本检测": "Kiểm tra phiên bản",
+  "服务": "Dịch vụ",
+  "账号": "Tài khoản",
+  "浏览器": "Trình duyệt",
+  "自动刷新": "Tự làm mới",
+  "粘贴 m2a_ 开头的密钥": "Dán khóa bắt đầu bằng m2a_",
+  "保存": "Lưu",
+  "检测到 muse2api 官方仓库发布了新版本更新！": "Đã có phiên bản Muse2API mới trong kho nguồn!",
+  "新版本": "Phiên bản mới",
+  "官方仓库已有新功能或性能优化提交，点击右侧按钮即可一键在线升级（自动保留本地 .env 密钥与账号池数据）。": "Kho nguồn có tính năng mới hoặc cải tiến hiệu năng. Bạn có thể cập nhật bằng nút ở bên phải. Khóa trong .env và dữ liệu tài khoản được giữ lại.",
+  "⚡ 一键在线升级并重启": "⚡ Cập nhật và khởi động lại",
+  "查看更新内容": "Xem thay đổi",
+  "暂不提醒": "Nhắc lại sau",
+  "仓库版本检测与更新": "Kiểm tra phiên bản và cập nhật",
+  "检测中…": "Đang kiểm tra…",
+  "⚡ 一键从 GitHub 在线更新并重启": "⚡ Cập nhật từ GitHub và khởi động lại",
+  "🔍 立即重新检测更新": "🔍 Kiểm tra cập nhật ngay",
+  "查看 GitHub 完整提交记录 ↗": "Xem lịch sử commit trên GitHub ↗",
+  "账号池": "Quản lý tài khoản",
+  "获取 Cookie": "Nhập cookie",
+  "任务记录": "Tác vụ",
+  "媒体库": "Thư viện ảnh và video",
+  "接口测试": "Thử API",
+  "接入文档": "Hướng dẫn tích hợp",
+  "去重新登录": "Đăng nhập lại",
+  "接入信息": "Thông tin kết nối",
+  "下游项目填这两个值": "Điền hai giá trị này vào ứng dụng",
+  "把下面两项填进你的项目就能调用。BASE URL 就是接口地址前缀。": "Dùng hai giá trị bên dưới để gọi API. BASE URL là phần đầu của địa chỉ API.",
+  "BASE URL（接口地址）": "BASE URL (địa chỉ API)",
+  "复制": "Sao chép",
+  "API Key（访问密钥）": "API Key (khóa truy cập)",
+  "显示": "Hiện",
+  "重新生成": "Tạo khóa mới",
+  "账号总数": "Tổng số tài khoản",
+  "可用": "Khả dụng",
+  "异常": "Lỗi",
+  "已禁用": "Đã tắt",
+  "媒体文件": "Tệp ảnh và video",
+  "添加账号": "Thêm tài khoản",
+  "支持批量": "Hỗ trợ nhập hàng loạt",
+  "账号标签（单条导入用）": "Nhãn tài khoản (nhập một tài khoản)",
+  "例如 muse-main": "Ví dụ: muse-main",
+  "Cookie 字符串": "Chuỗi cookie",
+  "hatch_sess=...; hatch_vml=...\n或批量：\nacc-01 | hatch_sess=...; hatch_vml=...\nacc-02 | hatch_sess=...; hatch_vml=...": "hatch_sess=...; hatch_vml=...\nHoặc nhập hàng loạt:\nacc-01 | hatch_sess=...; hatch_vml=...\nacc-02 | hatch_sess=...; hatch_vml=...",
+  "导入账号": "Nhập tài khoản",
+  "清空": "Xóa nội dung",
+  "账号列表": "Tài khoản",
+  "● 自动保活轮转中 (30m)": "● Tự duy trì phiên định kỳ (30 phút)",
+  "⚡ 一键保活所有账号": "⚡ Duy trì phiên cho tất cả tài khoản",
+  "标签": "Nhãn",
+  "账号 ID": "ID tài khoản",
+  "状态": "Trạng thái",
+  "有效期": "Hết hạn",
+  "额度": "Hạn mức",
+  "启用": "Bật",
+  "最后使用": "Lần dùng gần nhất",
+  "备注": "Ghi chú",
+  "操作": "Thao tác",
+  "加载中…": "Đang tải…",
+  "方式一：浏览器扩展": "Cách 1: Tiện ích trình duyệt",
+  "推荐 · 零命令行 · 全平台": "Khuyên dùng · Không cần dòng lệnh · Đa nền tảng",
+  "下载并解压扩展": "Tải và giải nén tiện ích",
+  "⬇ 下载 muse2api-extension.zip": "⬇ Tải muse2api-extension.zip",
+  "查看包含哪些文件": "Xem các tệp trong gói",
+  "在浏览器里加载扩展": "Nạp tiện ích vào trình duyệt",
+  "以 Chrome 为例（Edge / Brave / 360 极速 等 Chromium 内核浏览器步骤类似）：": "Ví dụ trên Chrome (Edge, Brave và các trình duyệt Chromium khác có thao tác tương tự):",
+  "登录 muse.ai，然后点扩展图标导入": "Đăng nhập Muse.ai, rồi bấm biểu tượng tiện ích để nhập",
+  "BASE URL（填进扩展）": "BASE URL (điền vào tiện ích)",
+  "API Key（填进扩展）": "API Key (điền vào tiện ích)",
+  "方式二：手动复制": "Cách 2: Sao chép thủ công",
+  "零安装 · 兜底": "Phương án dự phòng · Không cần cài đặt",
+  "方式三：粘贴导入 / 本机脚本": "Cách 3: Dán cookie hoặc dùng tập lệnh cục bộ",
+  "进阶": "Nâng cao",
+  "已经拿到 cookie 串的话，直接粘在这里导入（方式二手动复制的串也粘这里）。": "Nếu đã có chuỗi cookie, hãy dán vào đây. Bạn cũng có thể dán chuỗi sao chép ở Cách 2.",
+  "账号标签": "Nhãn tài khoản",
+  "例如 acc-01": "Ví dụ: acc-01",
+  "① 下载脚本": "① Tải tập lệnh",
+  "查看源码": "Xem mã nguồn",
+  "② 运行（地址和密钥已帮你填好）": "② Chạy tập lệnh (địa chỉ và khóa đã được điền sẵn)",
+  "正在生成命令…": "Đang tạo lệnh…",
+  "③ 在弹出的浏览器窗口里登录 muse.ai → 脚本自动抓取并上传 → 自动关窗。": "③ Đăng nhập Muse.ai trong cửa sổ vừa mở. Tập lệnh sẽ gửi cookie và tự đóng cửa sổ.",
+  "Cookie 有效期说明": "Thời hạn cookie",
+  "实测": "Đo thực tế",
+  "实测 muse.ai 各条 cookie 的有效期（不同账号可能略有差异）：": "Thời hạn đo được của từng cookie Muse.ai có thể thay đổi theo tài khoản:",
+  "实测有效期": "Thời hạn đo được",
+  "作用": "Mục đích",
+  "是": "Có",
+  "约 30 天": "Khoảng 30 ngày",
+  "主会话，决定能不能登录": "Phiên chính dùng để xác thực đăng nhập",
+  "约 1 年": "Khoảng 1 năm",
+  "网关令牌": "Mã thông báo cổng kết nối",
+  "约 2 天": "Khoảng 2 ngày",
+  "设备标识（匿名访客也有，不是登录凭证）": "ID thiết bị (khách ẩn danh cũng có)",
+  "生成任务记录": "Tác vụ tạo nội dung",
+  "生视频是异步任务，状态会从 queued → processing → succeeded / failed。": "Video chạy bất đồng bộ. Trạng thái đi từ chờ xử lý đến đang xử lý, sau đó thành công hoặc thất bại.",
+  "刷新": "Làm mới",
+  "清空全部": "Xóa tất cả",
+  "任务 ID": "ID tác vụ",
+  "类型": "Loại",
+  "提示词": "Mô tả",
+  "耗时": "Thời lượng",
+  "创建时间": "Thời điểm tạo",
+  "结果 / 错误": "Kết quả hoặc lỗi",
+  "所有已生成并落盘的图片 / 视频，可直接下载或把链接给下游项目使用。": "Ảnh và video đã tạo được lưu trên đĩa. Bạn có thể tải tệp hoặc dùng liên kết trong ứng dụng khác.",
+  "全选": "Chọn tất cả",
+  "删除选中 (": "Xóa mục đã chọn (",
+  "在线生图测试": "Thử tạo ảnh",
+  "真实调用 muse.ai 生成，图片约 10–30 秒返回。": "Gọi Muse.ai để tạo ảnh. Kết quả thường có sau khoảng 10–30 giây.",
+  "比例": "Tỷ lệ khung hình",
+  "开始生成图片": "Tạo ảnh",
+  "在线生视频测试": "Thử tạo video",
+  "异步任务，一般 60–120 秒完成，页面会自动轮询进度。": "Tác vụ bất đồng bộ thường mất 60–120 giây. Trang sẽ tự kiểm tra tiến độ.",
+  "时长(秒)": "Thời lượng (giây)",
+  "开始生成视频": "Tạo video",
+  "接入说明": "Hướng dẫn tích hợp",
+  "1. 可用模型": "1. Model khả dụng",
+  "模型 ID": "ID model",
+  "用途": "Công dụng",
+  "接口": "Endpoint",
+  "文本 / 代码对话（支持流式）": "Chat văn bản và mã nguồn (hỗ trợ streaming)",
+  "文生图 / 图像编辑": "Tạo hoặc chỉnh sửa ảnh",
+  "文生视频 / 图生视频": "Tạo video từ văn bản hoặc ảnh",
+  "2. 对话 / 写代码": "2. Chat và lập trình",
+  "# 非流式": "# Trả kết quả một lần",
+  "'{\"model\":\"muse-spark\",\"messages\":[{\"role\":\"user\",\"content\":\"写一个 Python 快排\"}]}'": "'{\"model\":\"muse-spark\",\"messages\":[{\"role\":\"user\",\"content\":\"Viết thuật toán quicksort bằng Python\"}]}'",
+  "# 流式：加 \"stream\":true，返回标准 SSE（data: {...} / data: [DONE]）": "# Streaming: thêm \"stream\":true để nhận SSE chuẩn (data: {...} / data: [DONE])",
+  "3. 生图（curl）": "3. Tạo ảnh bằng curl",
+  "'{\"prompt\":\"一只戴宇航头盔的柴犬\",\"size\":\"1:1\",\"response_format\":\"url\"}'": "'{\"prompt\":\"Một chú chó Shiba Inu đội mũ phi hành gia\",\"size\":\"1:1\",\"response_format\":\"url\"}'",
+  "# 返回": "# Phản hồi",
+  "\"一只戴宇航头盔的柴犬\"": "\"Một chú chó Shiba Inu đội mũ phi hành gia\"",
+  "# url 是完整绝对地址，可直接给下游渲染 / 下载；/v1/media/* 无需鉴权。": "# url là địa chỉ đầy đủ để tải hoặc xem tệp. /v1/media/* không yêu cầu xác thực.",
+  "# 想要 base64 就传 \"response_format\":\"b64_json\"。": "# Để nhận base64, truyền \"response_format\":\"b64_json\".",
+  "4. 生视频（curl，异步）": "4. Tạo video bất đồng bộ bằng curl",
+  "# ① 创建任务": "# ① Tạo tác vụ",
+  "'{\"prompt\":\"一只小猫在草地上走动\",\"duration\":5,\"size\":\"16:9\"}'": "'{\"prompt\":\"Một chú mèo con đi trên bãi cỏ\",\"duration\":5,\"size\":\"16:9\"}'",
+  "# ② 轮询结果": "# ② Kiểm tra kết quả",
+  "5. Python（openai SDK 兼容）": "5. Python (tương thích SDK openai)",
+  "# 生图": "# Tạo ảnh",
+  "# 生视频（走原生接口，因为是异步任务）": "# Tạo video (dùng endpoint bất đồng bộ)",
+  "\"小猫走动\"": "\"Một chú mèo con đang đi\"",
+  "6. 管理接口": "6. API quản trị",
+  "方法": "Phương thức",
+  "路径": "Đường dẫn",
+  "说明": "Mô tả",
+  "服务总览 + 账号池 + 最近任务": "Tổng quan dịch vụ, tài khoản và tác vụ gần đây",
+  "添加账号（单条 / batch 批量文本）": "Thêm tài khoản (đơn lẻ hoặc hàng loạt)",
+  "改标签 / 启用禁用": "Đổi tên, bật hoặc tắt",
+  "删除账号": "Xóa tài khoản",
+  "真实校验会话有效性（顺带刷新额度）": "Kiểm tra phiên và cập nhật hạn mức",
+  "实时读取该账号剩余额度": "Đọc hạn mức còn lại của tài khoản",
+  "更新该账号 cookie": "Cập nhật cookie cho tài khoản",
+  "媒体库列表": "Danh sách tệp ảnh và video",
+  "批量删除媒体文件": "Xóa hàng loạt tệp ảnh và video",
+  "7. 鉴权": "7. Xác thực",
+  "8. 接入各类客户端 / 智能体": "8. Kết nối ứng dụng hoặc tác nhân",
+  "凡是支持「自定义 OpenAI 兼容端点」的客户端，都只填三个值就能用：": "Ứng dụng hỗ trợ endpoint tùy chỉnh tương thích OpenAI cần ba giá trị sau:",
+  "配置项": "Cài đặt",
+  "填什么": "Giá trị",
+  "Base URL / API 地址": "Base URL / địa chỉ API",
+  "http://<你的服务器IP或域名>:18610/v1": "http://<IP-hoặc-tên-miền-máy-chủ>:18610/v1",
+  "m2a_...（本页顶部「接入信息」里那个）": "m2a_... (xem mục Thông tin kết nối ở đầu trang)",
+  "模型名": "Tên model",
+  "按客户端类型看能不能用": "Khả năng tương thích theo loại ứng dụng",
+  "客户端类型": "Loại ứng dụng",
+  "依赖能力": "Yêu cầu",
+  "对话 / 聊天类（桌面端、Web UI、浏览器插件）": "Ứng dụng chat (máy tính, web hoặc tiện ích trình duyệt)",
+  "✅ 可用": "✅ Hỗ trợ",
+  "流式输出（打字机效果）": "Kết quả hiện dần khi có dữ liệu",
+  "stream:true（标准 SSE）": "stream:true (SSE chuẩn)",
+  "代码补全 / 内联补全插件": "Tiện ích gợi ý và hoàn thành mã",
+  "翻译 / 总结 / 解释类工具": "Công cụ dịch, tóm tắt hoặc giải thích",
+  "画图类客户端": "Ứng dụng tạo ảnh",
+  "视频生成客户端": "Ứng dụng tạo video",
+  "POST /v1/videos（异步轮询）": "POST /v1/videos (kiểm tra trạng thái bất đồng bộ)",
+  "需要「工具调用」的自主 Agent 模式": "Chế độ tự động cần gọi công cụ",
+  "⚠️ 不可用": "⚠️ Chưa hỗ trợ",
+  "开源仓库：": "Mã nguồn:",
+  "一只戴宇航头盔的柴犬，赛博朋克风格，霓虹灯背景": "Một chú chó Shiba Inu đội mũ phi hành gia, phong cách cyberpunk, nền đèn neon",
+  "一只橙色小猫在草地上慢慢走动，阳光明媚": "Một chú mèo cam đi chậm trên bãi cỏ vào ngày nắng",
+  "✓ 已登录": "✓ Đã đăng nhập",
+  "API Key 必填": "Cần API Key",
+  "已清除 API Key": "Đã xóa API Key",
+  "API Key 已保存到本机浏览器，下次打开自动带上": "Đã lưu API Key trong trình duyệt để dùng lần sau",
+  "API Key 未填写或填写错误": "API Key bị thiếu hoặc sai",
+  "请求参数有误 (HTTP 400)，请检查输入内容": "Tham số không hợp lệ (HTTP 400). Hãy kiểm tra dữ liệu nhập",
+  "服务器拒绝了该请求 (HTTP 403)，请确认登录状态与访问权限": "Máy chủ từ chối yêu cầu (HTTP 403). Hãy kiểm tra phiên và quyền truy cập",
+  "接口不存在 (HTTP 404)，可能是版本不匹配，请刷新页面或更新服务端": "Không tìm thấy endpoint (HTTP 404). Hãy làm mới trang hoặc kiểm tra phiên bản máy chủ",
+  "服务端不支持该请求方式 (HTTP 405)，请刷新页面或更新服务端": "Máy chủ không hỗ trợ phương thức yêu cầu (HTTP 405). Hãy làm mới trang hoặc kiểm tra phiên bản",
+  "提交内容过大 (HTTP 413)，请减少本次提交的数据量后重试": "Dữ liệu gửi quá lớn (HTTP 413). Hãy giảm kích thước và thử lại",
+  "请求过于频繁 (HTTP 429)，请稍等片刻后重试": "Quá nhiều yêu cầu (HTTP 429). Hãy đợi một lúc rồi thử lại",
+  "服务端内部错误 (HTTP 500)，请稍后重试或查看服务器日志": "Lỗi máy chủ (HTTP 500). Hãy thử lại sau hoặc xem nhật ký",
+  "服务返回网关错误 (HTTP 502)，请稍后重试；持续失败请查看服务器日志": "Lỗi cổng kết nối (HTTP 502). Hãy thử lại và xem nhật ký nếu lỗi tiếp diễn",
+  "服务暂时不可用 (HTTP 503)，可能正在重启或过载，请稍后重试": "Dịch vụ tạm thời gián đoạn (HTTP 503). Có thể đang khởi động lại hoặc quá tải",
+  "网关超时 (HTTP 504)，上游处理时间过长，请稍后重试或调整反代超时设置": "Hết thời gian chờ (HTTP 504). Hãy thử lại hoặc điều chỉnh thời gian chờ của proxy ngược",
+  "从未": "Chưa từng",
+  "已复制": "Đã sao chép",
+  "已复制到剪贴板": "Đã sao chép vào bộ nhớ tạm",
+  "没有可复制的内容": "Không có dữ liệu để sao chép",
+  "复制失败，请手动选中复制": "Sao chép thất bại. Hãy chọn và sao chép thủ công",
+  "（先在右上角填入 API Key，这里会生成完整命令）": "(Nhập API Key ở góc trên bên phải để tạo lệnh đầy đủ)",
+  "隐藏": "Ẩn",
+  "读取中…": "Đang tải…",
+  "（扩展目录为空，请检查部署）": "(Thư mục tiện ích trống. Hãy kiểm tra bản triển khai)",
+  "、": ", ",
+  "重新生成 API Key？\n\n旧 Key 会立即失效，已经接入的下游项目必须同步更新，否则会报 401。": "Tạo API Key mới?\n\nKhóa cũ sẽ hết hiệu lực ngay. Hãy cập nhật ứng dụng đang dùng khóa cũ để tránh lỗi 401.",
+  "已生成新 Key 并立即生效，本页已自动更新": "Khóa mới đã có hiệu lực và trang đã cập nhật",
+  "未查": "Chưa kiểm tra",
+  "还没查过。点「操作」里的「额度」实时查询": "Bấm Hạn mức trong cột Thao tác để đọc số liệu hiện tại",
+  "额度数据已超过 1 小时，需重新查询": "Dữ liệu hạn mức đã hơn một giờ. Hãy kiểm tra lại",
+  "查询中…": "Đang kiểm tra…",
+  "设置面板里没有读到额度数据（可能是页面结构变了）": "Chưa đọc được hạn mức trong trang cài đặt. Bố cục trang có thể đã đổi",
+  "未知": "Chưa rõ",
+  "未记录有效期": "Chưa ghi nhận thời điểm hết hạn",
+  "已过期": "Đã hết hạn",
+  "的有效期不足 12 小时。muse.ai 的会话约 2 天到期且不会因使用而延长，建议现在重新登录一次，避免生成时突然失败。": "sắp hết hạn trong vòng 12 giờ. Hãy đăng nhập lại để tránh tác vụ bị gián đoạn.",
+  "还没有账号。去「获取 Cookie」页签按三步导入一个": "Chưa có tài khoản. Mở mục Nhập cookie để thêm tài khoản",
+  "● 可用": "● Hoạt động",
+  "● 异常": "● Lỗi",
+  "○ 未检测": "○ Chưa kiểm tra",
+  "缺少核心 cookie，无法生成": "Thiếu cookie cần thiết để tạo nội dung",
+  "缺核心": "Thiếu cookie chính",
+  "开": "Bật",
+  "关": "Tắt",
+  "测试": "Kiểm tra",
+  "保活": "Duy trì phiên",
+  "静默刷新会话令牌与有效期": "Làm mới mã phiên và thời hạn ở chế độ nền",
+  "禁用": "Tắt",
+  "改名": "Đổi tên",
+  "更新Cookie": "Cập nhật cookie",
+  "删除": "Xóa",
+  "🔑 请先在右上角填入 API Key 并点「保存」": "🔑 Nhập API Key ở góc trên bên phải rồi bấm Lưu",
+  "请先粘贴 Cookie": "Hãy dán cookie trước",
+  "正在真实打开 muse.ai 校验会话…": "Đang mở Muse.ai để xác minh phiên…",
+  "正在为该账号执行会话静默续期…": "Đang làm mới phiên cho tài khoản…",
+  "✓ 账号保活成功，新到期时间已更新": "✓ Đã duy trì phiên và cập nhật thời hạn",
+  "未知错误": "lỗi chưa xác định",
+  "保活执行中…": "Đang duy trì phiên…",
+  "正在唤醒无头浏览器，为账号池执行静默续期与保活…": "Đang mở trình duyệt chạy nền để làm mới các phiên tài khoản…",
+  "保活任务正在后台运行中，请稍候查看": "Một tác vụ duy trì phiên đang chạy. Hãy kiểm tra lại sau",
+  "已启用": "Đã bật",
+  "新的账号标签：": "Nhãn tài khoản mới:",
+  "标签已更新": "Đã cập nhật nhãn",
+  "粘贴该账号最新的 Cookie 字符串：": "Dán chuỗi cookie mới cho tài khoản:",
+  "已删除": "Đã xóa",
+  "暂无任务记录": "Chưa có tác vụ",
+  "查看结果": "Xem kết quả",
+  "视频": "Video",
+  "图片": "Ảnh",
+  "删": "Xóa",
+  "确定清空全部任务记录？（已生成的媒体文件不会被删除）": "Xóa toàn bộ bản ghi tác vụ? Các tệp ảnh và video đã tạo vẫn được lưu.",
+  "取消全选": "Bỏ chọn tất cả",
+  "删除成功": "Đã xóa",
+  "文件不存在或已被删除": "Tệp không tồn tại hoặc đã bị xóa",
+  "请先选择要删除的媒体文件": "Hãy chọn tệp cần xóa trước",
+  "删除中…": "Đang xóa…",
+  "还没有生成任何媒体文件": "Chưa có tệp ảnh hoặc video",
+  "勾选以批量操作": "Chọn để thao tác hàng loạt",
+  "打开": "Mở",
+  "下载": "Tải xuống",
+  "请输入提示词": "Hãy nhập mô tả",
+  "生成中…": "Đang tạo…",
+  "正在提交图片任务，生成期间会持续查询状态…": "Đang gửi tác vụ tạo ảnh và sẽ tự kiểm tra tiến độ…",
+  "等待超过 15 分钟，请在任务记录查看结果，勿重复提交": "Đã chờ hơn 15 phút. Hãy xem kết quả trong mục Tác vụ để tránh gửi trùng",
+  "图片生成失败": "Tạo ảnh thất bại",
+  "状态查询暂时失败，请在任务记录查看，勿重复提交": "Tạm thời chưa lấy được trạng thái. Hãy xem mục Tác vụ để tránh gửi trùng",
+  "✓ 生成成功": "✓ Đã tạo thành công",
+  "✗ 生成失败": "✗ Tạo thất bại",
+  "正在创建视频任务…": "Đang tạo tác vụ video…",
+  "✗ 创建任务失败": "✗ Không tạo được tác vụ",
+  "旧版": "cũ",
+  "最新": "mới nhất",
+  "最新仓库提交：": "Commit mới nhất trong kho: ",
+  "性能优化与功能更新": "Cải thiện hiệu năng và cập nhật tính năng",
+  "· 点击右侧「⚡ 一键在线升级并重启」即可自动拉取更新（保留本地配置与账号数据）。": "· Bấm Cập nhật và khởi động lại để tải bản cập nhật. Cấu hình và dữ liệu tài khoản được giữ lại.",
+  "点击顶部一键升级": "bấm nút cập nhật ở đầu trang",
+  "当前已部署版本：": "Đang triển khai: ",
+  "（Commit:": " (Commit:",
+  "） · GitHub 官方仓库最新：": ") · Mới nhất trên GitHub: ",
+  "）": ")",
+  "📜 官方仓库最近提交动态：": "📜 Commit gần đây trong kho nguồn:",
+  "暂无提交记录": "Chưa có commit",
+  "🔔 检测到新版本更新！": "🔔 Đã có phiên bản mới!",
+  "✓ 当前已是官方仓库最新版本": "✓ Bạn đang dùng phiên bản mới nhất trong kho nguồn",
+  "待鉴权": "Đang chờ xác thực",
+  "确定立即从 GitHub 官方仓库 (czg86389-hub/muse2api) 拉取最新代码并自动重启服务吗？\n\n（注：本地 .env 密钥、账号池 Cookie 和已生成的媒体文件均会自动保留，不受任何影响）": "Tải mã mới nhất từ kho GitHub (czg86389-hub/muse2api) và khởi động lại dịch vụ?\n\nKhóa trong .env, cookie tài khoản và tệp đã tạo sẽ được giữ lại.",
+  "正在在线更新…": "Đang cập nhật…",
+  "更新完成": "Cập nhật hoàn tất",
+  "正常": "OK",
+  "运行中": "Đang chạy",
+  "空闲": "Đang rảnh",
+  "待登录": "Cần đăng nhập",
+  "等待空闲账号超时，当前所有账号均处于繁忙中": "Hết thời gian chờ tài khoản rảnh. Hiện tất cả tài khoản đang bận",
+  "没有可用账号，请先在管理页面导入 cookie": "Chưa có tài khoản khả dụng. Hãy nhập cookie trong trang quản trị",
+  "缺少 Authorization: Bearer <key>": "Thiếu Authorization: Bearer <key>",
+  "API key 无效": "API key không hợp lệ",
+  "等待浏览器队列超时，请稍后重试": "Hết thời gian chờ trình duyệt. Hãy thử lại sau",
+  "任务总等待时限已到，停止重试": "Đã hết tổng thời gian chờ. Dừng thử lại",
+  "image task 不存在": "Không tìm thấy tác vụ ảnh",
+  "task 不存在": "Không tìm thấy tác vụ",
+  "messages 为空": "messages bị trống",
+  "input 为空": "input bị trống",
+  "非法文件名": "Tên tệp không hợp lệ",
+  "文件不存在": "Không tìm thấy tệp",
+  "未解析到任何 cookie，请检查格式": "Không đọc được cookie. Hãy kiểm tra định dạng",
+  "未解析到 cookie": "Không đọc được cookie",
+  "账号不存在": "Không tìm thấy tài khoản",
+  "该账号没有 cookie": "Tài khoản chưa có cookie",
+  "没有可用账号": "Không có tài khoản khả dụng",
+  "额度面板未读到有效数据；旧缓存未覆盖": "Không đọc được hạn mức hợp lệ. Dữ liệu cũ được giữ lại",
+  "会话有效": "Phiên hợp lệ",
+  "会话有效；额度读取失败": "Phiên hợp lệ nhưng chưa đọc được hạn mức",
+  "会话有效，可正常生成": "Phiên hợp lệ. Có thể thử tạo nội dung",
+  "已更新 cookie": "Đã cập nhật cookie",
+  "已生成新 Key 并立即生效；旧 Key 已失效，请更新下游项目": "Khóa mới đã có hiệu lực. Hãy cập nhật các ứng dụng đang dùng khóa cũ",
+  "助手脚本缺失": "Thiếu tập lệnh hỗ trợ",
+  "扩展目录缺失": "Thiếu thư mục tiện ích",
+  "任务不存在": "Không tìm thấy tác vụ",
+  "names 必须是文件名数组": "names phải là một mảng tên tệp",
+  "账号无有效 cookie": "Tài khoản không có cookie hợp lệ",
+  "会话充足且近期已保活": "Phiên còn thời hạn và mới được làm mới gần đây",
+  "保活任务正在执行中，请稍候": "Tác vụ duy trì phiên đang chạy. Vui lòng đợi",
+  "已成功提交并推送到 GitHub 仓库": "Đã tạo commit và đẩy lên GitHub",
+  "服务重启中断了任务，请重新提交": "Dịch vụ khởi động lại làm gián đoạn tác vụ. Hãy gửi lại",
+  "会话认证失败 (/api/session HTTP 401)，请在官网确认登录后重新导入 cookie": "Xác thực phiên thất bại (/api/session HTTP 401). Hãy kiểm tra đăng nhập trên Muse và nhập lại cookie",
+  "/api/session HTTP 200 返回非 JSON；会话状态未确认": "/api/session HTTP 200 trả dữ liệu khác JSON. Chưa xác minh phiên",
+  "/api/session HTTP 200 未返回 assigned 会话；请在官网检查账号/工作区状态": "/api/session HTTP 200 chưa cấp phiên. Hãy kiểm tra tài khoản hoặc không gian làm việc trên Muse",
+  "页面网关连接超时 (Connecting...)，正在自动切换账号": "Hết thời gian kết nối cổng trang (Connecting…). Đang đổi tài khoản",
+  "会话已被 muse.ai 登出（可能被其它登录挤掉或触发风控），请用浏览器扩展重新导入 cookie": "Muse.ai đã đăng xuất phiên. Hãy nhập lại cookie bằng tiện ích trình duyệt",
+  "muse.ai 页面加载超时（未出现聊天输入框），请检查服务器网络后重试；未确认会话失效": "Hết thời gian tải Muse.ai vì chưa thấy ô chat. Hãy kiểm tra mạng máy chủ và thử lại. Chưa xác định phiên hết hiệu lực",
+  "找不到设置入口（Settings／設定／设置）": "Không tìm thấy mục Cài đặt (Settings / 設定 / 设置)",
+  "设置菜单未出现可识别的设置项": "Không thấy mục Cài đặt trong menu",
+  "额度面板未读到有效用量；旧缓存未覆盖": "Không đọc được mức sử dụng hợp lệ. Dữ liệu cũ được giữ lại",
+  "找不到聊天输入框": "Không tìm thấy ô nhập chat",
+  "客户端已断开连接，终止生成任务": "Ứng dụng gọi đã ngắt kết nối. Đang hủy tác vụ",
+  "账号额度不足": "Tài khoản đã hết hạn mức",
+  "提示词未成功送达后端（Still sending / Delivery not confirmed），终止等待并重试": "Chưa xác nhận máy chủ đã nhận mô tả. Dừng chờ để thử lại",
+  "云端 VM 连接超时 (Still sending)": "Hết thời gian kết nối máy ảo (Still sending)",
+  "等待助手首字响应超时": "Hết thời gian chờ phần đầu câu trả lời",
+  "等待助手回复超时": "Hết thời gian chờ câu trả lời",
+  "参考图读取失败，已停止生成": "Không đọc được ảnh tham chiếu. Đã dừng tạo",
+  "附加参考图失败，已停止生成": "Không đính kèm được ảnh tham chiếu. Đã dừng tạo",
+  "参考图上传未确认，已停止生成": "Chưa xác nhận tải ảnh tham chiếu. Đã dừng tạo",
+  "任务准备超时，已停止发送": "Hết thời gian chuẩn bị tác vụ. Đã dừng gửi",
+  "提示词发送未确认，已停止生成": "Chưa xác nhận gửi mô tả. Đã dừng tạo",
+  "等待生成超时，未出现新的生成结果": "Hết thời gian chờ tạo nội dung. Chưa thấy kết quả mới",
+  "已生成但未能取回文件": "Đã tạo xong nhưng không lấy được tệp",
+  "免费计划": "Miễn phí",
+  "免費計劃": "Miễn phí",
+  "免费方案": "Miễn phí",
+  "免費方案": "Miễn phí",
+  "✓ 会话有效，可正常生成": "✓ Phiên hợp lệ. Có thể thử tạo nội dung",
+  "✗ 保活失败: 未知错误": "✗ Duy trì phiên thất bại do lỗi chưa xác định"
+};
+const I18N_VI_HTML = {
+  "extension-upgrade-notice": "<b>Hãy cập nhật tiện ích lên 1.0.3</b><br>Thay tệp trong thư mục tiện ích đã giải nén rồi bấm Tải lại tại <code>chrome://extensions</code> hoặc <code>edge://extensions</code> cho từng hồ sơ.",
+  "repo-status-desc": "Đang đối chiếu phiên bản đã cài với kho cập nhật. Cấu hình <code>.env</code> và dữ liệu trong <code>data/</code> được giữ lại khi cập nhật.",
+  "auth-banner": "<b>Nhập API Key để tải dữ liệu</b><br><span style=\"color:var(--muted)\">Dùng khóa truy cập của dịch vụ Muse2API và bấm Lưu.</span>",
+  "model-names-hint": "Model: <code>muse-spark</code> (chat và mã), <code>muse-image</code> (ảnh), <code>muse-video</code> (video). Xem mục Hướng dẫn tích hợp để biết ví dụ.",
+  "add-account-hint": "Dán cookie <b>Muse.ai</b> từ trình duyệt. Cần có <code>hatch_sess</code>. <code>hatch_vml</code> là mã không gian làm việc tùy chọn.",
+  "keepalive-hint": "Hệ thống <b>duy trì phiên mỗi 30 phút</b> và ưu tiên tài khoản ít được dùng gần đây. Bấm <b>Kiểm tra</b> để xác minh phiên trong trình duyệt.",
+  "ext-why-hint": "Tiện ích đồng bộ phiên <b>Muse.ai đang đăng nhập trên máy bạn</b> vào máy chủ Muse2API. Tiện ích dùng API cookie của trình duyệt.",
+  "ext-unzip-hint": "Giải nén vào một thư mục cố định, ví dụ <code>D:\\muse2api-extension</code>.",
+  "ext-load-steps": "<li>Mở <code>chrome://extensions</code>.</li><li>Bật Chế độ dành cho nhà phát triển.</li><li>Chọn Tải tiện ích đã giải nén và chọn thư mục chứa <code>manifest.json</code>.</li>",
+  "ext-login-hint": "Mở <code>https://muse.ai/</code> và đăng nhập đến khi thấy màn hình chat. Bấm biểu tượng tiện ích, nhập địa chỉ dịch vụ và API Key rồi chọn Đọc và nhập.",
+  "manual-copy-hint": "Bạn có thể sao chép chuỗi cookie từ <b>header yêu cầu trong thẻ Network</b> và dán vào biểu mẫu nhập.",
+  "manual-copy-steps": "<li>Đăng nhập tại <code>https://muse.ai/</code>.</li><li>Bấm <kbd>F12</kbd>, mở Network rồi tải lại trang.</li><li>Chọn một yêu cầu Muse.ai và sao chép header <code>cookie:</code> trong Request Headers.</li>",
+  "manual-copy-warn": "Dùng header yêu cầu <code>cookie:</code>. Header phản hồi <code>set-cookie</code> có thể chỉ chứa một phần cookie.",
+  "cli-script-hint": "Nếu muốn đăng nhập trong trình duyệt riêng, hãy tải tập lệnh Python và chạy lệnh ở bên dưới.",
+  "vml-role": "Mã không gian làm việc tùy chọn",
+  "lifetime-hint": "Muse xác định phiên còn hợp lệ hay không. Hãy kiểm tra tài khoản sau khi nhập cookie.",
+  "docs-intro": "API theo định dạng OpenAI. Hãy thiết lập <code>base_url</code> và <code>api_key</code>.<br>BASE URL: <code id=\"dBase\">—</code>",
+  "models-hint": "<b>Muse Spark</b> dùng cho văn bản và mã, <b>Muse Image</b> dùng cho ảnh, <b>Muse Video</b> dùng cho video.",
+  "auth-hint": "Các endpoint được bảo vệ cần header <code>Authorization: Bearer &lt;API Key&gt;</code>. Các đường dẫn công khai gồm <code>/healthz</code>, <code>/readyz</code> và <code>/v1/media/*</code>.",
+  "model-alias-hint": "Các bí danh như <code>gpt-4o</code>, <code>claude-sonnet-4</code> và <code>gemini-2.5-pro</code> được ánh xạ sang khả năng của Muse.",
+  "tool-calls-hint": "Hỗ trợ gọi công cụ dựa trên yêu cầu định dạng phản hồi trong prompt. Khả năng trả đúng cấu trúc phụ thuộc vào Muse.",
+  "col-enabled": "Bật"
+};
 const HAN_RE = /[㐀-鿿！-～　-〿]/;
 const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 function t(s, depth = 0){
-  if (LANG !== 'en' || typeof s !== 'string' || !HAN_RE.test(s) || depth > 4) return s;
+  if (LANG === 'zh' || typeof s !== 'string' || !HAN_RE.test(s) || depth > 4) return s;
   const k = s.trim();
-  if (hasOwn(I18N_EN, k)) return s.replace(k, () => I18N_EN[k]);
-  for (const [re, rep] of I18N_EN_PATTERNS) {
+  const dictionary = LANG === 'vi' ? I18N_VI : I18N_EN;
+  if (hasOwn(dictionary, k)) return s.replace(k, () => dictionary[k]);
+  for (const [re, rep] of (LANG === 'vi' ? I18N_VI_PATTERNS : I18N_EN_PATTERNS)) {
     if (!re.test(k)) continue;
     // 捕获组（多为嵌套的服务端消息）也递归翻译
     const out = k.replace(re, (...m) => rep.replace(/\$(\d)/g, (_, i) => t(m[+i] ?? '', depth + 1)));
@@ -1393,7 +2021,7 @@ function t(s, depth = 0){
 const I18N_ATTRS = ['placeholder', 'title', 'aria-label', 'alt'];
 const I18N_SKIP = new Set(['SCRIPT', 'STYLE', 'TEXTAREA']);
 function translateTree(root){
-  if (LANG !== 'en' || !root) return;
+  if (LANG === 'zh' || !root) return;
   if (root.nodeType === 3) {
     const p = root.parentElement;
     if (p && !I18N_SKIP.has(p.tagName) && !p.closest('[data-no-i18n]')) {
@@ -1406,7 +2034,7 @@ function translateTree(root){
   const blocks = root.matches('[data-i18n]') ? [root] : [];
   blocks.push(...root.querySelectorAll('[data-i18n]'));
   for (const el of blocks) {
-    const html = I18N_EN_HTML[el.dataset.i18n];
+    const html = (LANG === 'vi' ? I18N_VI_HTML : I18N_EN_HTML)[el.dataset.i18n];
     if (html && !el.dataset.i18nDone) { el.innerHTML = html; el.dataset.i18nDone = '1'; }
   }
   for (const el of [root, ...root.querySelectorAll('*')]) {
@@ -1425,8 +2053,8 @@ function translateTree(root){
   nodes.forEach(translateTree);
 }
 document.getElementById('langSel').value = LANG;
-if (LANG === 'en') {
-  document.documentElement.lang = 'en';
+if (LANG !== 'zh') {
+  document.documentElement.lang = LANG;
   document.title = t(document.title);
   translateTree(document.body);
   new MutationObserver(muts => {
@@ -1560,11 +2188,91 @@ document.querySelectorAll('nav.tabs button').forEach(b => {
     document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
     b.classList.add('active');
     $('tab-' + b.dataset.t).classList.add('active');
+    if (chatProviderPanels.has(b.dataset.t)) loadChatProvider(b.dataset.t);
     if (b.dataset.t === 'tasks') loadTasks();
     if (b.dataset.t === 'media') loadMedia();
     if (b.dataset.t === 'cookie') $('cmdText').textContent = buildCmd($('inBase').value);
   };
 });
+
+
+const chatProviderPanels = new Map([
+  ['openai', 'OpenAI (ChatGPT)'],
+  ['gemini', 'Google Gemini'],
+].map(([id, title]) => {
+  const panel = $('tab-' + id);
+  panel.append($('chatProviderTemplate').content.cloneNode(true));
+  panel.querySelector('[data-provider-title]').textContent = title;
+  const settings = panel.querySelector('[data-provider-settings]');
+  const test = panel.querySelector('[data-provider-test]');
+  const remove = panel.querySelector('[data-provider-remove]');
+  const chat = panel.querySelector('[data-provider-chat]');
+  const status = panel.querySelector('[data-provider-status]');
+  const modelId = panel.querySelector('[data-provider-model-id]');
+  const output = panel.querySelector('[data-provider-output]');
+  const model = settings.elements.model;
+  const key = settings.elements.providerKey;
+  const path = '/admin/chat-providers/' + id;
+
+  function render(data) {
+    model.value = data.model;
+    modelId.textContent = 'Model dùng qua API: ' + data.model_id;
+    status.textContent = data.key_from_env ? 'Đang dùng khóa từ biến môi trường.' :
+      data.configured ? 'Đã cấu hình API Key.' : 'Chưa cấu hình API Key.';
+    key.disabled = data.key_from_env;
+    test.disabled = !data.configured;
+    remove.disabled = !data.configured || data.key_from_env;
+    chat.querySelector('button').disabled = !data.configured;
+  }
+  async function save(removeKey = false) {
+    const body = {model: model.value.trim()};
+    if (removeKey) body.api_key = null;
+    else if (key.value.trim()) body.api_key = key.value.trim();
+    try {
+      const data = await api(path, {method: 'PUT', body: JSON.stringify(body)});
+      key.value = '';
+      render(data);
+      toast(removeKey ? 'Đã xóa khóa.' : 'Đã lưu cấu hình.', 'ok');
+    } catch (error) { toast(error.message, 'bad'); }
+  }
+  settings.onsubmit = event => { event.preventDefault(); save(); };
+  remove.onclick = () => { if (confirm('Xóa API Key đã lưu?')) save(true); };
+  test.onclick = async () => {
+    test.disabled = true;
+    try {
+      const data = await api(path + '/test', {method: 'POST'});
+      toast('Đã kết nối và xác minh model ' + data.model_id, 'ok');
+    } catch (error) { toast(error.message, 'bad'); }
+    finally { test.disabled = false; }
+  };
+  chat.onsubmit = async event => {
+    event.preventDefault();
+    const button = chat.querySelector('button');
+    const prompt = chat.elements.prompt.value.trim();
+    if (!prompt) return;
+    button.disabled = true;
+    output.hidden = false;
+    output.textContent = 'Đang chờ phản hồi…';
+    try {
+      const result = await api('/v1/chat/completions', {method: 'POST', body: JSON.stringify({
+        model: id + '/' + model.value.trim(),
+        messages: [{role: 'user', content: prompt}],
+      })});
+      output.textContent = result.choices[0]?.message?.content || 'Model chưa trả nội dung văn bản.';
+    } catch (error) { output.textContent = error.message; }
+    finally { button.disabled = false; }
+  };
+  return [id, {render, status}];
+}));
+
+async function loadChatProvider(id) {
+  const {render, status} = chatProviderPanels.get(id);
+  try {
+    const {providers} = await api('/admin/chat-providers');
+    const provider = providers.find(item => item.id === id);
+    if (provider) render(provider);
+  } catch (error) { status.textContent = error.message; }
+}
 
 /* ================= 接入信息 / API Key ================= */
 let realKey = '';
@@ -2173,6 +2881,16 @@ async function loadMedia(){
   try{
     const d = await api('/admin/media');
     const ms = d.media || [];
+    const storage = $('mediaStorage');
+    storage.hidden = !d.capacity_bytes;
+    if (d.capacity_bytes) {
+      const gb = bytes => new Intl.NumberFormat(LANG, {maximumFractionDigits: 2}).format(bytes / 1e9) + ' GB';
+      const used = gb(d.used_bytes) + ' / ' + gb(d.capacity_bytes);
+      const threshold = gb(d.cleanup_bytes);
+      storage.textContent = LANG === 'vi' ? `Đã dùng ${used} · Tự dọn tệp cũ từ ${threshold}`
+        : LANG === 'en' ? `Used ${used} · Oldest files removed from ${threshold}`
+        : `已用 ${used} · 达到 ${threshold} 时删除最旧文件`;
+    }
     _allMedia = ms;
     const validNames = new Set(ms.map(m => m.name));
     for (const name of Array.from(_selectedMedia)) {
@@ -2331,18 +3049,18 @@ async function loadRepoStatus(force){
       ? (s.has_update ? 'Update available' : s.up_to_date === true ? 'Up to date' : 'Version status unconfirmed')
       : (s.has_update ? '有更新' : s.up_to_date === true ? '已是最新' : '版本状态待确认');
     badge.className = 'badge ' + (s.has_update ? 'warn' : s.up_to_date === true ? 'ok' : 'mute');
-    badge.textContent = `${state} · ${lVer} (${s.local_sha || 'unknown'})`;
+    badge.textContent = `${t(state)} · ${lVer} (${s.local_sha || 'unknown'})`;
     topBtn.classList.toggle('updpill-alert', !!s.has_update);
-    topBtn.innerHTML = `📦 <span id="repoTopTxt">${esc(lVer)} · ${esc(state)}</span>`;
+    topBtn.innerHTML = `📦 <span id="repoTopTxt">${esc(lVer)} · ${esc(t(state))}</span>`;
     const bannerHighlights = LANG === 'en' ? (s.highlights_en || s.highlights) : s.highlights;
     $('updBannerVer').textContent = rVer + ' (' + (s.remote_sha || 'unknown') + ')';
     $('updBannerMsg').textContent = s.managed_deployment
       ? (LANG === 'en' ? 'Rebuild and switch the configured image to update.' : '请从配置的仓库分支重建并切换镜像。')
       : ((bannerHighlights || [])[0] || s.remote_msg || state);
     banner.classList.toggle('show', !!s.has_update && !!s.remote_sha && s.remote_sha !== _dismissedSha);
-    desc.innerHTML = `${LANG === 'en' ? 'Installed version: ' : '当前已部署版本：'}<code>${esc(lVer)}</code>（Commit: <code>${esc(s.local_sha || '—')}</code>） · ` +
-      `${LANG === 'en' ? 'Update source: ' : '更新来源：'}<a href="${esc(s.repo_url)}" target="_blank">${esc(s.repo_url)}</a> / <code>${esc(s.repo_ref || 'main')}</code><br>` +
-      `${LANG === 'en' ? 'Remote version: ' : '远端版本：'}<code>${esc(s.remote_version || '未知')}</code>（Commit: <code>${esc(s.remote_sha || '—')}</code>）` +
+    desc.innerHTML = `<span>${LANG === 'en' ? 'Installed version: ' : t('当前已部署版本：')}</span><code>${esc(lVer)}</code>（Commit: <code>${esc(s.local_sha || '—')}</code>） · ` +
+      `<span>${LANG === 'en' ? 'Update source: ' : t('更新来源：')}</span><a href="${esc(s.repo_url)}" target="_blank">${esc(s.repo_url)}</a> / <code>${esc(s.repo_ref || 'main')}</code><br>` +
+      `<span>${LANG === 'en' ? 'Remote version: ' : t('远端版本：')}</span><code>${esc(s.remote_version || '未知')}</code>（Commit: <code>${esc(s.remote_sha || '—')}</code>）` +
       (s.check_error ? `<br>${esc(s.check_error)}` : '') +
       (s.managed_deployment ? '<br>此实例通过镜像部署，更新需从上述分支构建并切换容器。' : '');
     for (const id of ['btnRepoPull', 'btnBannerUpgrade']) {
@@ -2370,9 +3088,9 @@ async function loadRepoStatus(force){
 
 async function upgradeNow(){
   if (_lastRepoStatus?.managed_deployment) return toast('此实例通过镜像部署，请从配置的仓库分支更新容器', 'warn');
-  const upgradePrompt = (LANG === 'en' ? 'Update and restart from ' : '确定从 ')
+  const upgradePrompt = (LANG === 'en' ? 'Update and restart from ' : LANG === 'vi' ? 'Cập nhật và khởi động lại từ ' : '确定从 ')
     + (_lastRepoStatus?.repo_url || '') + ' / ' + (_lastRepoStatus?.repo_ref || 'main')
-    + (LANG === 'en' ? '?' : ' 更新并重启服务吗？');
+    + (LANG === 'zh' ? ' 更新并重启服务吗？' : '?');
   if (!confirm(upgradePrompt)) return;
   const btn1 = $('btnRepoPull'), btn2 = $('btnBannerUpgrade');
   if (btn1) { btn1.disabled = true; btn1.innerHTML = '<span class="spin"></span>正在在线更新…'; }
@@ -2399,12 +3117,40 @@ async function upgradeNow(){
   }
 }
 
+let musePromptLoaded = false;
+function loadMusePromptLanguage(language) {
+  if (!musePromptLoaded && ['vi', 'en', 'zh'].includes(language)) {
+    $('musePromptLanguage').value = language;
+    $('musePromptSave').disabled = false;
+    musePromptLoaded = true;
+  }
+}
+$('musePromptForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = $('musePromptSave');
+  const status = $('musePromptStatus');
+  button.disabled = true;
+  status.textContent = '';
+  try {
+    await api('/admin/muse-prompt', {
+      method: 'PUT',
+      body: JSON.stringify({language: $('musePromptLanguage').value}),
+    });
+    status.textContent = t('Muse 指令语言已保存。');
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
 let generationQueueLoaded = false;
 function renderGenerationQueue(settings, config) {
   if (!settings) return;
   if (!generationQueueLoaded) { $('generationQueueTimeout').value = settings.queue_timeout; generationQueueLoaded = true; }
   $('generationQueueSummary').textContent = LANG === 'en'
     ? `Execution budget: video ${config.video_timeout}s · image ${config.image_timeout}s`
+    : LANG === 'vi' ? `Giới hạn tạo: video ${config.video_timeout} giây · ảnh ${config.image_timeout} giây`
     : `实际生成时限：视频 ${config.video_timeout} 秒 · 图片 ${config.image_timeout} 秒`;
 }
 async function saveGenerationQueue() {
@@ -2418,7 +3164,7 @@ function taskDuration(task) {
   const total = task.total_elapsed ?? Math.max(0, Date.now()/1000 - task.created_at);
   const queue = task.status === 'queued' ? total : task.queue_elapsed || 0;
   const generation = task.elapsed ?? (task.status === 'processing' ? Math.max(0, total - queue) : 0);
-  return `${LANG === 'en' ? 'Queue' : '排队'} ${queue.toFixed(1)}s<br>${LANG === 'en' ? 'Generate' : '生成'} ${generation.toFixed(1)}s<br>${LANG === 'en' ? 'Total' : '总计'} ${total.toFixed(1)}s`;
+  return `${LANG === 'en' ? 'Queue' : LANG === 'vi' ? 'Chờ' : '排队'} ${queue.toFixed(1)}s<br>${LANG === 'en' ? 'Generate' : LANG === 'vi' ? 'Tạo' : '生成'} ${generation.toFixed(1)}s<br>${LANG === 'en' ? 'Total' : LANG === 'vi' ? 'Tổng' : '总计'} ${total.toFixed(1)}s`;
 }
 
 
@@ -2426,6 +3172,7 @@ function taskDuration(task) {
 async function loadStatus(){
   try{
     const d = await api('/admin/status');
+    loadMusePromptLanguage(d.muse_prompt_language);
     renderGenerationQueue(d.generation_queue, d.config);
     $('pSvc').className = 'pill on';
     $('pSvc').innerHTML = '<span class="led"></span>服务 <b>正常</b>';
