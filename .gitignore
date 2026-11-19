@@ -71,3 +71,6 @@ data/.chat-providers-*
 
 # Muse instruction language saved from the dashboard
 data/muse-prompt.json
+
+# Local Chrome Web enablement
+data/web-chrome.json

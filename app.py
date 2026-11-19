@@ -59,7 +59,7 @@ from store import Store, account_expiry, min_expiry
 from generation_timing import QueuePolicy, QueueSettings, TaskTiming
 from proxy import normalize_server, request_proxy_context, split_proxy_url
 from media_storage import CAPACITY_BYTES, CLEANUP_BYTES, delete_media_file, media_entries, prune_media, save_media
-from web_providers import PROVIDERS as WEB_PROVIDERS, WebProviderError, WebProviders
+from web_providers import DEFAULT_WEB_CDP_PORT, PROVIDERS as WEB_PROVIDERS, WebProviderError, WebProviders
 from thumbnails import (VIDEO_FORMATS, ThumbnailUnavailable,
                         source_version, video_thumbnail)
 
@@ -94,7 +94,10 @@ store = Store(CFG)
 chat_providers = ChatProviders(CFG.data_dir)
 if CFG.web_cdp_port and (not 1 <= CFG.web_cdp_port <= 65535 or CFG.web_cdp_port == CFG.cdp_port):
     raise ValueError("MUSE2API_WEB_CDP_PORT must be separate from the Muse CDP port")
-web_providers = WebProviders(CFG.web_cdp_port)
+web_port = CFG.web_cdp_port
+if not web_port and CFG.cdp_port != DEFAULT_WEB_CDP_PORT and store.web_chrome_enabled():
+    web_port = DEFAULT_WEB_CDP_PORT
+web_providers = WebProviders(web_port)
 MODULES = {f"muse/{kind}": ("muse", kind) for kind in ("text", "image", "video")}
 MODULES.update({f"{provider}/{kind}": (provider, kind)
                 for provider in WEB_PROVIDERS for kind in ("text", "image")})
@@ -2199,7 +2202,26 @@ def get_media_thumbnail(name: str):
 @app.get("/admin/web-providers")
 def list_web_providers(_=Depends(auth)):
     return {"configured": bool(web_providers.port), "port": web_providers.port,
-            "linked_at": dict(web_providers.linked_at)}
+            "linked_at": dict(web_providers.linked_at),
+            "local_setup": not (os.environ.get("RENDER", "").lower() == "true"
+                                or os.environ.get("RENDER_GIT_COMMIT"))}
+
+
+@app.post("/admin/web-providers/connect")
+def connect_web_chrome(_=Depends(auth)):
+    if not list_web_providers()["local_setup"]:
+        raise HTTPException(409, "Render không thể dùng Chrome trên máy Mac của bạn.")
+    port = web_providers.port or DEFAULT_WEB_CDP_PORT
+    if port == CFG.cdp_port:
+        raise HTTPException(409, "Cổng Chrome Web trùng cổng Muse. Hãy cấu hình hai cổng riêng.")
+    try:
+        web_providers.probe_port(port)
+    except WebProviderError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+    if not web_providers.port:
+        store.enable_web_chrome()
+        web_providers.port = port
+    return list_web_providers()
 
 
 class WebProviderLink(BaseModel):

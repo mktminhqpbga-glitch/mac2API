@@ -101,6 +101,33 @@ with tempfile.TemporaryDirectory(prefix="muse-upload-check-", dir=Path.home()) a
                 "awaitPromise": True, "returnByValue": True})
             assert response["result"]["result"]["value"] == upload.read_text(), response
             assert page.js("document.querySelector('.chat-user-bubble input').files.length") == 0
+            # Muse may render a preview without a localized remove button.
+            fixture(history_only=True)
+            page.js("""document.querySelector('#uploader').addEventListener('change', function() {
+                const file = this.files[0];
+                setTimeout(() => {
+                    const card = document.createElement('div');
+                    card.setAttribute('data-testid', 'hatch-composer-attachment');
+                    const img = document.createElement('img');
+                    img.src = URL.createObjectURL(file);
+                    card.append(img);
+                    document.querySelector('section').append(card);
+                }, 500);
+            });""")
+            svg = b'<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8"/></svg>'
+            import base64
+            engine._normalize_image = lambda _: (base64.b64encode(svg).decode(), "image/svg+xml")
+            original_extensions = module.REFERENCE_MIME_EXT.copy()
+            module.REFERENCE_MIME_EXT["image/svg+xml"] = ".svg"
+            try:
+                attached = engine._attach_images(["first", "second"])
+                assert len(attached["hashes"]) == 1  # Both fixtures contain the same bytes.
+                assert page.js(count_script) == 2
+                assert page.js("document.querySelectorAll('section button').length") == 0
+                shutil.rmtree(attached["dir"])
+            finally:
+                module.REFERENCE_MIME_EXT.clear()
+                module.REFERENCE_MIME_EXT.update(original_extensions)
             print("PASS: old/new layouts, history exclusion, correct input and actual file bytes", flush=True)
     finally:
         if page:

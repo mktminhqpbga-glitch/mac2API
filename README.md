@@ -128,7 +128,7 @@ Chạy mac2API và Chrome riêng trực tiếp trên cùng máy. Ví dụ trên 
 open -na "Google Chrome" --args --remote-debugging-port=19211 --user-data-dir="$HOME/.mac2api-web-profile"
 ```
 
-Trong cửa sổ vừa mở, đăng nhập ChatGPT và Gemini bằng tài khoản bạn muốn dùng, rồi giữ Chrome mở. Đặt `MUSE2API_WEB_CDP_PORT=19211` cho mac2API và khởi động lại dịch vụ. Nạp tiện ích v1.0.4 vào Chrome này. Mở tab đã đăng nhập và chọn **ChatGPT** hoặc **Gemini** trong tiện ích. Bảng quản trị hiển thị thời điểm xác minh trong đúng mục. Bạn cũng có thể bấm **Kiểm tra phiên trình duyệt** ở bảng quản trị, rồi thử chat. Chỉ dùng cổng DevTools cục bộ. Bản mac2API trên Render không tự dùng được Chrome trên máy Mac.
+Trong cửa sổ vừa mở, đăng nhập ChatGPT và Gemini bằng tài khoản bạn muốn dùng, rồi giữ Chrome mở. Mở tab **ChatGPT Web** hoặc **Gemini Web** trong bảng quản trị và bấm **Kết nối Chrome** để kiểm tra và lưu cổng 19211. Nếu dùng cổng khác, đặt `MUSE2API_WEB_CDP_PORT` trên máy chạy dịch vụ. Nạp tiện ích v1.0.4 vào Chrome này. Mở tab đã đăng nhập và chọn **ChatGPT** hoặc **Gemini** trong tiện ích. Bảng quản trị hiển thị thời điểm xác minh trong đúng mục. Bạn cũng có thể bấm **Kiểm tra phiên trình duyệt** ở bảng quản trị, rồi thử chat. Chỉ dùng cổng DevTools cục bộ. Bản mac2API trên Render không tự dùng được Chrome trên máy Mac.
 
 Các mô-đun web tạo một ảnh từ mô tả, tùy quyền của tài khoản. Chat web lấy câu trả lời hoàn chỉnh rồi mới trả về, kể cả khi client yêu cầu SSE. Mỗi yêu cầu mở và đóng tab riêng. Khả năng hoạt động phụ thuộc vào giao diện của từng trang web.
 

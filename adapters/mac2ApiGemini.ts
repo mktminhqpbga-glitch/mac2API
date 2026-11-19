@@ -65,6 +65,22 @@ function validId(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 }
 
+function taskErrorDetail(context: Context, value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return "";
+  const key = context.config.apiKey?.trim();
+  const upload = value.match(/参考素材上传未确认\s*[（(]\s*(\d+)\s*\/\s*(\d+)\s*[）)]/);
+  if (upload) return `Muse chưa xác nhận tệp tham chiếu (${upload[1]}/${upload[2]}). Yêu cầu tạo nội dung chưa được gửi.`;
+  const detail = key ? value.split(key).join("[đã ẩn]") : value;
+  return detail
+    .replace(/\bBearer\s+\S+/gi, "Bearer [đã ẩn]")
+    .replace(/\bm2a_[\w-]+/gi, "[đã ẩn]")
+    .replace(/\b(?:https?|socks5h?):\/\/[^\s<>"']+/gi, "[đã ẩn URL]")
+    .replace(/data:[^\s<>"']+/gi, "[đã ẩn dữ liệu]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 400);
+}
+
 async function poll(context: Context, task: Task, signal: AbortSignal): Promise<MediaAsset[]> {
   if (connection(context).base !== task.base) throw new Error("Base URL đã đổi. Hãy khôi phục địa chỉ của tác vụ gốc.");
   const endpoint = "/images/tasks/";
@@ -72,9 +88,12 @@ async function poll(context: Context, task: Task, signal: AbortSignal): Promise<
     signal.throwIfAborted();
     const result = await request(context, endpoint + task.id, signal);
     if (result.status === "failed" || result.status === "cancelled" || result.status === "expired") {
-      throw Object.assign(new Error("mac2API báo tác vụ đã thất bại, bị hủy hoặc hết hạn. Xem chi tiết trong mục Tác vụ."), {
-        code: "MEDIA_TASK_FAILED",
-      });
+      const state = result.status === "failed" ? "thất bại" : result.status === "cancelled" ? "bị hủy" : "hết hạn";
+      const raw = typeof result.error === "string" && result.error.trim() ? result.error : result.last_error;
+      const reason = taskErrorDetail(context, raw);
+      throw Object.assign(new Error(
+        `Tác vụ mac2API ${task.id} ${state}.${reason ? " Lý do: " + reason : " Xem chi tiết trong mục Tác vụ của mac2API."}`
+      ), { code: "MEDIA_TASK_FAILED" });
     }
     if (result.status === "completed") {
       const candidate = Array.isArray(result.data) ? result.data[0]?.url : undefined;
@@ -128,7 +147,7 @@ function checkPrompt(request: CommonRequest) {
 export default {
   id: "mac2ApiGemini",
   label: "mac2API · Gemini Web",
-  version: "2.0.0",
+  version: "2.0.1",
   readme: "Tạo ảnh từ văn bản qua Gemini Web. mac2API cần chạy cùng Chrome đã đăng nhập. Dùng khóa m2a_ của mac2API.",
   rules: [
     { type: "input", field: "baseUrl", title: "Base URL mac2API", value: "http://127.0.0.1:18610/v1",

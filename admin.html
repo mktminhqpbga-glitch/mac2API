@@ -309,6 +309,18 @@
       <p class="hint" data-provider-status role="status"></p>
       <p class="hint" data-provider-model-id></p>
       <p class="hint">Đăng nhập trong hồ sơ Chrome riêng trên máy chạy mac2API. Sau đó kiểm tra kết nối với phiên web.</p>
+      <details data-web-setup>
+        <summary>Thiết lập Chrome trên máy Mac</summary>
+        <ol>
+          <li>Mở ứng dụng Terminal và chạy lệnh dưới đây để mở hồ sơ Chrome riêng.</li>
+          <li>Trong cửa sổ mới, đăng nhập dịch vụ và giữ Chrome mở.</li>
+          <li>Bấm <b>Kết nối Chrome</b> rồi kiểm tra phiên trình duyệt.</li>
+        </ol>
+        <pre class="out" data-web-command style="white-space:pre-wrap;overflow-wrap:anywhere"></pre>
+        <button type="button" class="ghost" data-web-copy>Sao chép lệnh</button>
+        <button type="button" data-web-connect>Kết nối Chrome</button>
+      </details>
+      <p class="hint" data-web-remote hidden>Chrome phải chạy cùng máy với mac2API. Bản trên Render không truy cập Chrome đang mở trên máy Mac của bạn.</p>
       <button type="button" class="ghost" data-provider-test>Kiểm tra phiên trình duyệt</button>
     </div>
     <div class="card">
@@ -2203,10 +2215,27 @@ const chatProviderPanels = new Map([
   const send = chat.querySelector('button');
   const status = panel.querySelector('[data-provider-status]');
   const output = panel.querySelector('[data-provider-output]');
+  const setup = panel.querySelector('[data-web-setup]');
+  const command = panel.querySelector('[data-web-command]');
+  const connect = panel.querySelector('[data-web-connect]');
+  panel.querySelector('[data-web-copy]').onclick = () => copyText(command.textContent);
+
+  connect.onclick = async () => {
+    connect.disabled = true;
+    try {
+      render(await api('/admin/web-providers/connect', {method: 'POST'}));
+      status.textContent = 'Đã kết nối cổng Chrome. Bấm Kiểm tra phiên trình duyệt hoặc dùng tiện ích trong tab đã đăng nhập.';
+    } catch (error) { status.textContent = error.message; }
+    finally { connect.disabled = false; }
+  };
 
   function render(data) {
     status.textContent = data.configured ? 'Đã cấu hình cổng Chrome. Hãy kiểm tra phiên trình duyệt.'
-      : 'Chưa cấu hình MUSE2API_WEB_CDP_PORT trên máy chủ.';
+      : 'Chưa kết nối Chrome Web. Làm theo phần thiết lập bên dưới.';
+    setup.hidden = data.local_setup === false;
+    setup.open = !data.configured && !setup.hidden;
+    panel.querySelector('[data-web-remote]').hidden = data.local_setup !== false;
+    command.textContent = `open -na "Google Chrome" --args --remote-debugging-port=${data.port || 19211} --user-data-dir="$HOME/.mac2api-web-profile"`;
     if (data.linked_at?.[id]) status.textContent = 'Đã xác minh tab qua tiện ích lúc ' + fmtTime(data.linked_at[id]) + '.';
     test.disabled = send.disabled = !data.configured;
   }

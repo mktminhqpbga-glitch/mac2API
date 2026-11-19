@@ -47,6 +47,11 @@ PROVIDERS = {
         'button[aria-label="Copy"], button[aria-label="Sao chép"], [data-test-id="copy-button"]',
     ),
 }
+DEFAULT_WEB_CDP_PORT = 19211
+WEB_SETUP_MESSAGE = (
+    "Chưa kết nối Chrome Web. Trong bảng quản trị, mở tab ChatGPT Web hoặc Gemini Web, "
+    "mở hồ sơ Chrome riêng theo hướng dẫn rồi bấm Kết nối Chrome."
+)
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 
 
@@ -61,10 +66,35 @@ class WebProviders:
         self.port = port
         self.linked_at: dict[str, int] = {}
 
+    @staticmethod
+    def probe_port(port: int):
+        """Check the fixed loopback port before storing an enabled configuration."""
+        try:
+            with requests.Session() as session:
+                session.trust_env = False
+                url = f"http://127.0.0.1:{port}/json/version"
+                response = session.get(url, timeout=3, allow_redirects=False)
+                if not response.ok:
+                    raise ValueError("DevTools endpoint unavailable")
+                metadata = response.json()
+            if not isinstance(metadata, dict) or not isinstance(metadata.get("Browser"), str):
+                raise ValueError("Unexpected DevTools response")
+            if not metadata["Browser"].startswith(("Chrome/", "HeadlessChrome/", "Chromium/")):
+                raise ValueError("Unexpected browser")
+            address = urlsplit(metadata.get("webSocketDebuggerUrl", ""))
+            if (address.scheme != "ws" or address.hostname != "127.0.0.1" or address.port != port
+                    or not address.path.startswith("/devtools/browser/")):
+                raise ValueError("Unexpected DevTools socket")
+        except (requests.RequestException, ValueError, TypeError) as exc:
+            raise WebProviderError(
+                f"Chưa thấy Chrome DevTools ở cổng {port} trên máy chạy mac2API. "
+                "Hãy mở cửa sổ Chrome riêng bằng lệnh trong bảng quản trị rồi thử lại.", 503
+            ) from exc
+
     @contextmanager
     def _page(self, provider: WebProvider):
         if not self.port:
-            raise WebProviderError("Chưa cấu hình cổng Chrome Web trên máy chạy mac2API.", 503)
+            raise WebProviderError(WEB_SETUP_MESSAGE, 503)
         base = f"http://127.0.0.1:{self.port}"
         target = None
         page = None
@@ -111,7 +141,7 @@ class WebProviders:
     def link(self, provider_id: str, marker: str) -> int:
         """Verify that the extension's active tab belongs to this local browser."""
         if not self.port:
-            raise WebProviderError("Chưa cấu hình cổng Chrome Web trên máy chạy mac2API.", 503)
+            raise WebProviderError(WEB_SETUP_MESSAGE, 503)
         provider = PROVIDERS[provider_id]
         origin = _origin(provider.url)
         base = f"http://127.0.0.1:{self.port}"

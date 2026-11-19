@@ -65,6 +65,17 @@ async def check():
     headers = {"Authorization": "Bearer fixture"}
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app.app),
                                  base_url="http://test") as client:
+        port = app.web_providers.port
+        app.web_providers.port = 0
+        with patch.object(app, "DEFAULT_WEB_CDP_PORT", port):
+            unauthorized = await client.post("/admin/web-providers/connect")
+            assert unauthorized.status_code == 401
+            with patch.dict(os.environ, {"RENDER": "true"}):
+                remote = await client.post("/admin/web-providers/connect", headers=headers)
+            assert remote.status_code == 409
+            connected = await client.post("/admin/web-providers/connect", headers=headers)
+        assert connected.status_code == 200, connected.text
+        assert connected.json()["port"] == port and app.store.web_chrome_enabled()
         response = await client.get("/v1/models", headers=headers)
         assert set(app.MODULES) <= {m["id"] for m in response.json()["data"]}
         for provider in web_providers.PROVIDERS:

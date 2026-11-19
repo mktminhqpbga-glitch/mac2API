@@ -1822,6 +1822,7 @@ class MuseEngine:
     # 输入框所在容器是 textarea 往上第二层，附件的「Remove attachment」按钮在那里。
     # 旧结构（overlay / form）优先，新结构从 textarea 逐级向上找最近的一层。
     _COMPOSER_ROOTS_JS = """
+        const bubble = '[class*=chat-user-bubble], [class*="group/msg"], [class*=hatch-chat-groupable-bubble]';
         function __composerRoots(){
             var ov = document.querySelector('[data-testid="hatch-composer-placeholder-overlay"]');
             var legacy = ov ? (ov.closest('form') || ov.parentElement.parentElement.parentElement) : null;
@@ -1840,15 +1841,14 @@ class MuseEngine:
         var inputs = Array.from(document.querySelectorAll('input[type="file"]'));
         var roots = __composerRoots();
         for (var r of roots) {
-            var hit = inputs.find(function(x){ return r.contains(x); });
+            var hit = inputs.find(function(x){ return r.contains(x) && !x.disabled && !x.closest(bubble); });
             if (hit) return hit;
         }
         return null;
     })()"""
 
-    _COMPOSER_ATTACHMENTS_JS = _COMPOSER_ROOTS_JS + f"""
+    _COMPOSER_ATTACHMENTS_JS = _COMPOSER_ROOTS_JS + rf"""
         const removeLabel = /{_REMOVE_ATTACHMENT_LABEL}/iu;
-        const bubble = '[class*=chat-user-bubble], [class*="group/msg"], [class*=hatch-chat-groupable-bubble]';
         function currentAttachments() {{
             for (const root of __composerRoots()) {{
                 const buttons = [...root.querySelectorAll('button[aria-label]')].filter(button =>
@@ -1857,9 +1857,29 @@ class MuseEngine:
             }}
             return [];
         }}
+
+        function attachmentPreviews(requireReady = true) {{
+            for (const root of __composerRoots()) {{
+                const previews = [...root.querySelectorAll('img,video')].filter(node => {{
+                    if (node.closest(bubble) || !node.getClientRects().length) return false;
+                    if (requireReady && node.closest('[aria-busy="true"],[data-uploading="true"]')) return false;
+                    const src = node.currentSrc || node.getAttribute('src') || '';
+                    const inAttachment = node.closest(
+                        '[data-testid^="hatch-composer-attachment"],[data-testid*="attachment-preview"]'
+                    );
+                    if (!inAttachment && !/^(blob:|data:image\/)/i.test(src)) return false;
+                    return !requireReady || (node.tagName === 'IMG' ? node.complete && node.naturalWidth > 0 : node.readyState >= 1);
+                }});
+                if (previews.length) return new Set(previews.map(node =>
+                    node.closest('[data-testid^="hatch-composer-attachment"],[data-testid*="attachment-preview"]') || node
+                )).size;
+            }}
+            return 0;
+        }}
     """
 
-    _ATTACHED_COUNT_JS = "(() => {" + _COMPOSER_ATTACHMENTS_JS + "return currentAttachments().length;})()"
+    _ATTACHED_COUNT_JS = ("(() => {" + _COMPOSER_ATTACHMENTS_JS
+                          + "return Math.max(currentAttachments().length, attachmentPreviews());})()")
 
     _CLEAR_COMPOSER_JS = "(() => {" + _COMPOSER_ATTACHMENTS_JS + """
         const textarea = document.querySelector('textarea');
@@ -1881,7 +1901,7 @@ class MuseEngine:
     _COMPOSER_EMPTY_JS = "(() => {" + _COMPOSER_ATTACHMENTS_JS + """
         const textarea = document.querySelector('textarea');
         const roots = __composerRoots();
-        return Boolean(textarea && !textarea.value && !currentAttachments().length
+        return Boolean(textarea && !textarea.value && !currentAttachments().length && !attachmentPreviews(false)
             && !roots.some(root => [...root.querySelectorAll('input[type=file]')]
                 .some(input => !input.closest(bubble) && input.files?.length)));
     })()"""
@@ -1931,36 +1951,37 @@ class MuseEngine:
         upload_dir = tempfile.mkdtemp(prefix="muse2api-refs-", dir=self.cfg.profile_dir)
         hashes = set()
         try:
-            for index, data, mime in files:
+            deadline = time.monotonic() + 30.0
+            for expected, (index, data, mime) in enumerate(files, 1):
                 path = os.path.join(
                     upload_dir, f"reference_{index}{REFERENCE_MIME_EXT.get(mime, '.bin')}")
                 with open(path, "wb") as f:
                     f.write(data)
                 hashes.add(hashlib.sha256(data).hexdigest())
-                self._set_input_files([path])
-                time.sleep(0.35)
-        except MuseGenerationError:
-            shutil.rmtree(upload_dir, ignore_errors=True)
-            raise
-        except Exception as e:
-            shutil.rmtree(upload_dir, ignore_errors=True)
-            raise MuseGenerationError("Không thể đưa tệp tham chiếu vào ô tải lên của Muse. Đã dừng trước khi gửi yêu cầu tạo nội dung.") from e
+                try:
+                    self._set_input_files([path])
+                except MuseGenerationError:
+                    raise
+                except Exception as exc:
+                    raise MuseGenerationError(
+                        f"Không đưa được tệp tham chiếu số {expected} vào ô tải lên của Muse. "
+                        "Đã dừng trước khi gửi yêu cầu tạo nội dung.") from exc
 
-        try:
-            # A remove button proves attachment presence, not upstream processing success.
-            deadline = time.monotonic() + 30.0
-            attached_count = 0
-            while time.monotonic() < deadline:
-                attached_count = self.page.js(self._ATTACHED_COUNT_JS)
-                if int(attached_count or 0) == len(files):
-                    break
-                time.sleep(0.3)
-            else:
-                confirmed = int(attached_count or 0)
-                log.warning("Muse chưa xác nhận tệp tham chiếu: %s/%s sau 30 giây.", confirmed, len(files))
-                raise MuseGenerationError(
-                    f"Muse chưa xác nhận tệp tham chiếu ({confirmed}/{len(files)}) sau 30 giây. "
-                    "Đã dừng trước khi gửi yêu cầu tạo nội dung.")
+                # Allow the composer to confirm this file before reusing the input.
+                confirmed = 0
+                while time.monotonic() < deadline:
+                    confirmed = int(self.page.js(self._ATTACHED_COUNT_JS) or 0)
+                    if confirmed == expected:
+                        break
+                    time.sleep(0.3)
+                else:
+                    log.warning(
+                        "Muse chưa xác nhận tệp tham chiếu: %s/%s; lần tải tệp số %s.",
+                        confirmed, len(files), expected)
+                    raise MuseGenerationError(
+                        f"Muse chưa xác nhận tệp tham chiếu ({confirmed}/{len(files)}) "
+                        f"khi đính kèm tệp số {expected}. Trình duyệt không thấy bản xem trước "
+                        "hoặc nút gỡ tệp trong ô nhập. Yêu cầu tạo nội dung chưa được gửi.")
             time.sleep(0.5)
             return {"dir": upload_dir, "hashes": hashes}
         except Exception:

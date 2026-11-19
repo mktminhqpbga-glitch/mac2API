@@ -106,6 +106,13 @@ class Store:
                 a["expires_at"] = int(ce["hatch_vml"])
         self.tasks: dict[str, dict] = _read(cfg.tasks_file, {})
 
+    def web_chrome_enabled(self):
+        return _read(os.path.join(self.cfg.data_dir, "web-chrome.json"), False) is True
+
+    def enable_web_chrome(self):
+        with _LOCK:
+            _write(os.path.join(self.cfg.data_dir, "web-chrome.json"), True)
+
     def muse_prompt_language(self):
         settings = _read(os.path.join(self.cfg.data_dir, "muse-prompt.json"), {})
         language = settings.get("language") if isinstance(settings, dict) else None

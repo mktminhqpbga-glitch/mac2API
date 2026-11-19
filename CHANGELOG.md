@@ -1,5 +1,15 @@
 # Nhật ký và bàn giao mac2API
 
+## Xác nhận ảnh tham chiếu và chẩn đoán tác vụ
+
+- Nhận ảnh xem trước đã tải trong ô nhập, kể cả khi nút gỡ tệp không xuất hiện. Chờ xác nhận từng tệp trước khi đưa tệp tiếp theo vào ô tải lên. Lỗi ghi số tệp xác nhận và vị trí tệp đang chờ.
+- Adapter MacFlow 2.0.1 hiển thị mã tác vụ, trạng thái và lý do từ mac2API. Thông báo ẩn khóa và URL trong chi tiết lỗi.
+
+## Thiết lập Chrome Web trên máy Mac
+
+- Hai tab web có phần hướng dẫn mở hồ sơ Chrome riêng và nút **Kết nối Chrome**. mac2API xác minh cổng DevTools cục bộ trước khi lưu cấu hình. Các cổng tùy chỉnh từ biến môi trường vẫn được hỗ trợ.
+- Khi chạy trên Render, bảng điều khiển giải thích rằng Chrome trên máy Mac không thể dùng làm trình duyệt cục bộ của Render.
+
 ## Tiện ích Chrome 1.0.4
 
 - Ba nút Muse, ChatGPT và Gemini đối chiếu tên miền của tab đang mở. Muse nhập cookie như trước. ChatGPT và Gemini xác minh tab qua mã một lần trên đúng Chrome cục bộ, không gửi cookie web.
