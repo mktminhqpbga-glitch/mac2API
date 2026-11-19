@@ -103,8 +103,9 @@ for (const options of [{tab: false}, {cookies: [cookie('')]}]) {
 }
 console.log(`PASS: ${checks} extension cookie-store, URL scope, duplicate precedence and import checks; no live cookies/network`);
 
-for (const [provider, origin] of [['chatgpt', 'https://chatgpt.com'], ['gemini-web', 'https://gemini.google.com']]) {
+for (const [provider, origin, prefix] of [['chatgpt', 'https://chatgpt.com', 'chatgpt'], ['gemini-web', 'https://gemini.google.com', 'gemini']]) {
   const f = fixture({url: origin + '/'});
+  f.element('base').value = `https://test.invalid/${prefix}/v1`;
   await f.run(`linkWebProvider('${provider}')`);
   assert.equal(f.calls.reads.length, 0, 'web links never read cookies');
   assert.equal(f.calls.uploads.length, 1);

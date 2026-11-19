@@ -1,5 +1,10 @@
 # Nhật ký và bàn giao mac2API
 
+## Dùng hồ sơ Chrome đang đăng nhập
+
+- Hai tab ChatGPT Web và Gemini Web có nút **Kết nối Chrome** dùng quyền gỡ lỗi từ xa do Chrome 144 trở lên cấp. Chọn dịch vụ trong tiện ích để xác minh hồ sơ tương ứng. Mỗi tác vụ chỉ mở và đóng tab do mac2API tạo.
+- Chuyển thông tin tải tiện ích sang **Nhập cookie**. Tiện ích 1.0.5 nhận cả Base URL chung và Base URL theo nhà cung cấp.
+
 ## Base URL theo nhà cung cấp và khóa người dùng
 
 - Thêm `/muse/v1`, `/chatgpt/v1` và `/gemini/v1`. Danh sách model và truy vấn tác vụ theo đúng nhà cung cấp. Giữ `/v1` dùng chung và khóa quản trị hiện có.

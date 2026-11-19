@@ -9,13 +9,17 @@ import base64
 from contextlib import contextmanager
 from dataclasses import dataclass
 import json
+from pathlib import Path
 import re
+import sys
+import threading
 import time
 from urllib.parse import urlsplit
 
 import requests
+from websocket import WebSocketException
 
-from cdp import CDP
+from cdp import CDP, CDPError, CDPSession
 from engine import _sniff_mime
 
 
@@ -50,9 +54,10 @@ PROVIDERS = {
 DEFAULT_WEB_CDP_PORT = 19211
 WEB_SETUP_MESSAGE = (
     "Chưa kết nối Chrome Web. Trong bảng quản trị, mở tab ChatGPT Web hoặc Gemini Web, "
-    "mở hồ sơ Chrome riêng theo hướng dẫn rồi bấm Kết nối Chrome."
+    "bật gỡ lỗi từ xa trong Chrome đang dùng rồi bấm Kết nối Chrome."
 )
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
+CHROME_ERRORS = (CDPError, OSError, WebSocketException, ValueError, KeyError, TypeError)
 
 
 class WebProviderError(RuntimeError):
@@ -61,10 +66,120 @@ class WebProviderError(RuntimeError):
         self.status = status
 
 
+def chrome_debug_file():
+    root = Path.home()
+    if sys.platform == "darwin":
+        return root / "Library/Application Support/Google/Chrome/DevToolsActivePort"
+    return root / ".config/google-chrome/DevToolsActivePort"
+
+
+class ChromeProfileConnection:
+    """Use one consented browser connection for the operator's chosen profiles."""
+
+    def __init__(self, browser: CDP):
+        self.browser = browser
+        self.profiles: dict[str, str] = {}
+
+    @classmethod
+    def connect(cls, muse_port: int):
+        try:
+            with chrome_debug_file().open(encoding="ascii") as file:
+                port_line, path = file.read(256).splitlines()
+            port = int(port_line)
+            if (not 0 < port < 65536 or port == muse_port
+                    or not re.fullmatch(r"/devtools/browser(?:/[A-Za-z0-9_-]+)?", path)):
+                raise ValueError("Invalid Chrome endpoint")
+        except (OSError, ValueError) as exc:
+            raise WebProviderError(
+                "Chưa thấy cổng Chrome. Mở chrome://inspect/#remote-debugging trong Google Chrome, bật gỡ lỗi từ xa rồi thử lại.",
+                503,
+            ) from exc
+
+        try:
+            browser = CDP(f"ws://127.0.0.1:{port}{path}", timeout=40, suppress_origin=True)
+        except CHROME_ERRORS as exc:
+            raise WebProviderError(
+                "Chrome chưa cho phép kết nối. Giữ Chrome mở, bấm Kết nối Chrome rồi chọn Cho phép trong hộp thoại Chrome.",
+                503,
+            ) from exc
+        browser.timeout = 5
+        browser.ws.settimeout(5)
+        result = cls(browser)
+        if not result.alive():
+            browser.close()
+            raise WebProviderError("Chrome vừa ngắt kết nối. Hãy kết nối lại.", 503)
+        return result
+
+    def alive(self):
+        try:
+            product = self.browser.send("Browser.getVersion")["result"]["product"]
+            return isinstance(product, str) and product.startswith(("Chrome/", "Chromium/", "HeadlessChrome/"))
+        except CHROME_ERRORS:
+            return False
+
+    @contextmanager
+    def attach(self, target_id):
+        result = self.browser.send("Target.attachToTarget", {"targetId": target_id, "flatten": True})
+        session_id = result["result"]["sessionId"]
+        try:
+            yield CDPSession(self.browser, session_id)
+        finally:
+            try:
+                self.browser.send("Target.detachFromTarget", {"sessionId": session_id})
+            except CHROME_ERRORS:
+                pass
+
+    @contextmanager
+    def new_page(self, provider_id, provider):
+        context_id = self.profiles.get(provider_id)
+        if not context_id:
+            raise WebProviderError(
+                "Hãy mở tab đã đăng nhập và bấm đúng nút ChatGPT hoặc Gemini trong tiện ích.", 409)
+        try:
+            result = self.browser.send("Target.createTarget", {"url": provider.url, "browserContextId": context_id})
+            target_id = result["result"]["targetId"]
+        except CDPError as exc:
+            raise WebProviderError(
+                "Chrome không mở được tab trong hồ sơ đã xác minh. Hãy đưa cửa sổ của hồ sơ đó lên trước rồi thử lại.",
+                409,
+            ) from exc
+        try:
+            with self.attach(target_id) as page:
+                yield page
+        finally:
+            try:
+                self.browser.send("Target.closeTarget", {"targetId": target_id})
+            except CHROME_ERRORS:
+                pass
+
+
 class WebProviders:
     def __init__(self, port: int):
         self.port = port
         self.linked_at: dict[str, int] = {}
+        self.profile_connection: ChromeProfileConnection | None = None
+        self._connect_lock = threading.Lock()
+
+    def ready(self, provider_id: str):
+        profile = self.profile_connection
+        return profile.browser.ws.connected and provider_id in profile.profiles if profile else bool(self.port)
+
+    def connect_profile(self, muse_port: int):
+        with self._connect_lock:
+            if self.profile_connection and self.profile_connection.alive():
+                return
+            profile = ChromeProfileConnection.connect(muse_port)
+            if self.profile_connection:
+                self.profile_connection.browser.close()
+            self.linked_at.clear()
+            self.profile_connection = profile
+
+    def close(self):
+        with self._connect_lock:
+            if self.profile_connection:
+                self.profile_connection.browser.close()
+                self.profile_connection = None
+                self.linked_at.clear()
 
     @staticmethod
     def probe_port(port: int):
@@ -88,11 +203,19 @@ class WebProviders:
         except (requests.RequestException, ValueError, TypeError) as exc:
             raise WebProviderError(
                 f"Chưa thấy Chrome DevTools ở cổng {port} trên máy chạy mac2API. "
-                "Hãy mở cửa sổ Chrome riêng bằng lệnh trong bảng quản trị rồi thử lại.", 503
+                "Hãy kiểm tra cổng đã cấu hình hoặc dùng nút Kết nối Chrome.", 503
             ) from exc
 
     @contextmanager
-    def _page(self, provider: WebProvider):
+    def _page(self, provider_id: str):
+        provider = PROVIDERS[provider_id]
+        if profile := self.profile_connection:
+            try:
+                with profile.new_page(provider_id, provider) as page:
+                    yield page
+            except CHROME_ERRORS as exc:
+                raise WebProviderError("Mất kết nối với Chrome. Hãy bấm Kết nối Chrome lại trong bảng quản trị.", 503) from exc
+            return
         if not self.port:
             raise WebProviderError(WEB_SETUP_MESSAGE, 503)
         base = f"http://127.0.0.1:{self.port}"
@@ -135,15 +258,47 @@ class WebProviders:
 
     def check(self, provider_id: str):
         provider = PROVIDERS[provider_id]
-        with self._page(provider) as page:
+        with self._page(provider_id) as page:
             self._wait_composer(page, provider, time.monotonic() + 15)
+
+    def _verify_marker(self, page, provider, origin, marker):
+        matched = page.js(f"""(() => {{
+            if (location.origin !== {json.dumps(origin)}) return false;
+            const root = document.documentElement;
+            if (root.dataset.mac2apiLink !== {json.dumps(marker)}) return false;
+            delete root.dataset.mac2apiLink;
+            return true;
+        }})()""")
+        if matched is not True:
+            return False
+        self._wait_composer(page, provider, time.monotonic() + 5)
+        return True
 
     def link(self, provider_id: str, marker: str) -> int:
         """Verify that the extension's active tab belongs to this local browser."""
-        if not self.port:
-            raise WebProviderError(WEB_SETUP_MESSAGE, 503)
         provider = PROVIDERS[provider_id]
         origin = _origin(provider.url)
+        if profile := self.profile_connection:
+            try:
+                targets = profile.browser.send("Target.getTargets")["result"]["targetInfos"]
+                for tab in targets:
+                    if (tab.get("type") != "page" or _origin(tab.get("url", "")) != origin
+                            or not tab.get("browserContextId")):
+                        continue
+                    try:
+                        with profile.attach(tab["targetId"]) as page:
+                            if self._verify_marker(page, provider, origin, marker):
+                                profile.profiles[provider_id] = tab["browserContextId"]
+                                checked = self.linked_at[provider_id] = int(time.time())
+                                return checked
+                    except CDPError:
+                        continue  # A tab may have been closed since Target.getTargets.
+            except CHROME_ERRORS as exc:
+                raise WebProviderError("Mất kết nối với Chrome. Hãy bấm Kết nối Chrome lại trong bảng quản trị.", 503) from exc
+            raise WebProviderError("Hãy mở tiện ích ngay trong tab đã đăng nhập ở Chrome vừa cấp quyền.", 409)
+
+        if not self.port:
+            raise WebProviderError(WEB_SETUP_MESSAGE, 503)
         base = f"http://127.0.0.1:{self.port}"
         try:
             with requests.Session() as session:
@@ -163,28 +318,19 @@ class WebProviders:
             try:
                 page = CDP(f"ws://127.0.0.1:{self.port}/devtools/page/{target}", timeout=3, suppress_origin=True)
                 try:
-                    matched = page.js(f"""(() => {{
-                        if (location.origin !== {json.dumps(origin)}) return false;
-                        const root = document.documentElement;
-                        if (root.dataset.mac2apiLink !== {json.dumps(marker)}) return false;
-                        delete root.dataset.mac2apiLink;
-                        return true;
-                    }})()""")
-                    if matched is True:
-                        self._wait_composer(page, provider, time.monotonic() + 5)
-                        checked = int(time.time())
-                        self.linked_at[provider_id] = checked
+                    if self._verify_marker(page, provider, origin, marker):
+                        checked = self.linked_at[provider_id] = int(time.time())
                         return checked
                 finally:
                     page.close()
             except (OSError, TimeoutError):
                 continue
-        raise WebProviderError("Tab này không thuộc Chrome mà mac2API đang kết nối. Hãy mở tiện ích trong hồ sơ Chrome riêng trên cùng máy.", 409)
+        raise WebProviderError("Tab này không thuộc Chrome mà mac2API đang kết nối. Hãy mở tiện ích trong đúng Chrome trên cùng máy.", 409)
 
     def generate(self, provider_id: str, prompt: str, *, image: bool, timeout: int):
         provider = PROVIDERS[provider_id]
         deadline = time.monotonic() + timeout
-        with self._page(provider) as page:
+        with self._page(provider_id) as page:
             self._wait_composer(page, provider, min(deadline, time.monotonic() + 25))
             self._clean_composer(page, provider, min(deadline, time.monotonic() + 3))
             if image:

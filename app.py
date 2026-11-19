@@ -1662,7 +1662,7 @@ def models(_=Depends(api_auth), request: Request = None):
     modules = [
         {"id": model, "object": "model", "owned_by": provider, "type": kind}
         for model, (provider, kind) in MODULES.items()
-        if provider == "muse" or web_providers.port
+        if provider == "muse" or web_providers.ready(provider)
     ]
     data = [*MODELS, *modules, *external]
     if provider:
@@ -2424,7 +2424,11 @@ def get_media_thumbnail(name: str, access: str = "", authorization: str | None =
 # ------------------------- 管理：总览 -------------------------
 @app.get("/admin/web-providers")
 def list_web_providers(_=Depends(auth)):
-    return {"configured": bool(web_providers.port), "port": web_providers.port,
+    profile = web_providers.profile_connection
+    profile_connected = bool(profile and profile.browser.ws.connected)
+    return {"configured": profile_connected if profile else bool(web_providers.port), "port": web_providers.port,
+            "profile_connected": profile_connected,
+            "ready": [provider for provider in WEB_PROVIDERS if web_providers.ready(provider)],
             "linked_at": dict(web_providers.linked_at),
             "local_setup": not (os.environ.get("RENDER", "").lower() == "true"
                                 or os.environ.get("RENDER_GIT_COMMIT"))}
@@ -2444,6 +2448,14 @@ def connect_web_chrome(_=Depends(auth)):
     if not web_providers.port:
         store.enable_web_chrome()
         web_providers.port = port
+    return list_web_providers()
+
+
+@app.post("/admin/web-providers/connect-profile")
+async def connect_web_chrome_profile(_=Depends(auth)):
+    if not list_web_providers()["local_setup"]:
+        raise HTTPException(409, "Render không thể dùng Chrome trên máy Mac của bạn.")
+    await asyncio.to_thread(_web_call, web_providers.connect_profile, CFG.cdp_port)
     return list_web_providers()
 
 
@@ -3557,4 +3569,5 @@ async def _shutdown():
             await idle_task
         except asyncio.CancelledError:
             pass
+    await asyncio.to_thread(web_providers.close)
     await asyncio.to_thread(engine.stop)

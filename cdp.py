@@ -21,17 +21,23 @@ class CDP:
         self._id = 0
         self._lock = threading.Lock()
 
-    def send(self, method: str, params: dict | None = None, timeout: float | None = None):
+    def send(self, method: str, params: dict | None = None, timeout: float | None = None,
+             *, session_id: str | None = None):
         with self._lock:
             self._id += 1
             mid = self._id
-            self.ws.send(json.dumps({"id": mid, "method": method, "params": params or {}}))
+            request = {"id": mid, "method": method, "params": params or {}}
+            if session_id:
+                request["sessionId"] = session_id
+            self.ws.send(json.dumps(request))
             deadline = time.time() + (timeout or self.timeout)
             while time.time() < deadline:
                 try:
                     msg = json.loads(self.ws.recv())
                 except websocket.WebSocketTimeoutException:
                     continue
+                except (websocket.WebSocketConnectionClosedException, OSError):
+                    raise
                 except Exception:  # noqa: BLE001
                     continue
                 if msg.get("id") == mid:
@@ -67,6 +73,19 @@ class CDP:
                 self.ws.close()
             except Exception:  # noqa: BLE001
                 pass
+
+
+class CDPSession:
+    """Page commands over the browser's already-approved WebSocket."""
+
+    def __init__(self, browser: CDP, session_id: str):
+        self.browser = browser
+        self.session_id = session_id
+
+    def send(self, method, params=None, timeout=None):
+        return self.browser.send(method, params, timeout, session_id=self.session_id)
+
+    js = CDP.js
 
 
 def http_json(url: str, timeout: float = 5.0):

@@ -28,6 +28,7 @@ class Handler(BaseHTTPRequestHandler):
   if path in ['/','/admin']:data=html;kind='text/html; charset=utf-8'
   elif path=='/admin/accounts':data={'accounts':accounts,'stats':{'total':8,'healthy':8}};kind='application/json'
   elif path=='/admin/apikey':data={'api_key':'fixture-only'};kind='application/json'
+  elif path=='/admin/web-providers':data={'configured':False,'profile_connected':False,'ready':[],'local_setup':True};kind='application/json'
   elif path in ['/admin/update/check','/admin/repo/status']:
    known=server_state['mode']=='update'
    data={'repo_url':'https://github.com/czg86389-hub/muse2api','repo_ref':'main','local_version':'1.6.10','remote_version':VERSION if known else '', 'local_sha':'aaaaaaa','remote_sha':'bbbbbbb' if known else '', 'up_to_date':False if known else None,'has_update':known,'check_error':'' if known else 'fixture remote unavailable','managed_deployment':False,'highlights':['fixture update'],'highlights_en':['fixture update'],'recent_commits':[]};kind='application/json'
@@ -42,8 +43,13 @@ class Handler(BaseHTTPRequestHandler):
   self.send_response(200);self.send_header('Content-Type',kind);self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
  def do_POST(self):
   body=json.loads(self.rfile.read(int(self.headers.get('Content-Length',0))) or b'{}')
-  events.append({'method':'POST','path':urlsplit(self.path).path,'body':body})
-  data=json.dumps({'ok':True,'proxy_reachable':True,'session_ok':True,'exit_ip':'198.51.100.7','workspace_status':'assigned','tested_saved_proxy':False}).encode()
+  path=urlsplit(self.path).path
+  events.append({'method':'POST','path':path,'body':body})
+  if path=='/admin/web-providers/connect-profile':
+   reply={'configured':True,'profile_connected':True,'ready':[],'local_setup':True}
+  else:
+   reply={'ok':True,'proxy_reachable':True,'session_ok':True,'exit_ip':'198.51.100.7','workspace_status':'assigned','tested_saved_proxy':False}
+  data=json.dumps(reply).encode()
   self.send_response(200);self.send_header('Content-Type','application/json');self.end_headers();self.wfile.write(data)
 server=ThreadingHTTPServer(('127.0.0.1',0),Handler);threading.Thread(target=server.serve_forever,daemon=True).start()
 with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
@@ -77,6 +83,15 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
     time.sleep(.1)
    raise AssertionError('Condition failed: '+expr)
   wait("document.querySelectorAll('#poolBody tr').length===8")
+  page.js("document.querySelector('[data-t=openai]').click()")
+  wait("$('tab-openai').querySelector('[data-provider-status]').textContent.includes('Chưa kết nối')")
+  assert page.js("$('tab-openai').querySelector('[data-web-setup]').open && !$('extensionUpgradeNotice').getClientRects().length")
+  page.js("$('tab-openai').querySelector('[data-web-connect]').click()")
+  wait("$('tab-openai').querySelector('[data-provider-status]').textContent.includes('Đã kết nối Chrome')")
+  assert any(item['path']=='/admin/web-providers/connect-profile' for item in events)
+  assert page.js("$('tab-openai').querySelector('[data-provider-test]').disabled")
+  page.js("document.querySelector('[data-t=pool]').click()")
+  events.clear()
   measure="""(()=>{const m=document.querySelector('main'),w=document.querySelector('#poolBody').closest('.tblwrap'),n=document.querySelector('#poolBody td.ellip');return {viewport:innerWidth,mainWidth:m.getBoundingClientRect().width,bodyWidth:document.documentElement.scrollWidth,tableWidth:w.clientWidth,tableScroll:w.scrollWidth,noteDisplay:getComputedStyle(n).display,noteWhiteSpace:getComputedStyle(n).whiteSpace,buttons:document.querySelectorAll('#poolBody tr:first-child button').length}})()"""
   for lang in (['zh'] if args.probe_only else ['zh','en','vi']):
    if lang!='zh':

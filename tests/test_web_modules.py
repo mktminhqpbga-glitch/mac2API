@@ -50,7 +50,7 @@ for (const button of document.querySelectorAll('[data-testid="send-button"], .se
       image.src = canvas.toDataURL();
       result.append(image);
     } else {
-      result.textContent = 'Test answer: ' + text;
+      result.textContent = 'Test answer: ' + text + (localStorage.studioProfile || '');
     }
   }
 }
@@ -164,6 +164,55 @@ async def check():
         assert response.status_code == 400
 
 
+async def check_existing_profile(port_file):
+    import app
+    import web_providers
+
+    port, _ = port_file.read_text().splitlines()
+    definition = web_providers.PROVIDERS["chatgpt"]
+    with requests.Session() as session:
+        session.trust_env = False
+        target = session.put(f"http://127.0.0.1:{port}/json/new?{definition.url}", timeout=3).json()["id"]
+    page = web_providers.CDP(f"ws://127.0.0.1:{port}/devtools/page/{target}", timeout=3, suppress_origin=True)
+    headers = {"Authorization": "Bearer fixture"}
+    try:
+        app.web_providers._wait_composer(page, definition, time.monotonic() + 5)
+        page.js("localStorage.studioProfile = ' (chosen profile)'")
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app.app), base_url="http://test") as client:
+            endpoint = "/admin/web-providers/connect-profile"
+            assert (await client.post(endpoint)).status_code == 401
+            with patch.dict(os.environ, {"RENDER": "true"}):
+                assert (await client.post(endpoint, headers=headers)).status_code == 409
+            with patch.object(web_providers, "chrome_debug_file", return_value=port_file):
+                connected = await client.post(endpoint, headers=headers)
+            assert connected.status_code == 200, connected.text
+            assert connected.json()["profile_connected"] and connected.json()["ready"] == []
+            missing = await client.post("/admin/web-providers/chatgpt/test", headers=headers)
+            assert missing.status_code == 409, missing.text
+
+            marker = "b" * 32
+            page.js(f"document.documentElement.dataset.mac2apiLink = '{marker}'")
+            endpoint = "/admin/web-providers/chatgpt/link"
+            linked = await client.post(endpoint, headers=headers, json={"marker": marker})
+            assert linked.status_code == 200, linked.text
+            assert (await client.post(endpoint, headers=headers, json={"marker": marker})).status_code == 409
+            status = (await client.get("/admin/web-providers", headers=headers)).json()
+            assert status["ready"] == ["chatgpt"]
+            assert (await client.get("/gemini/v1/models", headers=headers)).json()["data"] == []
+
+            response = await client.post("/chatgpt/v1/chat/completions", headers=headers, json={"prompt": "Hello"})
+            assert response.status_code == 200, response.text
+            assert response.json()["choices"][0]["message"]["content"] == "Test answer: Hello (chosen profile)"
+            assert page.js("document.querySelector('textarea').value") == "Old draft"
+            browser = app.web_providers.profile_connection.browser
+            targets = browser.send("Target.getTargets")["result"]["targetInfos"]
+            matching_pages = [tab for tab in targets if tab["type"] == "page" and tab["url"] == definition.url]
+            assert [tab["targetId"] for tab in matching_pages] == [target], matching_pages
+    finally:
+        page.close()
+        app.web_providers.close()
+
+
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as tmp, ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
         threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -188,7 +237,9 @@ if __name__ == "__main__":
                         for name, provider in web_providers.PROVIDERS.items()}
             with patch.dict(web_providers.PROVIDERS, fixtures):
                 asyncio.run(check())
+                asyncio.run(check_existing_profile(port_file))
             print("PASS: ChatGPT and Gemini module routes, real CDP transport, image polling, media and input validation")
+            print("PASS: existing Chrome profile linkage, correct session storage, original tab retained")
         finally:
             proc.terminate()
             proc.wait(timeout=10)

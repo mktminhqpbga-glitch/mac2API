@@ -28,7 +28,7 @@ function setLang(v) {
 const I18N_EN = {
   "选择当前标签页对应的服务。": "Select the service in the active tab.",
   "请在当前窗口打开 {site} 后重试。": "Open {site} in the current window and try again.",
-  "请在专用 Chrome 的普通窗口中连接网页服务。": "Connect web services from the dedicated Chrome browser in a regular window.",
+  "请在已授权 Chrome 的普通窗口中连接网页服务。": "Connect web services from the connected Chrome browser in a regular window.",
   "正在验证 {site} 标签页…": "Verifying the {site} tab…",
   "已验证 {site} 标签页。请在控制台对应页签试聊。": "Verified the {site} tab. Try chat in its dashboard tab.",
   "连接失败 (HTTP {status})": "Connection failed (HTTP {status})",
@@ -74,7 +74,7 @@ const I18N_EN = {
 
 /* 含富文本的块：data-i18n="key" → 英文 innerHTML */
 const I18N_EN_HTML = {
-  "steps": "<b>Open the signed-in tab and select its service.</b><br>Muse imports cookies. ChatGPT and Gemini verify the dedicated Chrome tab on the mac2API machine.",
+  "steps": "<b>Open the signed-in tab and select its service.</b><br>Muse imports cookies. ChatGPT and Gemini verify the signed-in Chrome tab on the mac2API machine.",
   "foot": "Only Muse cookies are sent to the configured service. ChatGPT and Gemini send a one-time verification marker."
 };
 
@@ -86,7 +86,7 @@ const I18N_EN_PATTERNS = [
 const I18N_VI = {
   "选择当前标签页对应的服务。": "Chọn dịch vụ tương ứng với tab đang mở.",
   "请在当前窗口打开 {site} 后重试。": "Hãy mở {site} trong cửa sổ hiện tại rồi thử lại.",
-  "请在专用 Chrome 的普通窗口中连接网页服务。": "Hãy kết nối dịch vụ web từ cửa sổ thường của Chrome riêng.",
+  "请在已授权 Chrome 的普通窗口中连接网页服务。": "Hãy kết nối dịch vụ web từ cửa sổ thường của Chrome đã cấp quyền.",
   "正在验证 {site} 标签页…": "Đang xác minh tab {site}…",
   "已验证 {site} 标签页。请在控制台对应页签试聊。": "Đã xác minh tab {site}. Hãy thử chat trong mục tương ứng của bảng quản trị.",
   "连接失败 (HTTP {status})": "Kết nối thất bại (HTTP {status})",
@@ -119,7 +119,7 @@ const I18N_VI = {
   "API key 无效": "API key không hợp lệ"
 };
 const I18N_VI_HTML = {
-  "steps": "<b>Mở tab đã đăng nhập rồi chọn đúng nút.</b><br>Muse nhập cookie. ChatGPT và Gemini xác minh tab trong Chrome riêng trên cùng máy với mac2API.",
+  "steps": "<b>Mở tab đã đăng nhập rồi chọn đúng nút.</b><br>Muse nhập cookie. ChatGPT và Gemini xác minh tab trong Chrome đã cấp quyền trên cùng máy với mac2API.",
   "foot": "Tiện ích chỉ gửi cookie Muse tới địa chỉ dịch vụ bạn nhập. Với ChatGPT và Gemini, tiện ích gửi mã xác minh một lần."
 };
 
@@ -164,7 +164,7 @@ function normBase(v) {
   if (!s) return '';
   if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
   s = s.replace(/\/+$/, '');
-  s = s.replace(/\/v1$/i, '');
+  s = s.replace(/\/(?:muse\/|chatgpt\/|gemini\/)?v1$/i, '');
   return s;
 }
 
@@ -318,7 +318,7 @@ async function linkWebProvider(provider) {
     if (!tabAtOrigin(tab, [origin])) {
       return log(t('请在当前窗口打开 {site} 后重试。', {site}), 'bad');
     }
-    if (tab.incognito) return log(t('请在专用 Chrome 的普通窗口中连接网页服务。'), 'bad');
+    if (tab.incognito) return log(t('请在已授权 Chrome 的普通窗口中连接网页服务。'), 'bad');
     log(t('正在验证 {site} 标签页…', {site}));
     tabId = tab.id;
     marker = [...crypto.getRandomValues(new Uint8Array(16))]

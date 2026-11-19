@@ -224,7 +224,7 @@
     <div class="pills">
       <span class="pill" id="pSvc"><span class="led"></span>服务 <b>—</b></span>
       <span class="pill" id="pAcc"><span class="led"></span>账号 <b>—</b></span>
-      <span class="pill" id="pBr"><span class="led"></span>浏览器 <b>—</b></span>
+      <span class="pill" id="pBr"><span class="led"></span>Muse 浏览器 <b>—</b></span>
       <span class="live" id="live"><span class="led"></span>自动刷新</span>
       <span class="keybox" id="keyBox">
         <span class="lbl" id="keyLbl">API Key</span>
@@ -299,9 +299,6 @@
     <button data-t="docs">接入文档</button>
   </nav>
 
-  <div class="card" id="extensionUpgradeNotice" style="border-color:var(--warn)" role="note" data-i18n="extension-upgrade-notice"><b>重要：请手动升级浏览器插件至 1.0.4</b><br>更新服务不会自动升级已加载的扩展。下载新包，替换原扩展目录文件，再到 <code>chrome://extensions</code> 或 <code>edge://extensions</code> 点击“重新加载”。不同浏览器个人资料需分别升级。<br><a href="/admin/extension">下载扩展 1.0.4</a>；油猴用户请升级脚本至 1.1.2。</div>
-
-
   <section class="tab" id="tab-clients">
     <div class="card">
       <h3>Khóa API người dùng</h3>
@@ -337,19 +334,17 @@
       <p class="hint" data-provider-status role="status"></p>
       <p class="hint" data-provider-model-id></p>
       <div class="row">
-        <label>Base URL riêng <input data-provider-base readonly spellcheck="false"></label>
+        <label style="flex:1;min-width:0">Base URL riêng <input type="text" data-provider-base readonly spellcheck="false" style="width:100%"></label>
         <button type="button" class="ghost" data-provider-copy-base>Sao chép Base URL</button>
       </div>
-      <p class="hint">Đăng nhập trong hồ sơ Chrome riêng trên máy chạy mac2API. Sau đó kiểm tra kết nối với phiên web.</p>
       <details data-web-setup>
-        <summary>Thiết lập Chrome trên máy Mac</summary>
+        <summary>Dùng hồ sơ Chrome đang đăng nhập</summary>
         <ol>
-          <li>Mở ứng dụng Terminal và chạy lệnh dưới đây để mở hồ sơ Chrome riêng.</li>
-          <li>Trong cửa sổ mới, đăng nhập dịch vụ và giữ Chrome mở.</li>
-          <li>Bấm <b>Kết nối Chrome</b> rồi kiểm tra phiên trình duyệt.</li>
+          <li>Trong Chrome 144 trở lên, dán <code>chrome://inspect/#remote-debugging</code> vào thanh địa chỉ và bật gỡ lỗi từ xa.</li>
+          <li>Bấm <b>Kết nối Chrome</b> bên dưới rồi chọn <b>Cho phép</b> khi Chrome hỏi.</li>
+          <li>Vào tab đã đăng nhập, mở tiện ích và bấm đúng nút <b data-web-extension-button></b>.</li>
         </ol>
-        <pre class="out" data-web-command style="white-space:pre-wrap;overflow-wrap:anywhere"></pre>
-        <button type="button" class="ghost" data-web-copy>Sao chép lệnh</button>
+        <button type="button" class="ghost" data-web-copy>Sao chép địa chỉ cài đặt Chrome</button>
         <button type="button" data-web-connect>Kết nối Chrome</button>
       </details>
       <p class="hint" data-web-remote hidden>Chrome phải chạy cùng máy với mac2API. Bản trên Render không truy cập Chrome đang mở trên máy Mac của bạn.</p>
@@ -480,6 +475,7 @@
 
   <!-- ==================== 获取 Cookie ==================== -->
   <section class="tab" id="tab-cookie">
+    <div class="card" id="extensionUpgradeNotice" role="note" data-i18n="extension-upgrade-notice"><b>浏览器扩展 1.0.5</b><br><a href="/admin/extension">下载扩展</a>。如需更新解压的扩展，请替换文件后在 <code>chrome://extensions</code> 或 <code>edge://extensions</code> 点击重新加载。</div>
     <div class="card" style="border-color:rgba(52,211,153,.45)">
       <h3>方式一：浏览器扩展 <span class="tag">推荐 · 零命令行 · 全平台</span></h3>
       <div class="hint" data-i18n="ext-why-hint">
@@ -983,6 +979,7 @@ const I18N_EN = {
   "服务": "Service",
   "账号": "Accounts",
   "浏览器": "Browser",
+  "Muse 浏览器": "Muse browser",
   "自动刷新": "Auto refresh",
   "粘贴 m2a_ 开头的密钥": "Paste the key starting with m2a_",
   "保存": "Save",
@@ -1334,7 +1331,7 @@ const I18N_EN = {
 };
 /* 含富文本的块：data-i18n="key" → 英文 innerHTML（须保留原有子元素的 id/class/属性） */
 const I18N_EN_HTML = {
-  "extension-upgrade-notice": "<b>Important: manually upgrade the extension to 1.0.4</b><br>Updating the service does not update unpacked extensions. Replace files in the original folder and click Reload at <code>chrome://extensions</code> or <code>edge://extensions</code>, separately for each browser profile.<br><a href=\"/admin/extension\">Download extension 1.0.4</a>; upgrade the userscript to 1.1.2.",
+  "extension-upgrade-notice": "<b>Browser extension 1.0.5</b><br><a href=\"/admin/extension\">Download the extension</a>. To update an unpacked installation, replace its files and click Reload at <code>chrome://extensions</code> or <code>edge://extensions</code>.",
   "repo-status-desc": "Comparing your local version with the latest version in the official GitHub repository… (online upgrades keep your <code>.env</code> keys and the <code>data/</code> Account Pool and media data)",
   "auth-banner": "\n      <b>Enter your API Key first so the page can load data</b><br>\n      <span style=\"color:var(--muted)\">\n        The API Key is this service's own \"access password\". It stops other people from using your Muse account quota.\n        It is <b style=\"color:var(--text)\">not</b> your Muse password. It is a random string generated at deploy time (it starts with <code>m2a_</code>).<br>\n        Paste it into the box at the top right and click \"Save\". Your browser remembers it, so you won't need to enter it again.\n      </span>\n    ",
   "model-names-hint": "\n        Model names: <code>muse-spark</code> (chat/code), <code>muse-image</code> (images), <code>muse-video</code> (videos).\n        See the \"Integration Docs\" tab for full examples.\n      ",
@@ -1670,6 +1667,7 @@ const I18N_VI = {
   "服务": "Dịch vụ",
   "账号": "Tài khoản",
   "浏览器": "Trình duyệt",
+  "Muse 浏览器": "Trình duyệt Muse",
   "自动刷新": "Tự làm mới",
   "粘贴 m2a_ 开头的密钥": "Dán khóa bắt đầu bằng m2a_",
   "保存": "Lưu",
@@ -2020,7 +2018,7 @@ const I18N_VI = {
   "✗ 保活失败: 未知错误": "✗ Duy trì phiên thất bại do lỗi chưa xác định"
 };
 const I18N_VI_HTML = {
-  "extension-upgrade-notice": "<b>Hãy cập nhật tiện ích lên 1.0.4</b><br>Thay tệp trong thư mục tiện ích đã giải nén rồi bấm Tải lại tại <code>chrome://extensions</code> hoặc <code>edge://extensions</code> cho từng hồ sơ.",
+  "extension-upgrade-notice": "<b>Tiện ích trình duyệt 1.0.5</b><br><a href=\"/admin/extension\">Tải tiện ích</a>. Để cập nhật bản giải nén, thay tệp rồi bấm Tải lại tại <code>chrome://extensions</code> hoặc <code>edge://extensions</code>.",
   "repo-status-desc": "Đang đối chiếu phiên bản đã cài với kho cập nhật. Cấu hình <code>.env</code> và dữ liệu trong <code>data/</code> được giữ lại khi cập nhật.",
   "auth-banner": "<b>Nhập API Key để tải dữ liệu</b><br><span style=\"color:var(--muted)\">Dùng khóa truy cập của dịch vụ Muse2API và bấm Lưu.</span>",
   "model-names-hint": "Model: <code>muse-spark</code> (chat và mã), <code>muse-image</code> (ảnh), <code>muse-video</code> (video). Xem mục Hướng dẫn tích hợp để biết ví dụ.",
@@ -2320,28 +2318,29 @@ const chatProviderPanels = new Map([
   const status = panel.querySelector('[data-provider-status]');
   const output = panel.querySelector('[data-provider-output]');
   const setup = panel.querySelector('[data-web-setup]');
-  const command = panel.querySelector('[data-web-command]');
   const connect = panel.querySelector('[data-web-connect]');
-  panel.querySelector('[data-web-copy]').onclick = () => copyText(command.textContent);
+  panel.querySelector('[data-web-extension-button]').textContent = id === 'chatgpt' ? 'ChatGPT' : 'Gemini';
+  panel.querySelector('[data-web-copy]').onclick = () => copyText('chrome://inspect/#remote-debugging');
 
   connect.onclick = async () => {
     connect.disabled = true;
+    status.textContent = 'Đang chờ Chrome. Chọn Cho phép nếu Chrome hiện hộp thoại.';
     try {
-      render(await api('/admin/web-providers/connect', {method: 'POST'}));
-      status.textContent = 'Đã kết nối cổng Chrome. Bấm Kiểm tra phiên trình duyệt hoặc dùng tiện ích trong tab đã đăng nhập.';
+      render(await api('/admin/web-providers/connect-profile', {method: 'POST'}));
     } catch (error) { status.textContent = error.message; }
     finally { connect.disabled = false; }
   };
 
   function render(data) {
-    status.textContent = data.configured ? 'Đã cấu hình cổng Chrome. Hãy kiểm tra phiên trình duyệt.'
-      : 'Chưa kết nối Chrome Web. Làm theo phần thiết lập bên dưới.';
+    const ready = data.ready?.includes(id) ?? Boolean(data.configured);
+    status.textContent = data.profile_connected ? 'Đã kết nối Chrome. Mở tab đã đăng nhập và chọn dịch vụ trong tiện ích.'
+      : data.configured ? 'Đang dùng cổng Chrome đã cấu hình. Bạn cũng có thể kết nối hồ sơ đang đăng nhập bên dưới.'
+        : 'Chưa kết nối Chrome Web. Làm theo phần thiết lập bên dưới.';
     setup.hidden = data.local_setup === false;
-    setup.open = !data.configured && !setup.hidden;
+    setup.open = !ready && !setup.hidden;
     panel.querySelector('[data-web-remote]').hidden = data.local_setup !== false;
-    command.textContent = `open -na "Google Chrome" --args --remote-debugging-port=${data.port || 19211} --user-data-dir="$HOME/.mac2api-web-profile"`;
-    if (data.linked_at?.[id]) status.textContent = 'Đã xác minh tab qua tiện ích lúc ' + fmtTime(data.linked_at[id]) + '.';
-    test.disabled = send.disabled = !data.configured;
+    if (ready && data.linked_at?.[id]) status.textContent = 'Đã xác minh tab qua tiện ích lúc ' + fmtTime(data.linked_at[id]) + '.';
+    test.disabled = send.disabled = !ready;
   }
   test.disabled = send.disabled = true;
   test.onclick = async () => {
@@ -3303,7 +3302,7 @@ async function loadStatus(){
     $('pSvc').className = 'pill on';
     $('pSvc').innerHTML = '<span class="led"></span>服务 <b>正常</b>';
     $('pBr').className = 'pill ' + (d.browser_running ? 'on' : 'off');
-    $('pBr').innerHTML = `<span class="led"></span>浏览器 <b>${d.browser_running ? '运行中' : '空闲'}</b>`;
+    $('pBr').innerHTML = `<span class="led"></span>Muse 浏览器 <b>${d.browser_running ? '运行中' : '空闲'}</b>`;
     $('sMedia').textContent = d.media_count ?? 0;
     if (d.base_url){ $('dBase').textContent = d.base_url; $('inBase').value = d.base_url; }
   }catch(e){
