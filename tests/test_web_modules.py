@@ -208,6 +208,14 @@ async def check_existing_profile(port_file):
             targets = browser.send("Target.getTargets")["result"]["targetInfos"]
             matching_pages = [tab for tab in targets if tab["type"] == "page" and tab["url"] == definition.url]
             assert [tab["targetId"] for tab in matching_pages] == [target], matching_pages
+            assert app.Store(app.CFG).web_chrome_profile_preferred()
+            restarted = web_providers.WebProviders(int(port), profile_preferred=True)
+            assert not restarted.ready("chatgpt")
+            with patch.object(app, "web_providers", restarted):
+                status = (await client.get("/admin/web-providers", headers=headers)).json()
+                assert not status["configured"] and status["ready"] == []
+                blocked = await client.post("/chatgpt/v1/chat/completions", headers=headers, json={"prompt": "Hello"})
+                assert blocked.status_code == 503, blocked.text
     finally:
         page.close()
         app.web_providers.close()

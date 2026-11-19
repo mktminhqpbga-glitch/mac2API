@@ -17,6 +17,7 @@ HOME = tempfile.TemporaryDirectory(prefix='muse-scheduler-test-')
 os.environ.update(MUSE2API_HOME=HOME.name, MUSE2API_PROFILE_ROOT=HOME.name,
                   MUSE2API_KEY='scheduler-test', MUSE2API_AUTO_UPDATE='0')
 import app
+import store
 from generation_timing import QueuePolicy, QueueSettings, TaskTiming
 
 
@@ -85,5 +86,35 @@ class GenerationQueueTests(unittest.TestCase):
         self.assertEqual(task['status'],'failed');self.assertIn(task['account'],[a['id'] for a in self.accounts])
         self.assertIn('只有文字',task['last_error']);self.assertEqual(task['attempt'],1)
         self.assertGreaterEqual(task['total_elapsed'],task['elapsed']);self.assertIn('queue_elapsed',task)
+
+    def test_corrupt_queue_file_uses_defaults(self):
+        path = Path(HOME.name) / "corrupt-queue.json"
+        path.write_text("{unreadable")
+        self.assertEqual(QueuePolicy(path).settings(), QueueSettings().model_dump())
+        self.assertEqual(path.read_text(), "{unreadable")
+
+    def test_disk_error_does_not_reserve_new_task_or_stall_existing_task(self):
+        task = app.store.create_task("image", "accepted")
+        with patch.object(store, "_write", side_effect=OSError("fixture disk full")):
+            with self.assertRaises(app.HTTPException) as error:
+                app._create_media_task("video", "not accepted")
+            self.assertEqual(error.exception.status_code, 507)
+            app.store.update_task(task["id"], status="completed")
+        self.assertEqual(len(app.store.tasks), 1)
+        self.assertEqual(app.store.get_task(task["id"])["status"], "completed")
+
+    def test_worker_launch_failure_returns_terminal_task(self):
+        task = app.store.create_task("image", "fixture")
+        with patch.object(app.threading.Thread, "start", side_effect=RuntimeError("fixture launch failure")):
+            failed = app._start_media_worker(task, None, lambda: self.fail("worker must not run"))
+        self.assertEqual(failed["id"], task["id"])
+        self.assertEqual(app.store.get_task(task["id"])["status"], "failed")
+
+    def test_expired_base64_result_reports_gone(self):
+        req = app.ImageRequest(prompt="fixture", response_format="b64_json")
+        result = {"filename": "already-pruned.png", "kind": "image", "size": 10}
+        with self.assertRaises(app.HTTPException) as error:
+            app._image_response(req, result)
+        self.assertEqual(error.exception.status_code, 410)
 
 if __name__=="__main__":unittest.main(verbosity=2)

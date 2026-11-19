@@ -1,5 +1,12 @@
 # Nhật ký và bàn giao mac2API
 
+## Ổn định hàng đợi, trạng thái tác vụ và kết nối Chrome
+
+- Lệnh DevTools có thời hạn riêng, tính cả thời gian đợi kết nối dùng chung. Sau khi khởi động lại, chế độ hồ sơ Chrome đang đăng nhập chờ xác minh lại trước khi chạy tác vụ.
+- API video hỗ trợ `Idempotency-Key`. Yêu cầu tạo ảnh hoặc video lặp lại có thể lấy mã đã lưu trước khi tải lại tệp tham chiếu. Các khóa ảnh đã lưu ở bản trước vẫn dùng được.
+- Lỗi ghi tác vụ mới trả HTTP 507 và trả lại khe hàng đợi. Tác vụ bị lỗi khi khởi động worker được đánh dấu thất bại. Nếu kho trả lỗi ghi trong lúc chạy, trạng thái quan sát được vẫn có thể đọc từ tiến trình và lỗi ghi được ghi vào nhật ký.
+- Cài đặt hàng đợi hỏng dùng giá trị mặc định khi khởi động. Ảnh Base64 đã bị dọn khỏi kho trả HTTP 410 với lý do rõ ràng.
+
 ## Dùng hồ sơ Chrome đang đăng nhập
 
 - Hai tab ChatGPT Web và Gemini Web có nút **Kết nối Chrome** dùng quyền gỡ lỗi từ xa do Chrome 144 trở lên cấp. Chọn dịch vụ trong tiện ích để xác minh hồ sơ tương ứng. Mỗi tác vụ chỉ mở và đóng tab do mac2API tạo.

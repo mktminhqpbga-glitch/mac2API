@@ -149,7 +149,7 @@ Chạy mac2API và Google Chrome 144 trở lên trên cùng máy. Dùng hồ sơ
 2. Trong tab **ChatGPT Web** hoặc **Gemini Web** của mac2API, bấm **Kết nối Chrome**, rồi chọn **Cho phép** trong hộp thoại của Chrome.
 3. Mở tab nhà cung cấp đã đăng nhập. Trong tiện ích, nhập Base URL của mac2API và khóa quản trị, rồi bấm **ChatGPT** hoặc **Gemini**. Bảng quản trị hiển thị thời điểm xác minh cho dịch vụ tương ứng. Tùy chọn **Kiểm tra phiên trình duyệt** mở một tab thử trong hồ sơ đã xác minh.
 
-Giữ Chrome mở trong khi chạy tác vụ. Nếu Chrome hoặc mac2API khởi động lại, kết nối và xác minh lại. Khi Chrome không mở được tab cho hồ sơ đã xác minh, đưa cửa sổ của hồ sơ đó lên trước rồi thử lại. Cấu hình cổng DevTools cục bộ qua `MUSE2API_WEB_CDP_PORT` vẫn được hỗ trợ. Render chỉ có thể điều khiển trình duyệt chạy cùng máy với mac2API.
+Giữ Chrome mở trong khi chạy tác vụ. Nếu Chrome hoặc mac2API khởi động lại, kết nối và xác minh lại. Sau khi chọn dùng hồ sơ đang đăng nhập, mac2API chờ xác minh lại hồ sơ đó trước khi tạo tác vụ. Khi Chrome không mở được tab cho hồ sơ đã xác minh, đưa cửa sổ của hồ sơ đó lên trước rồi thử lại. Cấu hình cổng DevTools cục bộ qua `MUSE2API_WEB_CDP_PORT` vẫn được hỗ trợ. Render chỉ có thể điều khiển trình duyệt chạy cùng máy với mac2API.
 
 Các mô-đun web tạo một ảnh từ mô tả, tùy quyền của tài khoản. Chat web lấy câu trả lời hoàn chỉnh rồi mới trả về, kể cả khi client yêu cầu SSE. Mỗi yêu cầu mở và đóng tab riêng. mac2API xóa bản nháp và kiểm tra ô nhập trước khi gửi. Muse thử mở một phiên riêng mới nếu vẫn còn tệp hoặc nội dung cũ. Nếu còn bị kẹt, tác vụ dừng và giải thích trong phần **Chi tiết lỗi**. Chỉ các tệp trong ô nhập của tác vụ mới được dọn.
 
@@ -195,7 +195,7 @@ Trình duyệt và dịch vụ cần truy cập cùng tệp tham chiếu. Tệp 
 
 ### Tạo ảnh qua CDN hoặc proxy ngược
 
-Với các yêu cầu dài, gửi `POST /v1/images/tasks` và kiểm tra `GET /v1/images/tasks/{id}` bằng mã trả về trong HTTP 202. Dùng `Idempotency-Key` ổn định khi cần thử lại bước gửi. Cùng khóa và cùng dữ liệu trả về tác vụ cũ. Cùng khóa nhưng dữ liệu khác trả HTTP 409. Khi đạt giới hạn hàng đợi, API trả HTTP 429. Khi trạng thái là `completed`, đọc `url` hoặc `data[0]`. Khi trạng thái là `failed`, xem `error`.
+Với các yêu cầu dài, gửi `POST /v1/images/tasks` và kiểm tra `GET /v1/images/tasks/{id}` bằng mã trả về trong HTTP 202. Cả `POST /v1/images/tasks` và `POST /v1/videos` hỗ trợ `Idempotency-Key`. Tạo một giá trị riêng cho mỗi tác vụ mới, dùng lại giá trị và dữ liệu đó khi gửi lại yêu cầu bị mất kết nối. API trả mã tác vụ cũ nếu bản ghi còn trong lịch sử, kể cả sau khi khởi động lại. Dùng cùng giá trị với dữ liệu khác trả HTTP 409. Khi đạt giới hạn hàng đợi, API trả HTTP 429. Khi trạng thái là `completed`, đọc `url` hoặc `data[0]`. Khi trạng thái là `failed`, xem `error`.
 
 ### Chẩn đoán phiên Muse
 

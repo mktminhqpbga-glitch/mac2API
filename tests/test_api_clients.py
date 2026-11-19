@@ -73,13 +73,23 @@ async def run():
                 created = await http.post(endpoint, headers={**al, **same_key}, json=body)
                 assert created.status_code == 202, created.text
                 alice_task = created.json()["id"]
-                duplicate = await http.post(endpoint, headers={**al, **same_key}, json=body)
+                with patch.object(app, "_prepare_reference_images", side_effect=AssertionError("replay fetched inputs")):
+                    duplicate = await http.post(endpoint, headers={**al, **same_key}, json=body)
                 assert duplicate.json()["id"] == alice_task
                 created = await http.post(endpoint, headers={**bo, **same_key}, json=body)
                 assert created.status_code == 202 and created.json()["id"] != alice_task
-                created = await http.post("/muse/v1/videos", headers=al, json={"prompt": "A video"})
+                video_path = "/muse/v1/videos"
+                video_headers = {**al, **same_key}
+                video_body = {"prompt": "A video"}
+                created, replay = await asyncio.gather(
+                    http.post(video_path, headers=video_headers, json=video_body),
+                    http.post(video_path, headers=video_headers, json=video_body),
+                )
                 assert created.status_code == 200
                 video_task = created.json()["id"]
+                assert replay.status_code == 200 and replay.json()["id"] == video_task
+                different = await http.post(video_path, headers=video_headers, json={"prompt": "Another video"})
+                assert different.status_code == 409
                 assert (await http.post(endpoint, headers=al, json=body)).status_code == 429
                 assert (await http.get(endpoint + "/" + alice_task, headers=bo)).status_code == 404
                 assert (await http.get("/v1/videos/" + video_task, headers=bo)).status_code == 404
@@ -96,6 +106,10 @@ async def run():
                 else:
                     raise AssertionError((result, video))
 
+                with patch.object(app, "store", app.Store(app.CFG)), \
+                     patch.object(app, "_prepare_reference_images", side_effect=AssertionError("replay fetched inputs")):
+                    replay = await http.post(video_path, headers=video_headers, json=video_body)
+                assert replay.status_code == 200 and replay.json()["id"] == video_task
                 url = result["data"][0]["url"]
                 raw_url = urlsplit(url).path
                 assert "account" not in result and "api_prompt" not in result

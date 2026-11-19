@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import re
 import secrets
 import os
@@ -15,6 +16,7 @@ import uuid
 from proxy import public_proxy
 
 _LOCK = threading.Lock()
+log = logging.getLogger("muse2api")
 
 # 登录会话存在性检查；可用性仍须经上游认证（与 engine 一致）
 # hatch_vml 是可选工作区令牌，缺失不能据此拒绝会话导入
@@ -178,9 +180,12 @@ class Store:
     def web_chrome_enabled(self):
         return _read(os.path.join(self.cfg.data_dir, "web-chrome.json"), False) is True
 
-    def enable_web_chrome(self):
+    def web_chrome_profile_preferred(self):
+        return _read(os.path.join(self.cfg.data_dir, "web-chrome.json"), False) == "profile"
+
+    def enable_web_chrome(self, *, profile=False):
         with _LOCK:
-            _write(os.path.join(self.cfg.data_dir, "web-chrome.json"), True)
+            _write(os.path.join(self.cfg.data_dir, "web-chrome.json"), "profile" if profile else True)
 
     def muse_prompt_language(self):
         settings = _read(os.path.join(self.cfg.data_dir, "muse-prompt.json"), {})
@@ -368,8 +373,9 @@ class Store:
             t = {"id": tid, "object": "task", "kind": kind, "prompt": prompt,
                  "status": "queued", "created_at": int(time.time()),
                  "updated_at": int(time.time()), "result": None, "error": None, **metadata}
-            self.tasks[tid] = t
-            _write(self.cfg.tasks_file, self.tasks)
+            tasks = {**self.tasks, tid: t}
+            _write(self.cfg.tasks_file, tasks)
+            self.tasks = tasks
             return t
 
     def update_task(self, tid: str, **kw):
@@ -377,10 +383,16 @@ class Store:
             t = self.tasks.get(tid)
             if not t:
                 return None
-            t.update(kw)
-            t["updated_at"] = int(time.time())
-            _write(self.cfg.tasks_file, self.tasks)
-            return t
+            updated = {**t, **kw, "updated_at": int(time.time())}
+            tasks = {**self.tasks, tid: updated}
+            try:
+                _write(self.cfg.tasks_file, tasks)
+            except OSError as exc:
+                # Generation may already have happened. Preserve the observed state for
+                # polling and release its queue slot while the service is still running.
+                log.warning("Không lưu được trạng thái tác vụ %s (%s).", tid, type(exc).__name__)
+            self.tasks = tasks
+            return updated
 
     def get_task(self, tid: str) -> dict | None:
         return self.tasks.get(tid)
@@ -396,8 +408,9 @@ class Store:
             if task and task.get("status") in ("queued", "processing"):
                 raise ValueError("Không thể xóa tác vụ đang chờ hoặc đang chạy.")
             if task:
-                del self.tasks[tid]
-                _write(self.cfg.tasks_file, self.tasks)
+                tasks = {key: value for key, value in self.tasks.items() if key != tid}
+                _write(self.cfg.tasks_file, tasks)
+                self.tasks = tasks
                 return True
             return False
 
@@ -408,6 +421,7 @@ class Store:
             keep_ids = {t["id"] for t in items[:keep]}
             keep_ids.update(t["id"] for t in items if t.get("status") in ("queued", "processing"))
             removed = len(self.tasks) - len(keep_ids)
-            self.tasks = {k: v for k, v in self.tasks.items() if k in keep_ids}
-            _write(self.cfg.tasks_file, self.tasks)
+            tasks = {k: v for k, v in self.tasks.items() if k in keep_ids}
+            _write(self.cfg.tasks_file, tasks)
+            self.tasks = tasks
             return max(0, removed)

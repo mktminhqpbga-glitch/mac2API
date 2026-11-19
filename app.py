@@ -23,7 +23,7 @@ OpenAI 兼容:
 """
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import asyncio
 import copy
@@ -98,7 +98,7 @@ if CFG.web_cdp_port and (not 1 <= CFG.web_cdp_port <= 65535 or CFG.web_cdp_port 
 web_port = CFG.web_cdp_port
 if not web_port and CFG.cdp_port != DEFAULT_WEB_CDP_PORT and store.web_chrome_enabled():
     web_port = DEFAULT_WEB_CDP_PORT
-web_providers = WebProviders(web_port)
+web_providers = WebProviders(web_port, profile_preferred=store.web_chrome_profile_preferred())
 MODULES = {f"muse/{kind}": ("muse", kind) for kind in ("text", "image", "video")}
 MODULES.update({f"{provider}/{kind}": (provider, kind)
                 for provider in WEB_PROVIDERS for kind in ("text", "image")})
@@ -363,7 +363,7 @@ def _account_operation(aid: str, *, wait_seconds: float = 0):
 # FastAPI 默认返回的是 {"detail": ...}，客户端会读不到原因、只显示"未知错误"。
 # 所以 /v1/* 统一转成 OpenAI 格式，管理接口保持原样（前端依赖 detail）。
 def _err_type(status: int) -> str:
-    if status == 404:
+    if status in (404, 410):
         return "not_found_error"
     if status == 429:
         return "rate_limit_error"
@@ -1678,8 +1678,11 @@ def _image_response(req: ImageRequest, res: dict, *, admin: bool = False) -> dic
             "size": req.size or "auto", "kind": res["kind"], "bytes": res["size"]}
     if req.response_format == "b64_json":
         fpath = res.get("path") or os.path.join(CFG.media_dir, res["filename"])
-        with open(fpath, "rb") as f:
-            item["b64_json"] = base64.b64encode(f.read()).decode()
+        try:
+            with open(fpath, "rb") as f:
+                item["b64_json"] = base64.b64encode(f.read()).decode()
+        except FileNotFoundError as exc:
+            raise HTTPException(410, "Tệp kết quả đã được dọn khỏi kho media.") from exc
         item.pop("url", None)
     return {"created": int(time.time()), "data": [item]}
 
@@ -1709,36 +1712,73 @@ def _prepare_reference_images(images: list[str], *, public_only: bool = False) -
     return prepared
 
 
-def _queue_image(req: ImageRequest, prompt: str, reference_images: list[str],
-                 idempotency_key: str | None = None, *, owner=None):
-    """Opt-in polling avoids reverse-proxy timeouts; no generation is repeated by polling."""
-    if idempotency_key and len(idempotency_key) > 256:
-        raise HTTPException(400, "Idempotency-Key too long")
+def _media_submission(req, key):
+    if not key:
+        return {}
+    if len(key) > 256:
+        raise HTTPException(400, "Idempotency-Key dài quá 256 ký tự.")
+    digest = hashlib.sha256()
+    encoder = json.JSONEncoder(sort_keys=True, ensure_ascii=False)
+    for chunk in encoder.iterencode(req.model_dump(by_alias=True)):
+        digest.update(chunk.encode())
+    return {"request_key": hashlib.sha256(key.encode()).hexdigest(), "request_hash": digest.hexdigest()}
+
+
+def _replayed_media_task(tasks, kind, provider, owner, submission, *, legacy=None):
+    if not submission:
+        return None
+    for task in tasks:
+        if (task.get("kind") != kind or (task.get("provider") or "muse") != provider
+                or task.get("owner") != owner):
+            continue
+        if task.get("request_key") == submission["request_key"]:
+            matches = task.get("request_hash") == submission["request_hash"]
+        elif legacy is not None and task.get("image_request_key") == submission["request_key"]:
+            req, references = legacy
+            payload = {"request": req.model_dump(by_alias=True), "references": references}
+            digest = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+            matches = task.get("image_request_hash") == digest
+        else:
+            continue
+        if not matches:
+            raise HTTPException(409, "Idempotency-Key này đã được dùng với nội dung khác.")
+        return task
+    return None
+
+
+def _task_receipt(task):
+    return {"id": task["id"], "task_id": task["id"], "object": f"{task['kind']}.task",
+            "status": task["status"], "progress": task.get("progress", 0), "created_at": task["created_at"]}
+
+
+def _create_media_task(kind, prompt, **metadata):
+    try:
+        return store.create_task(kind, prompt, **metadata)
+    except OSError as exc:
+        raise HTTPException(507, "Không lưu được tác vụ mới. Hãy kiểm tra dung lượng và quyền ghi thư mục dữ liệu.") from exc
+
+
+def _start_media_worker(task, owner, worker):
+    try:
+        threading.Thread(target=_generate_owned, args=(owner, worker), daemon=True).start()
+    except (OSError, RuntimeError):
+        return store.update_task(task["id"], status="failed", error="Không thể khởi động tác vụ trên máy chủ.")
+    return task
+
+
+def _queue_image(req: ImageRequest, prompt: str, reference_images: list[str], *, owner=None, submission=None):
     web_provider = _image_module(req)
     provider = web_provider or "muse"
-    key_hash = hashlib.sha256(idempotency_key.encode()).hexdigest() if idempotency_key else None
-    request_hash = hashlib.sha256(json.dumps(
-        {"request": req.model_dump(by_alias=True), "references": reference_images},
-        sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     with MEDIA_ADMISSION_LOCK:
-        tasks = list(store.tasks.values())
-        if key_hash:
-            for existing in tasks:
-                if (existing.get("image_request_key") == key_hash
-                        and (existing.get("provider") or "muse") == provider
-                        and existing.get("owner") == owner):
-                    if existing.get("image_request_hash") != request_hash:
-                        raise HTTPException(409, "Idempotency-Key reused with different request")
-                    return JSONResponse(status_code=202, content={
-                        "id": existing["id"], "task_id": existing["id"],
-                        "object": "image.task", "status": existing["status"],
-                        "progress": existing.get("progress", 0),
-                        "created_at": existing["created_at"]})
+        tasks = store.tasks.values()
+        existing = _replayed_media_task(tasks, "image", provider, owner, submission, legacy=(req, reference_images))
+        if existing:
+            return JSONResponse(status_code=202, content=_task_receipt(existing))
         _check_media_admission(tasks, "image", owner)
-        task = store.create_task(
+        task = _create_media_task(
             "image", req.prompt, api_prompt=prompt, size=req.size, provider=provider, owner=owner,
             response_format=req.response_format, progress=0, queue_elapsed=0.0,
-            image_request_key=key_hash, image_request_hash=request_hash)
+            **(submission or {}))
         tid = task["id"]
 
     def worker():
@@ -1768,10 +1808,7 @@ def _queue_image(req: ImageRequest, prompt: str, reference_images: list[str],
             store.update_task(tid, status="failed", error=str(exc),
                               **timing.finish())
 
-    threading.Thread(target=_generate_owned, args=(owner, worker), daemon=True).start()
-    return JSONResponse(status_code=202, content={
-        "id": tid, "task_id": tid, "object": "image.task", "status": "queued",
-        "progress": 0, "created_at": task["created_at"]})
+    return JSONResponse(status_code=202, content=_task_receipt(_start_media_worker(task, owner, worker)))
 
 
 @app.post("/muse/v1/images/tasks")
@@ -1779,18 +1816,22 @@ def _queue_image(req: ImageRequest, prompt: str, reference_images: list[str],
 @app.post("/gemini/v1/images/tasks")
 @app.post("/v1/images/tasks")
 def create_image_task(req: ImageRequest,
-                      idempotency_key: str | None = Header(default=None), _=Depends(api_auth),
+                      idempotency_key: Annotated[str | None, Header()] = None, _=Depends(api_auth),
                       request: Request = None):
     req = _scope_request_model(request, "image", req)
     _authorize_model(_, req.model, "image")
     owner = _client_id(_)
-    options = {"owner": owner} if owner else {}
     provider = _image_module(req)
+    submission = _media_submission(req, idempotency_key)
+    existing = _replayed_media_task(store.tasks.values(), "image", provider or "muse", owner, submission)
+    if existing:
+        return JSONResponse(status_code=202, content=_task_receipt(existing))
+    options = {"owner": owner, "submission": submission}
     if provider:
-        return _queue_image(req, _web_image_prompt(req), [], idempotency_key, **options)
+        return _queue_image(req, _web_image_prompt(req), [], **options)
     refs = _prepare_reference_images(_image_references(req), **({"public_only": True} if owner else {}))
     prompt = build_image_prompt(req, _reference_kinds(refs), language=store.muse_prompt_language())
-    return _queue_image(req, prompt, refs, idempotency_key, **options)
+    return _queue_image(req, prompt, refs, **options)
 
 
 @app.get("/muse/v1/images/tasks/{task_id}")
@@ -1955,20 +1996,29 @@ async def images_edits(request: Request, _=Depends(api_auth)):
 @app.post("/v1/videos")
 @app.post("/muse/v1/videos/generations")
 @app.post("/v1/videos/generations")
-async def create_video(req: VideoRequest, _=Depends(api_auth), request: Request = None):
+async def create_video(req: VideoRequest, _=Depends(api_auth), request: Request = None,
+                       idempotency_key: Annotated[str | None, Header()] = None):
     req = _scope_request_model(request, "video", req)
     _authorize_model(_, req.model, "video")
     owner = _client_id(_)
     _module_provider(req.model, "video")
+    submission = await asyncio.to_thread(_media_submission, req, idempotency_key) if idempotency_key else {}
+    existing = _replayed_media_task(store.tasks.values(), "video", "muse", owner, submission)
+    if existing:
+        return _task_receipt(existing)
     ref_images = await asyncio.to_thread(
         _prepare_reference_images, _video_references(req), **({"public_only": True} if owner else {}))
 
     prompt = build_video_prompt(req, _reference_kinds(ref_images), language=store.muse_prompt_language())
     timeout = req.timeout or CFG.video_timeout
     with MEDIA_ADMISSION_LOCK:
-        _check_media_admission(list(store.tasks.values()), "video", owner)
-        task = store.create_task("video", req.prompt, owner=owner, provider="muse",
-                                 api_prompt=prompt, queue_elapsed=0.0, progress=10)
+        tasks = store.tasks.values()
+        existing = _replayed_media_task(tasks, "video", "muse", owner, submission)
+        if existing:
+            return _task_receipt(existing)
+        _check_media_admission(tasks, "video", owner)
+        task = _create_media_task("video", req.prompt, owner=owner, provider="muse",
+                                  api_prompt=prompt, queue_elapsed=0.0, progress=10, **submission)
 
     def worker():
         timing = TaskTiming(store, task["id"])
@@ -1993,9 +2043,7 @@ async def create_video(req: VideoRequest, _=Depends(api_auth), request: Request 
             store.update_task(task["id"], status="failed",
                               **timing.finish(), error=str(exc))
 
-    threading.Thread(target=_generate_owned, args=(owner, worker), daemon=True).start()
-    return {"id": task["id"], "task_id": task["id"], "object": "video.task", "status": "queued",
-            "progress": 10, "created_at": task["created_at"]}
+    return _task_receipt(_start_media_worker(task, owner, worker))
 
 
 @app.get("/muse/v1/videos/{task_id}")
@@ -2426,7 +2474,8 @@ def get_media_thumbnail(name: str, access: str = "", authorization: str | None =
 def list_web_providers(_=Depends(auth)):
     profile = web_providers.profile_connection
     profile_connected = bool(profile and profile.browser.ws.connected)
-    return {"configured": profile_connected if profile else bool(web_providers.port), "port": web_providers.port,
+    return {"configured": profile_connected if web_providers.profile_preferred else bool(web_providers.port),
+            "port": web_providers.port,
             "profile_connected": profile_connected,
             "ready": [provider for provider in WEB_PROVIDERS if web_providers.ready(provider)],
             "linked_at": dict(web_providers.linked_at),
@@ -2442,12 +2491,9 @@ def connect_web_chrome(_=Depends(auth)):
     if port == CFG.cdp_port:
         raise HTTPException(409, "Cổng Chrome Web trùng cổng Muse. Hãy cấu hình hai cổng riêng.")
     try:
-        web_providers.probe_port(port)
+        web_providers.connect_port(port, store.enable_web_chrome)
     except WebProviderError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
-    if not web_providers.port:
-        store.enable_web_chrome()
-        web_providers.port = port
     return list_web_providers()
 
 
@@ -2455,7 +2501,8 @@ def connect_web_chrome(_=Depends(auth)):
 async def connect_web_chrome_profile(_=Depends(auth)):
     if not list_web_providers()["local_setup"]:
         raise HTTPException(409, "Render không thể dùng Chrome trên máy Mac của bạn.")
-    await asyncio.to_thread(_web_call, web_providers.connect_profile, CFG.cdp_port)
+    await asyncio.to_thread(_web_call, web_providers.connect_profile, CFG.cdp_port,
+                            lambda: store.enable_web_chrome(profile=True))
     return list_web_providers()
 
 
@@ -3544,7 +3591,8 @@ async def _chromium_idle_loop():
 async def _startup():
     for task in list(store.tasks.values()):
         if task.get("kind") in ("image", "video") and task.get("status") in ("queued", "processing"):
-            store.update_task(task["id"], status="failed", error="服务重启中断了任务，请重新提交")
+            store.update_task(task["id"], status="failed",
+                              error="Dịch vụ khởi động lại trong khi tác vụ đang chờ hoặc đang chạy. Hãy kiểm tra kết quả trước khi gửi yêu cầu mới.")
     if not CFG.api_key:
         import secrets
         new_key = "m2a_" + secrets.token_hex(24)
@@ -3555,19 +3603,17 @@ async def _startup():
         await asyncio.to_thread(prune_media, CFG.media_dir)
     except OSError:
         log.exception("Could not prune the media library during startup")
-    asyncio.create_task(_keepalive_loop())
+    app.state.keepalive_task = asyncio.create_task(_keepalive_loop())
     if CFG.chromium_idle_seconds:
         app.state.chromium_idle_task = asyncio.create_task(_chromium_idle_loop())
 
 
 @app.on_event("shutdown")
 async def _shutdown():
-    idle_task = getattr(app.state, "chromium_idle_task", None)
-    if idle_task is not None:
-        idle_task.cancel()
-        try:
-            await idle_task
-        except asyncio.CancelledError:
-            pass
+    loops = [task for name in ("chromium_idle_task", "keepalive_task")
+             if (task := getattr(app.state, name, None)) is not None]
+    for loop in loops:
+        loop.cancel()
+    await asyncio.gather(*loops, return_exceptions=True)
     await asyncio.to_thread(web_providers.close)
     await asyncio.to_thread(engine.stop)

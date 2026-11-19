@@ -56,6 +56,7 @@ WEB_SETUP_MESSAGE = (
     "Chưa kết nối Chrome Web. Trong bảng quản trị, mở tab ChatGPT Web hoặc Gemini Web, "
     "bật gỡ lỗi từ xa trong Chrome đang dùng rồi bấm Kết nối Chrome."
 )
+WEB_TIMEOUT_MESSAGE = "Hết thời gian chờ Chrome xử lý tác vụ. Hãy kiểm tra phiên web trước khi gửi lại."
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 CHROME_ERRORS = (CDPError, OSError, WebSocketException, ValueError, KeyError, TypeError)
 
@@ -154,25 +155,51 @@ class ChromeProfileConnection:
 
 
 class WebProviders:
-    def __init__(self, port: int):
+    def __init__(self, port: int, *, profile_preferred: bool = False):
         self.port = port
+        self.profile_preferred = profile_preferred
         self.linked_at: dict[str, int] = {}
         self.profile_connection: ChromeProfileConnection | None = None
         self._connect_lock = threading.Lock()
 
     def ready(self, provider_id: str):
         profile = self.profile_connection
-        return profile.browser.ws.connected and provider_id in profile.profiles if profile else bool(self.port)
+        if self.profile_preferred:
+            return bool(profile and profile.browser.ws.connected and provider_id in profile.profiles)
+        return bool(self.port)
 
-    def connect_profile(self, muse_port: int):
+    def connect_profile(self, muse_port: int, persist):
         with self._connect_lock:
             if self.profile_connection and self.profile_connection.alive():
                 return
             profile = ChromeProfileConnection.connect(muse_port)
+            try:
+                persist()
+            except OSError as exc:
+                profile.browser.close()
+                raise WebProviderError("Không lưu được cấu hình kết nối Chrome.", 507) from exc
             if self.profile_connection:
                 self.profile_connection.browser.close()
             self.linked_at.clear()
+            self.profile_preferred = True
             self.profile_connection = profile
+
+    def connect_port(self, port: int, persist):
+        with self._connect_lock:
+            if self.profile_connection and self.profile_connection.browser.ws.connected:
+                raise WebProviderError("Hãy đóng kết nối của hồ sơ Chrome hiện tại trước khi đổi sang cổng cố định.", 409)
+            self.probe_port(port)
+            try:
+                persist()
+            except OSError as exc:
+                raise WebProviderError("Không lưu được cấu hình kết nối Chrome.", 507) from exc
+            if self.profile_connection:
+                self.profile_connection.browser.close()
+                self.profile_connection = None
+            if self.profile_preferred or self.port != port:
+                self.linked_at.clear()
+            self.port = port
+            self.profile_preferred = False
 
     def close(self):
         with self._connect_lock:
@@ -213,10 +240,12 @@ class WebProviders:
             try:
                 with profile.new_page(provider_id, provider) as page:
                     yield page
+            except TimeoutError as exc:
+                raise WebProviderError(WEB_TIMEOUT_MESSAGE, 504) from exc
             except CHROME_ERRORS as exc:
                 raise WebProviderError("Mất kết nối với Chrome. Hãy bấm Kết nối Chrome lại trong bảng quản trị.", 503) from exc
             return
-        if not self.port:
+        if self.profile_preferred or not self.port:
             raise WebProviderError(WEB_SETUP_MESSAGE, 503)
         base = f"http://127.0.0.1:{self.port}"
         target = None
@@ -233,7 +262,9 @@ class WebProviders:
                 yield page
             except WebProviderError:
                 raise
-            except (requests.RequestException, ValueError, KeyError, OSError) as exc:
+            except TimeoutError as exc:
+                raise WebProviderError(WEB_TIMEOUT_MESSAGE, 504) from exc
+            except CHROME_ERRORS as exc:
                 raise WebProviderError("Không kết nối được với Chrome Web hoặc phiên DevTools đã đóng.", 503) from exc
             finally:
                 if page is not None:
@@ -250,7 +281,7 @@ class WebProviders:
                 if (location.origin !== {json.dumps(_origin(provider.url))}) return false;
                 const editor = document.querySelector({json.dumps(provider.composer)});
                 return Boolean(editor?.getClientRects().length);
-            }})()""")
+            }})()""", timeout=_remaining(deadline, 5))
             if ready is True:
                 return
             time.sleep(0.3)
@@ -297,7 +328,7 @@ class WebProviders:
                 raise WebProviderError("Mất kết nối với Chrome. Hãy bấm Kết nối Chrome lại trong bảng quản trị.", 503) from exc
             raise WebProviderError("Hãy mở tiện ích ngay trong tab đã đăng nhập ở Chrome vừa cấp quyền.", 409)
 
-        if not self.port:
+        if self.profile_preferred or not self.port:
             raise WebProviderError(WEB_SETUP_MESSAGE, 503)
         base = f"http://127.0.0.1:{self.port}"
         try:
@@ -323,7 +354,7 @@ class WebProviders:
                         return checked
                 finally:
                     page.close()
-            except (OSError, TimeoutError):
+            except CHROME_ERRORS:
                 continue
         raise WebProviderError("Tab này không thuộc Chrome mà mac2API đang kết nối. Hãy mở tiện ích trong đúng Chrome trên cùng máy.", 409)
 
@@ -335,7 +366,7 @@ class WebProviders:
             self._clean_composer(page, provider, min(deadline, time.monotonic() + 3))
             if image:
                 prompt = "Hãy tạo một ảnh mới dựa trên yêu cầu sau và trả ảnh trong câu trả lời.\n" + prompt
-            page.send("Input.insertText", {"text": prompt})
+            page.send("Input.insertText", {"text": prompt}, timeout=_remaining(deadline, 5))
             self._send(page, provider, min(deadline, time.monotonic() + 10))
             return self._wait_result(page, provider, deadline, image)
 
@@ -365,7 +396,7 @@ class WebProviders:
             editor.dispatchEvent(new Event('input', {{bubbles: true}}));
             return true;
         }})()"""
-        if page.js(reset) is not True:
+        if page.js(reset, timeout=_remaining(deadline, 5)) is not True:
             raise WebProviderError("Không thể dọn ô nhập của phiên web.")
         verify = f"""(() => {{
             if (location.origin !== {origin}) return false;
@@ -382,7 +413,7 @@ class WebProviders:
         }})()"""
         empty_before = False
         while time.monotonic() < deadline:
-            empty = page.js(verify) is True
+            empty = page.js(verify, timeout=_remaining(deadline, 5)) is True
             if empty and empty_before:
                 return
             empty_before = empty
@@ -399,7 +430,7 @@ class WebProviders:
                 if (!button) return false;
                 button.click();
                 return true;
-            }})()""")
+            }})()""", timeout=_remaining(deadline, 5))
             if clicked is True:
                 return
             time.sleep(0.2)
@@ -423,7 +454,7 @@ class WebProviders:
                     e => visible(e) && e.complete && e.naturalWidth >= 256 && e.naturalHeight >= 256) : [];
                 return {{busy: stopping, complete: Boolean(complete), text: body?.innerText?.trim() || '',
                     image: imgs.at(-1)?.currentSrc || imgs.at(-1)?.src || ''}};
-            }})()""")
+            }})()""", timeout=_remaining(deadline, 5))
             if not isinstance(state, dict) or "busy" not in state:
                 raise WebProviderError("Trang đã rời phiên web đã cấu hình. Hãy kiểm tra đăng nhập.", 503)
             saw_stop |= state["busy"]
@@ -433,7 +464,7 @@ class WebProviders:
                 unchanged_since = time.monotonic()
             if current and not state["busy"] and (state["complete"] or saw_stop):
                 if time.monotonic() - unchanged_since >= 1:
-                    return _read_image(page, current) if image else current
+                    return _read_image(page, current, timeout=_remaining(deadline, 15)) if image else current
             time.sleep(0.35)
         raise WebProviderError("Hết thời gian chờ kết quả từ phiên web. Kiểm tra đăng nhập, hạn mức và tính năng của tài khoản.", 504)
 
@@ -443,7 +474,14 @@ def _origin(url):
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
-def _read_image(page, source: str):
+def _remaining(deadline, limit):
+    remaining = min(limit, deadline - time.monotonic())
+    if remaining <= 0:
+        raise TimeoutError(WEB_TIMEOUT_MESSAGE)
+    return remaining
+
+
+def _read_image(page, source: str, *, timeout=15):
     if urlsplit(source).scheme not in ("https", "blob", "data"):
         raise WebProviderError("Địa chỉ ảnh do trang trả về không được hỗ trợ.")
     encoded = page.js(f"""(async () => {{
@@ -457,7 +495,7 @@ def _read_image(page, source: str):
             reader.onerror = () => resolve(null);
             reader.readAsDataURL(blob);
         }});
-    }})()""", await_promise=True, timeout=15)
+    }})()""", await_promise=True, timeout=timeout)
     if not isinstance(encoded, str) or len(encoded) > 4 * ((MAX_IMAGE_BYTES + 2) // 3):
         raise WebProviderError("Không đọc được ảnh hoặc ảnh vượt 20 MiB.")
     try:

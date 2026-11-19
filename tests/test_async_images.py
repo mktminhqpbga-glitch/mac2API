@@ -1,6 +1,7 @@
 """Run: python tests/test_async_images.py [path/to/app.py]; uses no live account."""
 import asyncio
 import base64
+import hashlib
 import importlib.util
 import os
 from pathlib import Path
@@ -243,7 +244,17 @@ async def check(source, home):
         assert len(calls) == count
         conflict = await client.post("/v1/images/tasks", json={"prompt": "different"}, headers={"Idempotency-Key": "fixture-key"})
         assert conflict.status_code == 409
-        print("dedicated_task_endpoint=PASS idempotency_reuse=PASS conflict_rejected=PASS")
+        old_request = module.ImageRequest(**body)
+        old_references = module._prepare_reference_images(module._image_references(old_request))
+        old_payload = json.dumps({"request": old_request.model_dump(by_alias=True), "references": old_references},
+                                 sort_keys=True, ensure_ascii=False).encode()
+        legacy = module.store.create_task("image", body["prompt"], status="failed",
+                                          image_request_key=hashlib.sha256(b"legacy-key").hexdigest(),
+                                          image_request_hash=hashlib.sha256(old_payload).hexdigest())
+        duplicate = await client.post("/v1/images/tasks", json=body, headers={"Idempotency-Key": "legacy-key"})
+        assert duplicate.status_code == 202 and duplicate.json()["id"] == legacy["id"]
+        assert len(calls) == count
+        print("dedicated_task_endpoint=PASS idempotency_reuse=PASS conflict_rejected=PASS legacy_key_replayed=PASS")
 
         response = await client.post("/v1/images/generations", json={"prompt": "sync compatible"})
         assert response.status_code == 200 and response.json()["data"]

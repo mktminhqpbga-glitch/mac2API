@@ -1,11 +1,14 @@
 """Independent queue budget and generation task timing."""
 from __future__ import annotations
+import logging
 import os
 from pathlib import Path
 import tempfile
 import threading
 import time
 from pydantic import BaseModel, ConfigDict, Field
+
+log = logging.getLogger("muse2api")
 
 class QueueSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -15,7 +18,13 @@ class QueuePolicy:
     def __init__(self, path):
         self.path = Path(path)
         self.lock = threading.RLock()
-        self.value = QueueSettings.model_validate_json(self.path.read_text()) if self.path.exists() else QueueSettings()
+        self.value = QueueSettings()
+        try:
+            self.value = QueueSettings.model_validate_json(self.path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError) as exc:
+            log.warning("Không đọc được cài đặt hàng đợi (%s). Đang dùng thời gian chờ mặc định.", type(exc).__name__)
 
     def settings(self):
         with self.lock:
