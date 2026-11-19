@@ -65,6 +65,7 @@ from thumbnails import (VIDEO_FORMATS, ThumbnailUnavailable,
                         source_version, video_thumbnail)
 
 import sys
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 log = logging.getLogger("muse2api")
 log.setLevel(logging.INFO)
 if not log.handlers:
@@ -72,8 +73,19 @@ if not log.handlers:
     _h.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
     log.addHandler(_h)
 
+def _read_local_version() -> dict:
+    try:
+        with open(os.path.join(BASE_DIR, "version.json"), encoding="utf-8") as file:
+            metadata = json.load(file)
+        if isinstance(metadata, dict):
+            return metadata
+    except (OSError, ValueError):
+        pass
+    return {"version": "1.5.0", "highlights": []}
+
+
 CFG.ensure_dirs()
-app = FastAPI(title="muse2api", version="1.6.11")
+app = FastAPI(title="muse2api", version=str(_read_local_version().get("version") or "unknown"))
 
 # Cookie 助手脚本从 muse.ai 页面发起导入请求，需要放行该来源；
 # 浏览器扩展从 chrome-extension:// 发起，也一并放行。
@@ -307,7 +319,6 @@ class AccountPoolManager:
 GEN_LOCK = ConcurrencyLock(limit=CFG.max_concurrency)
 ACCOUNT_POOL = AccountPoolManager(store)
 QUEUE_POLICY = QueuePolicy(os.path.join(CFG.data_dir, "generation-queue.json"))
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def _bind_account_proxy(account: dict):
@@ -3307,18 +3318,6 @@ def _read_env_key(key: str) -> str:
     return ""
 
 
-def _read_local_version() -> dict:
-    p = os.path.join(BASE_DIR, "version.json")
-    try:
-        with open(p, encoding="utf-8") as f:
-            obj = json.load(f)
-            if isinstance(obj, dict):
-                return obj
-    except Exception:
-        pass
-    return {"version": "1.5.0", "highlights": []}
-
-
 def _installed_sha_file() -> str:
     return os.path.join(CFG.data_dir, ".installed_sha")
 
@@ -3397,7 +3396,7 @@ def _check_update_sync(force: bool = False, _auto_upgrade: bool = False) -> dict
         changed = _git(["status", "--porcelain", "--", *TRACKED_REPO_PATHS])
         local_dirty = changed.returncode == 0 and bool(changed.stdout.strip())
     remote_version, remote_sha, remote_commit, remote_msg, remote_time = "", "", "", "", ""
-    commits, highlights, highlights_en, errors = [], [], [], []
+    commits, highlights, highlights_en, highlights_vi, errors = [], [], [], [], []
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "muse2api-updater"}
     token = _read_env_key("GITHUB_TOKEN")
     if token:
@@ -3428,6 +3427,7 @@ def _check_update_sync(force: bool = False, _auto_upgrade: bool = False) -> dict
         remote_version = str(remote.get("version") or "")
         highlights = list(remote.get("highlights") or [])
         highlights_en = list(remote.get("highlights_en") or [])
+        highlights_vi = list(remote.get("highlights_vi") or [])
     except Exception:
         errors.append("远端版本文件读取失败")
     relation = "unknown"
@@ -3444,7 +3444,7 @@ def _check_update_sync(force: bool = False, _auto_upgrade: bool = False) -> dict
             "has_update": has_update, "up_to_date": (relation in ("identical", "behind") and not local_dirty) if verified else None,
             "local_dirty": local_dirty,
             "check_error": "; ".join(errors), "managed_deployment": MANAGED_DEPLOYMENT,
-            "highlights": highlights, "highlights_en": highlights_en,
+            "highlights": highlights, "highlights_en": highlights_en, "highlights_vi": highlights_vi,
             "recent_commits": commits, "checked_at": int(now)}
     _UPDATE_CACHE.update(ts=now, data=data)
     return data

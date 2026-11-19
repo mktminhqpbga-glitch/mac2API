@@ -26,11 +26,15 @@ def response(data):
 
 def remote(url,**kwargs):
     if 'raw.githubusercontent' in url:
-        return response({'version':'1.6.11','highlights':['fixture'],'highlights_en':['fixture']})
+        return response({'version':'1.6.11','highlights':['fixture'],'highlights_en':['fixture'],
+                         'highlights_vi':['Bản thử tiếng Việt']})
     return response([{'sha':COMMIT,'commit':{'message':'fixture','committer':{'date':'2026-11-15'}},
                       'html_url':'https://example.invalid/commit'}])
 
 class ReleaseIntegrationTests(unittest.TestCase):
+    def test_api_version_matches_release_metadata(self):
+        self.assertEqual(app.app.openapi()['info']['version'], app._read_local_version()['version'])
+
     def test_remote_metadata_is_bound_to_the_reported_commit(self):
         seen=[]
         def get(url,**kw):seen.append(url);return remote(url,**kw)
@@ -38,6 +42,7 @@ class ReleaseIntegrationTests(unittest.TestCase):
             data=app._check_update_sync(force=True)
         self.assertEqual(data['local_version'],'1.6.10')
         self.assertEqual(data['remote_commit'],COMMIT)
+        self.assertEqual(data['highlights_vi'], ['Bản thử tiếng Việt'])
         self.assertTrue(any('/'+COMMIT+'/version.json' in url for url in seen),seen)
 
     def test_git_worktree_reports_its_real_commit(self):

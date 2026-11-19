@@ -31,7 +31,7 @@ class Handler(BaseHTTPRequestHandler):
   elif path=='/admin/web-providers':data={'configured':False,'profile_connected':False,'ready':[],'local_setup':True};kind='application/json'
   elif path in ['/admin/update/check','/admin/repo/status']:
    known=server_state['mode']=='update'
-   data={'repo_url':'https://github.com/czg86389-hub/muse2api','repo_ref':'main','local_version':'1.6.10','remote_version':VERSION if known else '', 'local_sha':'aaaaaaa','remote_sha':'bbbbbbb' if known else '', 'up_to_date':False if known else None,'has_update':known,'check_error':'' if known else 'fixture remote unavailable','managed_deployment':False,'highlights':['fixture update'],'highlights_en':['fixture update'],'recent_commits':[]};kind='application/json'
+   data={'repo_url':'https://github.com/czg86389-hub/muse2api','repo_ref':'main','local_version':'1.6.10','remote_version':VERSION if known else '', 'local_sha':'aaaaaaa','remote_sha':'bbbbbbb' if known else '', 'up_to_date':False if known else None,'has_update':known,'check_error':'' if known else 'fixture remote unavailable','managed_deployment':False,'highlights':['fixture update'],'highlights_en':['fixture update'],'highlights_vi':['Bản thử tiếng Việt'],'recent_commits':[]};kind='application/json'
   elif path=='/admin/media':
    data={'count':2,'media':[{'name':name,'kind':'video','url':'/v1/media/'+name,'thumbnail_url':'/v1/media/'+name+'/thumbnail','bytes':4000,'mtime':now}for name in ['clip-one.mp4','clip-two.mp4']]};kind='application/json'
   elif path=='/admin/tasks':
@@ -100,6 +100,8 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
    network.clear()
    server_state['mode']='update'
    page.js("loadRepoStatus(true)",await_promise=True)
+   if lang=='vi':
+    check(page.js("$('updBannerMsg').textContent.includes('Bản thử tiếng Việt') && $('repoCommitsBox').textContent.includes('Bản thử tiếng Việt')"), 'vi: release notes are not localized')
    check('1.6.10' in page.js("$('repoBadge').textContent"),lang+': installed version was replaced by remote')
    check(page.js("$('updateBanner').classList.contains('show')"),lang+': update notification banner is hidden')
    check(not any(x['path']=='/admin/update/upgrade' for x in events),lang+': update check posted an upgrade')

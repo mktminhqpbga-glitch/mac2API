@@ -3176,11 +3176,12 @@ async function loadRepoStatus(force){
     badge.textContent = `${t(state)} · ${lVer} (${s.local_sha || 'unknown'})`;
     topBtn.classList.toggle('updpill-alert', !!s.has_update);
     topBtn.innerHTML = `📦 <span id="repoTopTxt">${esc(lVer)} · ${esc(t(state))}</span>`;
-    const bannerHighlights = LANG === 'en' ? (s.highlights_en || s.highlights) : s.highlights;
+    const localizedHighlights = {en: s.highlights_en, vi: s.highlights_vi}[LANG];
+    const highlights = Array.isArray(localizedHighlights) && localizedHighlights.length ? localizedHighlights : s.highlights;
     $('updBannerVer').textContent = rVer + ' (' + (s.remote_sha || 'unknown') + ')';
     $('updBannerMsg').textContent = s.managed_deployment
       ? (LANG === 'en' ? 'Rebuild and switch the configured image to update.' : '请从配置的仓库分支重建并切换镜像。')
-      : ((bannerHighlights || [])[0] || s.remote_msg || state);
+      : ((highlights || [])[0] || s.remote_msg || state);
     banner.classList.toggle('show', !!s.has_update && !!s.remote_sha && s.remote_sha !== _dismissedSha);
     desc.innerHTML = `<span>${LANG === 'en' ? 'Installed version: ' : t('当前已部署版本：')}</span><code>${esc(lVer)}</code>（Commit: <code>${esc(s.local_sha || '—')}</code>） · ` +
       `<span>${LANG === 'en' ? 'Update source: ' : t('更新来源：')}</span><a href="${esc(s.repo_url)}" target="_blank">${esc(s.repo_url)}</a> / <code>${esc(s.repo_ref || 'main')}</code><br>` +
@@ -3192,7 +3193,6 @@ async function loadRepoStatus(force){
     }
 
     let html = '';
-    const highlights = (LANG === 'en' && Array.isArray(s.highlights_en) && s.highlights_en.length) ? s.highlights_en : s.highlights;
     if (Array.isArray(highlights) && highlights.length){
       html += `<div style="margin-bottom:8px"><b style="color:var(--text)">✨ 当前版本核心特性 (${esc(rVer)})：</b><ul style="margin:4px 0 0 18px;padding:0;color:var(--muted)">` +
         highlights.map(h => `<li>${esc(h)}</li>`).join('') + `</ul></div>`;

@@ -1,25 +1,29 @@
 {
-  "version": "1.6.11",
-  "updated_at": "2026-11-15",
-  "repo": "https://github.com/czg86389-hub/muse2api",
+  "version": "1.6.12",
+  "updated_at": "2026-11-19",
+  "repo": "https://github.com/mktminhqpbga-glitch/mac2API",
   "highlights": [
-    "Chrome 144 及以上可授权使用已登录的个人资料。扩展 1.0.5 支持服务专用 Base URL。",
-    "修复工作区暂未分配时丢弃新 Cookie 的问题；保存轮换后的登录态，但不把未确认会话标成成功。",
-    "浏览器插件升级至 1.0.3：按当前普通/无痕窗口读取 Cookie，避免导入另一个窗口的账号；找不到存储区时停止导入。",
-    "图片和视频采用独立排队时限（默认 3600 秒，0 为不限）；排队不消耗生成预算，失败记录保留账号、尝试次数和原始错误。",
-    "检查更新只读：如实区分本地版本/提交与远端状态；有更新时提醒，由管理员手动确认升级，任务排队或运行期间拒绝更新。",
-    "媒体库只加载视频缩略图，点击后才加载所选视频，关闭预览释放播放器；源部署需 FFmpeg，Docker 用户请重建镜像。",
-    "组合修复聊天与媒体的资源获取顺序、排队设置跨域 PUT 和固定提交版本读取；继续保留独立代理、轮询及会话健康检查。",
-    "请先更新服务，再手动升级插件 1.0.3：替换原目录并重新加载；每个浏览器个人资料分别升级，无痕模式还需允许扩展运行。油猴脚本仍为 1.1.2。"
+    "整合 mac2API 修复。Chrome 144 及以上可授权使用已登录的 ChatGPT 和 Gemini 个人资料。",
+    "扩展 1.0.5 支持各服务的 Base URL。手动安装的扩展可在原个人资料中重新加载。",
+    "提供 Muse、ChatGPT 和 Gemini 的独立 API，支持按用户密钥限制服务，以及隔离任务与媒体访问。",
+    "图片与视频任务支持 Idempotency-Key。重试相同请求可返回原任务 ID。",
+    "DevTools 请求受时限约束。队列配置损坏时使用默认值，存储和工作线程启动失败会报告错误。",
+    "更新越南语界面、Muse 参考文件检查和 MacFlow/Toonflow 媒体适配器。"
   ],
   "highlights_en": [
-    "Chrome 144 and later can authorize the existing signed-in profile. Extension 1.0.5 supports provider-specific Base URLs.",
-    "Preserve cookies rotated by unassigned-workspace responses without marking an unconfirmed session healthy.",
-    "Extension 1.0.3 reads the active regular/incognito window cookie store and stops instead of importing from another store when identification fails.",
-    "Image/video queue waits have a separate budget (3600 seconds by default; 0 means unlimited). Failed tasks retain account, attempt and original error.",
-    "Update checks are read-only and report installed provenance separately. Updates notify administrators and require explicit confirmation; queued/running work blocks upgrades.",
-    "The media library lazily loads video thumbnails and requests a video only on playback. Source deployments need FFmpeg; Docker users should rebuild images.",
-    "Integration fixes align chat/media resource acquisition, allow queue-setting PUT preflights and bind remote version metadata to one commit.",
-    "Update the service, then manually upgrade extension 1.0.3 in every browser profile by replacing files and reloading. Allow the extension in Incognito/InPrivate when needed. Userscript remains 1.1.2."
+    "This mac2API release bundles the fixes. Chrome 144 and later supports connecting the existing signed-in ChatGPT and Gemini profiles.",
+    "Extension 1.0.5 supports provider-specific Base URLs. Reload unpacked extensions in every browser profile where they are installed.",
+    "Muse, ChatGPT and Gemini have separate API paths, provider-scoped user keys, and isolated task and media access.",
+    "Image and video tasks accept Idempotency-Key so retries can recover the original task ID.",
+    "DevTools operations have deadlines, malformed queue settings fall back to defaults, and storage or worker startup failures surface as errors.",
+    "Includes the Vietnamese dashboard, Muse reference checks, and MacFlow/Toonflow media adapters."
+  ],
+  "highlights_vi": [
+    "Bản tổng hợp mac2API. ChatGPT Web và Gemini Web dùng hồ sơ đang đăng nhập trên Chrome 144 trở lên.",
+    "Tiện ích 1.0.5 nhận Base URL chung và riêng theo dịch vụ. Tải lại tiện ích đã giải nén trong từng hồ sơ đã cài.",
+    "Muse, ChatGPT và Gemini có đường dẫn API riêng. Khóa người dùng giới hạn quyền truy cập dịch vụ, tác vụ và tệp kết quả.",
+    "Yêu cầu tạo ảnh và video hỗ trợ Idempotency-Key để lấy lại mã tác vụ khi gửi lại cùng nội dung.",
+    "Lệnh DevTools có thời hạn. Cài đặt hàng đợi hỏng dùng giá trị mặc định, còn lỗi lưu hoặc khởi tạo tác vụ được báo rõ.",
+    "Gồm bảng điều khiển tiếng Việt, kiểm tra tệp tham chiếu Muse và bộ chuyển đổi media MacFlow/Toonflow."
   ]
 }
