@@ -6,7 +6,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,15 +20,33 @@ method = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.
 expression = next(n.args[0].value for n in ast.walk(method)
                   if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "js")
 
-for name, connecting, hydrated, disabled, expected in (
-        ("empty_connected", False, True, False, "ready"),
-        ("connecting", True, True, False, "connecting"),
-        ("hydrating", False, False, False, "hydrating"),
-        ("disabled_input", False, True, True, "input-disabled")):
-    script = """const c=%s;const ta={disabled:c.disabled};const document={readyState:'complete',body:{innerText:c.connecting?'Connecting...':''},querySelector:s=>s==='textarea'?ta:s==='[data-hatch-shell-hydration-state]'?{getAttribute:()=>c.hydrated?'hydrated':'server'}:null};console.log(%s);""" % (
-        json.dumps(dict(connecting=connecting, hydrated=hydrated, disabled=disabled)), expression)
+for name, state, host, connecting, hydrated, disabled, expected in (
+        ("empty_connected", "complete", "muse.ai", False, True, False, "ready"),
+        ("slow_subresources", "interactive", "muse.ai", False, True, False, "ready"),
+        ("unparsed_dom", "loading", "muse.ai", False, True, False, "loading"),
+        ("foreign_page", "complete", "example.test", False, True, False, "wrong-site"),
+        ("connecting", "complete", "muse.ai", True, True, False, "connecting"),
+        ("hydrating", "complete", "muse.ai", False, False, False, "hydrating"),
+        ("disabled_input", "complete", "muse.ai", False, True, True, "input-disabled")):
+    script = """const c=%s;const ta={disabled:c.disabled};const location={hostname:c.host};const document={readyState:c.state,body:{innerText:c.connecting?'Connecting...':''},querySelector:s=>s==='textarea'?ta:s==='[data-hatch-shell-hydration-state]'?{getAttribute:()=>c.hydrated?'hydrated':'server'}:null};console.log(%s);""" % (
+        json.dumps(dict(state=state, host=host, connecting=connecting, hydrated=hydrated, disabled=disabled)), expression)
     result = subprocess.check_output(["node", "-e", script], text=True).strip()
     assert result == expected, (name, result, expected)
+
+page = Mock()
+page.send.side_effect = [{"result": {"errorText": "net::ERR_CONNECTION_RESET"}}, {"result": {"frameId": "ok"}}]
+assert engine_module.MuseEngine._check_muse_page(page, 10, {"server": "http://proxy.test"}) > 0
+first, second = page.send.call_args_list
+assert first.args == second.args == ("Page.navigate", {"url": "https://muse.ai/thread/new"})
+assert 0 < second.kwargs["timeout"] <= first.kwargs["timeout"] <= 10
+page.send.reset_mock(side_effect=True)
+page.send.return_value = {"result": {"errorText": "net::ERR_TUNNEL_CONNECTION_FAILED"}}
+try:
+    engine_module.MuseEngine._check_muse_page(page, 10, {"server": "http://proxy.test"})
+except engine_module.MuseProxyError:
+    page.send.assert_called_once()
+else:
+    raise AssertionError("proxy navigation failure was not returned immediately")
 
 with tempfile.TemporaryDirectory() as profile:
     engine = engine_module.MuseEngine(SimpleNamespace(profile_dir=profile, login_wait=2))

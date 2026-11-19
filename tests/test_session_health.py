@@ -105,9 +105,13 @@ def check(root, home, observe):
             want = False if isinstance(error, app.MuseAuthError) else prior
             expect(a['ok'] is want, 'manual test misclassified account')
 
-    for body, want in [('loading workspace', 'MuseGenerationError'), ('Sign in', 'MuseAuthError')]:
-        page = SimpleNamespace(js=lambda script: body if 'innerText' in script else False,
-                               send=lambda *a, **k: None, close=lambda: None)
+    for path, body, want in [('/thread/new', 'loading workspace', 'MusePageUnavailable'),
+                             ('/thread/new', 'You may sign in to share', 'MusePageUnavailable'),
+                             ('/auth/login', 'Sign in', 'MuseAuthError')]:
+        state = dict(hostname='muse.ai', path=path, body=body, loginForm=False)
+        closed = []
+        page = SimpleNamespace(js=lambda script, **kw: state,
+                               send=lambda *a, **k: None, close=lambda: closed.append(True))
         e = app.MuseEngine(SimpleNamespace(profile_dir=home, login_wait=0))
         reply = next(r for n, r in cases if n == 'assigned')
         with patch.object(e, '_open_page', return_value=page), patch.object(e, '_apply_cookies'), patch('requests.get', return_value=reply):
@@ -117,7 +121,20 @@ def check(root, home, observe):
             except Exception as exc:
                 error_name = type(exc).__name__
         expect(error_name == want, 'page load failure misclassified')
+        expect(e.page is None and closed == [True], 'page load failure must release the tab')
         print('page', body, error_name)
+
+    a = account(prior=None)
+    with patch.object(app.store, 'accounts', [a]), patch.object(app, '_renew_and_persist', return_value=a), \
+         patch.object(app.engine, 'start'), patch.object(app.engine, 'close_current_page'), \
+         patch.object(app.engine, 'generate', side_effect=app.MusePageUnavailable('Chưa thấy ô chat')):
+        try:
+            app._run_generation_locked('fixture', 'video', 10, account_id=a['id'])
+        except app.MusePageUnavailable:
+            expect(a['ok'] is None, 'an unconfirmed timeout must preserve account state')
+            expect('Chưa thấy ô chat' in a['note'], 'missing page diagnostic on account')
+        else:
+            raise AssertionError('expected a page readiness failure')
 
     # 验证 store 与 engine 的核心 cookie 定义严格一致，防止双处维护产生漂移
     import store as store_module

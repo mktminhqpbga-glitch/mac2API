@@ -1,5 +1,11 @@
 # Nhật ký và bàn giao mac2API
 
+## Kiểm tra trang Muse và thông báo quá hạn
+
+- Muse có thể bắt đầu khi ô chat đã sẵn sàng trong lúc tài nguyên phụ còn tải. Lỗi điều hướng rõ ràng được phát hiện sớm. Một số lỗi kết nối tạm thời được thử lại một lần trong cùng phiên trình duyệt và cùng tuyến proxy của tài khoản.
+- Khi ô chat chưa xuất hiện, tác vụ dừng trước khi gửi nội dung và giữ trạng thái xác thực đã có. Cookie được Muse đổi trong lần kiểm tra được lưu ngay cả khi trang chưa sẵn sàng.
+- Adapter Muse 2.0.3 dịch cả lỗi quá hạn đã lưu từ phiên bản cũ sang tiếng Việt.
+
 ## Adapter Muse Video 2.0.2
 
 - Giá trị tắt mặc định của tùy chọn âm thanh và hình mờ được chấp nhận khi tạo video. Các tùy chọn bật hoặc tệp tham chiếu chưa được adapter hỗ trợ có thông báo riêng bằng tiếng Việt. Bản sửa có trong `mac2ApiMuse.ts` và `mac2Api.ts`.

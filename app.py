@@ -55,7 +55,7 @@ from engine import (ESSENTIAL_COOKIES, MAX_REFERENCE_IMAGE_BYTES,
                     MAX_REFERENCE_IMAGES, MAX_REFERENCE_TOTAL_BYTES,
                     REFERENCE_MIME_EXT, MuseAuthError, MuseEngine, MuseGenerationError,
                     MuseModelRefusalError, MusePostSendError, RefImageSafetyError, reference_kind)
-from engine import MuseProxyError, MuseSessionUnavailable
+from engine import MusePageUnavailable, MuseProxyError, MuseSessionUnavailable
 from store import Store, account_expiry, min_expiry
 from generation_timing import QueuePolicy, QueueSettings, TaskTiming
 from proxy import normalize_server, request_proxy_context, split_proxy_url
@@ -702,6 +702,12 @@ def safe_chat_stream(cookies: dict, prompt: str, expires: dict | None,
                     if cur_id:
                         store.mark(cur_id, False, str(exc))
                     engine.close_current_page()
+                    if yielded:
+                        break
+                except MusePageUnavailable as exc:
+                    last_exc = exc
+                    if cur_id:
+                        store.touch_keepalive(cur_id, None, f"Lỗi tác vụ: {exc}")
                     if yielded:
                         break
                 except Exception as exc:
@@ -1624,6 +1630,9 @@ def _run_generation_locked(prompt: str, kind: str, timeout: int,
                 last_exc = exc
                 store.touch_keepalive(cur_acc["id"], None, f"代理异常: {str(exc)[:160]}")
                 engine.close_current_page()
+            except MusePageUnavailable as exc:
+                last_exc = exc
+                store.touch_keepalive(cur_acc["id"], None, f"Lỗi tác vụ: {exc}")
             except MuseGenerationError as exc:
                 last_exc = exc
                 store.mark(cur_acc["id"], True, f"任务异常: {str(exc)[:200]}")

@@ -33,7 +33,9 @@ import time
 import uuid
 import unicodedata
 
-from cdp import CDP, http_json
+from websocket import WebSocketException
+
+from cdp import CDP, CDPError, http_json
 from media_storage import new_media_name, save_media
 from proxy import HTTPProxyRelay, request_proxy_context
 
@@ -240,6 +242,10 @@ class MuseSessionUnavailable(MuseGenerationError):
         self.cookies = cookies or {}
         self.cookies_exp = cookies_exp or {}
         self.rotated = rotated
+
+
+class MusePageUnavailable(MuseGenerationError):
+    """Muse's composer did not become ready before any prompt was sent."""
 
 
 class MuseModelRefusalError(MuseGenerationError):
@@ -728,11 +734,12 @@ class MuseEngine:
 
     def _wait_ws_ready(self, page: CDP, timeout: float = 15.0) -> bool:
         """等待 muse.ai 页面完成 React hydration 且不再处于 Connecting... 状态。"""
-        deadline = time.time() + timeout
-        while time.time() < deadline:
+        deadline = time.monotonic() + timeout
+        while (remaining := deadline - time.monotonic()) > 0:
             try:
                 st = page.js("""(function(){
-                    if (document.readyState !== 'complete') return 'loading';
+                    if (document.readyState === 'loading') return 'loading';
+                    if (location.hostname !== 'muse.ai' && location.hostname !== 'www.muse.ai') return 'wrong-site';
                     if (!document.querySelector('textarea')) return 'no-ta';
                     var h = document.querySelector('[data-hatch-shell-hydration-state]');
                     if (h && h.getAttribute('data-hatch-shell-hydration-state') !== 'hydrated') return 'hydrating';
@@ -741,13 +748,69 @@ class MuseEngine:
                     // Empty composers may not render Send until text has been entered.
                     if (document.querySelector('textarea').disabled) return 'input-disabled';
                     return 'ready';
-                })()""")
+                })()""", timeout=min(remaining, 2.0))
                 if st == "ready":
                     return True
-            except Exception:
+            except TimeoutError:
                 pass
-            time.sleep(0.1)
+            time.sleep(max(0, min(0.1, deadline - time.monotonic())))
         return False
+
+    @staticmethod
+    def _check_muse_page(page: CDP, timeout: float, proxy: dict | None):
+        """Open the composer with a bounded retry for transient navigation errors."""
+        deadline = time.monotonic() + max(1, timeout)
+        for attempt in range(2):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                response = page.send("Page.navigate", {"url": "https://muse.ai/thread/new"}, timeout=remaining)
+            except (CDPError, OSError, WebSocketException) as exc:
+                raise MusePageUnavailable(
+                    "Chrome không mở được trang Muse.ai trước khi gửi yêu cầu. Hãy kiểm tra kết nối và thử lại."
+                ) from exc
+            result = response.get("result", {}) if isinstance(response, dict) else {}
+            code = result.get("errorText") if isinstance(result, dict) else None
+            if not isinstance(code, str) or not code:
+                return max(0, deadline - time.monotonic()) if timeout > 0 else 0
+            if proxy and re.search(r"ERR_(?:PROXY_|TUNNEL_|NO_SUPPORTED_PROXIES)", code, re.I):
+                raise MuseProxyError("Chrome không kết nối được qua proxy của tài khoản Muse. Hãy kiểm tra proxy và thông tin xác thực.")
+            if attempt == 0 and code in {"net::ERR_ABORTED", "net::ERR_CONNECTION_RESET", "net::ERR_NETWORK_CHANGED"}:
+                continue
+            safe_code = re.fullmatch(r"(?:net::)?(ERR_[A-Z0-9_]+)", code)
+            suffix = f" ({safe_code[1]})" if safe_code else ""
+            raise MusePageUnavailable(
+                f"Chrome không tải được Muse.ai{suffix}. Tác vụ dừng trước khi gửi. Hãy kiểm tra mạng hoặc proxy của máy chạy mac2API."
+            )
+        raise MusePageUnavailable("Hết thời gian mở Muse.ai. Tác vụ dừng trước khi gửi yêu cầu.")
+
+    @staticmethod
+    def _muse_page_not_ready(page: CDP, proxy: dict | None):
+        try:
+            state = page.js("""(() => ({
+                hostname: location.hostname, path: location.pathname,
+                loginForm: Boolean(document.querySelector('input[type="password"]')),
+                body: document.body ? document.body.innerText.slice(0,1200) : ''
+            }))()""", timeout=2)
+        except (CDPError, OSError, WebSocketException):
+            state = None
+        state = state if isinstance(state, dict) else {}
+        body = str(state.get("body") or "")
+        if proxy and re.search(r"err_(?:proxy|tunnel)|proxy authentication|代理认证失败", body, re.I):
+            raise MuseProxyError("Chrome không kết nối được qua proxy của tài khoản Muse. Hãy kiểm tra proxy và thông tin xác thực.")
+        path = str(state.get("path") or "")
+        if state.get("hostname") in {"muse.ai", "www.muse.ai"} and (
+            re.match(r"^/(?:log-?in|sign-?in|auth/(?:login|signin))(?:/|$)", path, re.I)
+            or state.get("loginForm")
+        ):
+            raise MuseAuthError("Muse.ai đã mở trang đăng nhập. Hãy đăng nhập lại và nhập lại cookie của tài khoản.")
+        if re.search(r"connecting(?:\.\.\.|…)\s*", body, re.I):
+            raise MusePageUnavailable("Muse.ai vẫn đang kết nối với không gian làm việc. Tác vụ dừng trước khi gửi yêu cầu.")
+        raise MusePageUnavailable(
+            "Hết thời gian tải Muse.ai vì ô chat chưa xuất hiện. Tác vụ dừng trước khi gửi yêu cầu. "
+            "Hãy kiểm tra mạng hoặc proxy của máy chạy mac2API. Chưa xác định phiên đăng nhập hết hiệu lực."
+        )
 
     def reset_thread(self, for_chat: bool = False):
         """关闭残留弹窗并确保处于干净会话且 WebSocket 已就绪。
@@ -813,7 +876,7 @@ class MuseEngine:
                 and getattr(self._ensure_local(), "proxy_config", None) == proxy
                 and (account_id is None or getattr(self, "current_acc_id", None) == account_id)):
             try:
-                if self.page.js("!!document.querySelector('textarea')") and self._wait_ws_ready(self.page, timeout=8.0):
+                if self._wait_ws_ready(self.page, timeout=8.0):
                     return self.page
             except Exception:
                 pass
@@ -828,10 +891,11 @@ class MuseEngine:
             try:
                 renewed = self.renew_session_http(cookies, expires, wake_vm=True,
                                                   **({"proxy": proxy} if proxy else {}))
-                if renewed.get("cookies"):
-                    cookies = renewed["cookies"]
-                if renewed.get("cookies_exp"):
-                    expires = renewed["cookies_exp"]
+                old_cookies, old_expires = cookies, expires
+                cookies = renewed.get("cookies") or cookies
+                expires = renewed.get("cookies_exp") or expires
+                if cookies != old_cookies or expires != old_expires:
+                    self._report_rotated_cookies(account_id, cookies, expires)
                 if account_id:
                     last_map[account_id] = now_ts
             except (MuseAuthError, MuseProxyError):
@@ -852,25 +916,21 @@ class MuseEngine:
         page = self._open_page(proxy=proxy) if proxy else self._open_page()
         self.page = page  # Cleanup must also own pages that never become ready.
         self._ensure_local().proxy_config = proxy
-        self._apply_cookies(page, cookies, expires)
-        page.send("Page.navigate", {"url": "https://muse.ai/thread/new"})
-        if self._wait_ws_ready(page, timeout=self.cfg.login_wait):
-            self.current_acc_id = account_id
-            return page
         try:
-            body = (page.js("document.body ? document.body.innerText.slice(0,1200) : ''") or "").lower()
+            self._apply_cookies(page, cookies, expires)
+            remaining = self._check_muse_page(page, self.cfg.login_wait, proxy)
+            try:
+                if self._wait_ws_ready(page, timeout=remaining):
+                    self.current_acc_id = account_id
+                    return page
+            except (CDPError, OSError, WebSocketException) as exc:
+                raise MusePageUnavailable(
+                    "Chrome mất kết nối với trang Muse.ai trước khi ô chat sẵn sàng. Tác vụ dừng trước khi gửi yêu cầu."
+                ) from exc
+            self._muse_page_not_ready(page, proxy)
         except Exception:
-            body = ""
-        self._close_page()
-        if proxy and re.search(r"err_(?:proxy|tunnel)|proxy authentication|代理认证失败", body, re.I):
-            raise MuseProxyError("账号代理浏览器连接失败，请检查节点或认证；未回退直连")
-        if "connecting..." in body:
-            raise MuseGenerationError("页面网关连接超时 (Connecting...)，正在自动切换账号")
-        # Distinguish an expired session from a page that never became ready.
-        if re.search(r"log in|sign in|create an account|登录|use another account", body):
-            raise MuseAuthError("会话已被 muse.ai 登出（可能被其它登录挤掉或触发风控），"
-                                "请用浏览器扩展重新导入 cookie")
-        raise MuseGenerationError("muse.ai 页面加载超时（未出现聊天输入框），请检查服务器网络后重试；未确认会话失效")
+            self._close_page()
+            raise
 
     def close_current_page(self):
         """显式释放当前线程所持有的页面和隔离上下文。"""

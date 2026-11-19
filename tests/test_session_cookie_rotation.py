@@ -87,7 +87,7 @@ eng = app.MuseEngine(SimpleNamespace(profile_dir=os.environ["MUSE2API_HOME"], lo
 reported, applied = [], []
 eng.cookie_sink = lambda account_id, cookies, expires: reported.append(
     (account_id, cookies["hatch_sess"]))
-page = SimpleNamespace(js=lambda script: "ready" if "readyState" in script else False,
+page = SimpleNamespace(js=lambda script, **kw: "ready" if "readyState" in script else False,
                        send=lambda *args, **kwargs: {}, close=lambda: None)
 get, _ = fake_session_server()
 with patch("requests.get", side_effect=get), \
@@ -99,6 +99,19 @@ with patch("requests.get", side_effect=get), \
 assert applied == [NEW], applied
 assert reported == [("acc-x", NEW)], reported
 print("PASS ensure_page uses and reports the rotated cookie")
+
+get, _ = fake_session_server(status="assigned")
+with patch("requests.get", side_effect=get), \
+        patch.object(eng, "_open_page", return_value=page), patch.object(eng, "_apply_cookies"), \
+        patch.object(eng, "_wait_ws_ready", return_value=False):
+    try:
+        eng.ensure_page({"hatch_sess": OLD}, {}, account_id="acc-y")
+    except engine_mod.MusePageUnavailable:
+        pass
+    else:
+        raise AssertionError("fixture page should not be ready")
+assert reported[-1] == ("acc-y", NEW), reported
+print("PASS ensure_page preserves an assigned session's rotation even if the page times out")
 
 # A non-assigned response with no changed cookie stays a non-auth failure.
 acc3 = app.store.add_account({"hatch_sess": NEW}, label="steady", cookies_exp={})

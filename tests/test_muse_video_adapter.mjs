@@ -25,6 +25,25 @@ function fixture() {
 }
 
 for (const name of ['mac2ApiMuse', 'mac2Api']) {
+  test(`${name} translates old Muse composer timeouts`, {
+    skip: !process.features.typescript && 'Node TypeScript stripping is required',
+  }, async () => {
+    const { default: adapter } = await import(`../adapters/${name}.ts`);
+    const { context } = fixture();
+    context.tool.fetch = async (_url, options) => {
+      assert.equal(options.method, 'GET');
+      return Response.json({ status: 'failed', error: 'muse.ai 页面加载超时（未出现聊天输入框），请检查服务器网络后重试；未确认会话失效' });
+    };
+    await assert.rejects(adapter.resumeTask.call(context, { id: 'task_fixture', kind: 'video', base: `${base}/v1` }), (error) => {
+      assert.equal(error.code, 'MEDIA_TASK_FAILED');
+      assert.match(error.message, /task_fixture.*Hết thời gian tải Muse.ai.*Chưa xác định phiên đăng nhập hết hiệu lực/);
+      assert.doesNotMatch(error.message, /页面加载超时/);
+      return true;
+    });
+  });
+}
+
+for (const name of ['mac2ApiMuse', 'mac2Api']) {
   test(`${name} accepts default-off switches and creates a Muse video task`, {
     skip: !process.features.typescript && 'Node TypeScript stripping is required',
   }, async () => {

@@ -80,6 +80,10 @@ function taskErrorDetail(context: Context, value: unknown) {
   const key = context.config.apiKey?.trim();
   const upload = value.match(/参考素材上传未确认\s*[（(]\s*(\d+)\s*\/\s*(\d+)\s*[）)]/);
   if (upload) return `Muse chưa xác nhận tệp tham chiếu (${upload[1]}/${upload[2]}). Yêu cầu tạo nội dung chưa được gửi.`;
+  if (/页面加载超时[（(]未出现聊天输入框[）)]/.test(value)) {
+    return "Hết thời gian tải Muse.ai vì ô chat chưa xuất hiện. Tác vụ dừng trước khi gửi yêu cầu. "
+      + "Hãy kiểm tra mạng hoặc proxy của máy chạy mac2API. Chưa xác định phiên đăng nhập hết hiệu lực.";
+  }
   const detail = key ? value.split(key).join("[đã ẩn]") : value;
   return detail
     .replace(/\bBearer\s+\S+/gi, "Bearer [đã ẩn]")
@@ -172,7 +176,7 @@ function imageInput(input: MediaInput) {
 export default {
   id: "mac2Api",
   label: "mac2API",
-  version: "2.0.2",
+  version: "2.0.3",
   readme: "Dùng một Base URL và khóa m2a_ của mac2API. ChatGPT Web và Gemini Web cần Chrome đã đăng nhập trên cùng máy với mac2API. Adapter này thêm mô-đun ảnh và video.",
   rules: [
     { type: "input", field: "baseUrl", title: "Base URL mac2API", value: "https://mac2api.onrender.com/v1",
