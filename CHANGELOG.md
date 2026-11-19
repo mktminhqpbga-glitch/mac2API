@@ -1,5 +1,10 @@
 # Nhật ký và bàn giao mac2API
 
+## Khởi động bản đóng gói trên Mac
+
+- `start-mac2api.command` chạy từ thư mục chứa mã, kiểm tra tệp giao diện và giữ cổng trước khi khởi tạo dịch vụ. Terminal in địa chỉ bảng quản trị hoặc báo cổng đang được sử dụng.
+- Nếu thiếu tệp giao diện hoặc tệp không đọc được, `/` và `/admin` trả HTTP 503 với hướng dẫn tiếng Việt. Nhật ký máy chủ ghi đường dẫn và lỗi chi tiết.
+
 ## Tạo ảnh và video trực tiếp trong Muse
 
 - Chỉ dẫn tạo media yêu cầu Muse đính kèm tệp kết quả ngay trong lượt hiện tại khi mô tả đã đủ.

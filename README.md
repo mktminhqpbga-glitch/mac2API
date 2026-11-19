@@ -4,6 +4,24 @@ Bản tổng hợp mac2API 1.6.12 gồm mã máy chủ, bảng quản trị, ti�
 
 MUSE2API cung cấp API kiểu OpenAI để gọi các tính năng chat, tạo ảnh và tạo video của [Muse.ai](https://muse.ai/). Máy chủ Python chạy FastAPI và điều khiển Chromium qua Chrome DevTools Protocol (CDP). Muse.ai thực hiện việc tạo nội dung. Dịch vụ quản lý cookie, hàng đợi, tài khoản, proxy và kết quả tải về.
 
+## Chạy trực tiếp trên Mac
+
+Giải nén cả gói và mở Terminal tại thư mục chứa `app.py`, `admin.html` và `start-mac2api.command`. Cài thư viện lần đầu rồi khởi động dịch vụ.
+
+```bash
+python3 -m venv venv
+venv/bin/python -m pip install -r requirements.txt
+bash start-mac2api.command
+```
+
+Mở địa chỉ Terminal in ra, mặc định là [http://127.0.0.1:18610/admin](http://127.0.0.1:18610/admin). Nếu cổng đang được dùng, chờ tác vụ của bản cũ kết thúc rồi dừng tiến trình đó trước khi chạy lại.
+
+Để dùng lại cấu hình và dữ liệu, đặt `MUSE2API_HOME` thành thư mục chứa `.env` và `data/` của bản cũ khi chạy lệnh khởi động. Bảng quản trị vẫn được đọc từ thư mục mã mới.
+
+```bash
+MUSE2API_HOME="/duong/dan/ban-cu" bash start-mac2api.command
+```
+
 ## Triển khai bằng Docker Compose
 
 Docker Compose là cách được khuyến nghị. Image đã có Chromium và FFmpeg.

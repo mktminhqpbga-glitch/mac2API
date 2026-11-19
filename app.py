@@ -65,7 +65,7 @@ from thumbnails import (VIDEO_FORMATS, ThumbnailUnavailable,
                         source_version, video_thumbnail)
 
 import sys
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.realpath(__file__))
 log = logging.getLogger("muse2api")
 log.setLevel(logging.INFO)
 if not log.handlers:
@@ -3093,27 +3093,37 @@ def delete_single_media(name: str, _=Depends(auth)):
 
 
 # ------------------------- 前端页面 -------------------------
-def _admin_html() -> str:
-    p = os.path.join(BASE_DIR, "admin.html")
+def _admin_page_response() -> HTMLResponse:
+    headers = {"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"}
+    path = os.path.join(BASE_DIR, "admin.html")
     try:
-        with open(p, encoding="utf-8") as f:
-            return f.read()
-    except OSError:
-        return ("<!doctype html><meta charset=utf-8><body style='background:#0b0f19;"
-                "color:#e6e8ee;font-family:system-ui;padding:40px'>"
-                "<h2>muse2api</h2><p>管理页面文件 admin.html 缺失。</p>"
-                "<p>接口可用：<code>/v1/images/generations</code>、"
-                "<code>/v1/videos</code></p></body>")
+        with open(path, encoding="utf-8") as file:
+            page = file.read()
+        if not page.strip():
+            raise ValueError("admin.html trống")
+    except (OSError, ValueError) as error:
+        log.error("Không đọc được bảng quản trị %s: %s", path, error)
+        return HTMLResponse(
+            '<!doctype html><html lang="vi"><meta charset="utf-8"><title>mac2API</title>'
+            '<body style="background:#0b0f19;color:#e6e8ee;font-family:system-ui;padding:40px">'
+            '<h1>Không mở được bảng quản trị mac2API</h1>'
+            '<p>Máy chủ không đọc được <code>admin.html</code> cạnh <code>app.py</code>.</p>'
+            '<p>Hãy giải nén cả gói. Trên Mac, chạy <code>start-mac2api.command</code> '
+            'trong thư mục vừa giải nén rồi mở địa chỉ mà Terminal in ra.</p>'
+            '<p>Nhật ký máy chủ có đường dẫn và nguyên nhân chi tiết.</p></body></html>',
+            status_code=503, headers=headers,
+        )
+    return HTMLResponse(page, headers=headers)
 
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return HTMLResponse(_admin_html(), headers={"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"})
+    return _admin_page_response()
 
 
 @app.get("/admin", response_class=HTMLResponse)
 def admin_page():
-    return HTMLResponse(_admin_html(), headers={"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"})
+    return _admin_page_response()
 
 
 
@@ -3317,7 +3327,7 @@ MANAGED_DEPLOYMENT = (
 TRACKED_REPO_PATHS = [
     "app.py", "engine.py", "store.py", "cdp.py", "config.py", "proxy.py",
     "generation_timing.py", "thumbnails.py", "media_storage.py", "chat_providers.py", "web_providers.py", "GENERATION_QUEUE.md", "VERSION_REPORTING.md",
-    "admin.html", "README.md", "AGENTS.md", "CHANGELOG.md", "version.json", "requirements.txt",
+    "admin.html", "start-mac2api.command", "README.md", "AGENTS.md", "CHANGELOG.md", "version.json", "requirements.txt",
     "Dockerfile", "docker-compose.yml", ".env.example", ".gitignore",
     "LICENSE", "extension", "deploy", "tools", "adapters",
 ]
