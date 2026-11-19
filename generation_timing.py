@@ -42,6 +42,10 @@ class QueuePolicy:
             finally:
                 if os.path.exists(tmp): os.unlink(tmp)
 
+class TaskNotQueued(Exception):
+    """The worker must exit before sending content upstream."""
+
+
 class TaskTiming:
     """Store queue, generation and total durations with consistent meanings."""
     def __init__(self, store, task_id):
@@ -52,11 +56,19 @@ class TaskTiming:
 
     def queued(self, seconds):
         self.queue_elapsed = seconds
-        self.store.update_task(self.task_id, queue_elapsed=round(seconds, 1))
+        if (self.store.get_task(self.task_id) or {}).get("status") in ("queued", "processing"):
+            self.store.update_task(self.task_id, queue_elapsed=round(seconds, 1))
+
+    def check_queued(self):
+        if (self.store.get_task(self.task_id) or {}).get("status") != "queued":
+            raise TaskNotQueued()
 
     def acquired(self):
+        if not self.store.transition_task(
+            self.task_id, "queued", status="processing", started_at=time.time()
+        ):
+            raise TaskNotQueued()
         self.started = True
-        self.store.update_task(self.task_id, status="processing", started_at=time.time())
 
     def account(self, aid, attempt):
         self.store.update_task(self.task_id, account=aid, attempt=attempt)

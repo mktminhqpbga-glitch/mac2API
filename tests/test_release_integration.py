@@ -63,7 +63,7 @@ class ReleaseIntegrationTests(unittest.TestCase):
         async def check():
             async with Client(app.app,{}) as client:
                 r=await client.request('OPTIONS','/admin/generation-queue',headers={
-                    'origin':'https://example.invalid',
+                    'origin':'https://muse.ai',
                     'access-control-request-method':'PUT',
                     'access-control-request-headers':'authorization,content-type'})
                 self.assertEqual(r.status_code,200,r.body)

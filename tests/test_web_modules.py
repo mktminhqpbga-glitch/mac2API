@@ -198,6 +198,12 @@ async def check_existing_profile(port_file):
             assert (await client.post(endpoint, headers=headers, json={"marker": marker})).status_code == 409
             status = (await client.get("/admin/web-providers", headers=headers)).json()
             assert status["ready"] == ["chatgpt"]
+            key = app.store.create_client("capability fixture", ["chatgpt", "gemini-web"])["api_key"]
+            caps_headers = {"Authorization": f"Bearer {key}"}
+            capabilities = (await client.get("/v1/capabilities", headers=caps_headers)).json()
+            states = {provider["id"]: provider for provider in capabilities["providers"]}
+            assert states["chatgpt"]["ready"] and states["chatgpt"]["connected"]
+            assert not states["gemini-web"]["ready"]
             assert (await client.get("/gemini/v1/models", headers=headers)).json()["data"] == []
 
             response = await client.post("/chatgpt/v1/chat/completions", headers=headers, json={"prompt": "Hello"})
@@ -214,6 +220,8 @@ async def check_existing_profile(port_file):
             with patch.object(app, "web_providers", restarted):
                 status = (await client.get("/admin/web-providers", headers=headers)).json()
                 assert not status["configured"] and status["ready"] == []
+                capabilities = (await client.get("/v1/capabilities", headers=caps_headers)).json()
+                assert all(not provider["ready"] for provider in capabilities["providers"])
                 blocked = await client.post("/chatgpt/v1/chat/completions", headers=headers, json={"prompt": "Hello"})
                 assert blocked.status_code == 503, blocked.text
     finally:

@@ -13,6 +13,8 @@ services:
       - MUSE2API_KEY=${MUSE2API_KEY:-}
       # 服务对外基准 URL，如 https://your-domain.com（留空则管理前端自动检测当前域名）
       - MUSE2API_PUBLIC_BASE=
+      - MUSE2API_CORS_ORIGINS=${MUSE2API_CORS_ORIGINS:-https://muse.ai,https://www.muse.ai,http://127.0.0.1:3000,http://localhost:3000}
+      - MUSE2API_ALLOW_LEGACY_PUBLIC_MEDIA=${MUSE2API_ALLOW_LEGACY_PUBLIC_MEDIA:-0}
       # 超时配置（秒）
       - MUSE2API_IMAGE_TIMEOUT=240
       - MUSE2API_VIDEO_TIMEOUT=600

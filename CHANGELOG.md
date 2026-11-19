@@ -1,5 +1,11 @@
 # Nhật ký và bàn giao mac2API
 
+## Hợp đồng API v1 cho MacFlow
+
+- Thêm danh mục khả năng theo quyền nhà cung cấp, tra cứu bằng UUID và hủy tác vụ đang chờ. Tác vụ gián đoạn giữ biên nhận để đối chiếu.
+- Giữ khóa người dùng và giới hạn hàng đợi. HTTP 429 trả mã lỗi và `Retry-After`. Kho media dùng URL ký; các trình duyệt gọi từ xa cần HTTPS.
+- Ba adapter độc lập lưu UUID trước khi gửi và dùng GET để đối chiếu nếu mất biên nhận. Tài liệu và mẫu kiểm thử nằm trong [hợp đồng API](MAC2API_API_CONTRACT_TESTS.md).
+
 ## Khởi động bản đóng gói trên Mac
 
 - `start-mac2api.command` chạy từ thư mục chứa mã, kiểm tra tệp giao diện và giữ cổng trước khi khởi tạo dịch vụ. Terminal in địa chỉ bảng quản trị hoặc báo cổng đang được sử dụng.

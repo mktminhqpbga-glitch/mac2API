@@ -46,7 +46,7 @@ class Client:
                  "method": method, "scheme": "http", "path": path,
                  "raw_path": path.encode(), "query_string": b"", "root_path": "",
                  "headers": [(k.lower().encode(), v.encode()) for k, v in hdr.items()],
-                 "server": ("test", 80), "client": ("test", 1)}
+                 "server": ("test", 80), "client": ("127.0.0.1", 1)}
         messages = []
         sent = False
 
@@ -166,7 +166,8 @@ async def check(source, home):
         assert response.status_code == 202
         done = await finish(response.json()["task_id"])
         assert done["status"] == "completed"
-        assert done["data"][0]["url"].endswith("fixture.png")
+        assert done["data"][0]["url"].split("?", 1)[0].endswith("fixture.png")
+        assert "?access=a." in done["data"][0]["url"]
         assert calls[-1][3] == ["data:image/png;base64," + base64.b64encode(b"fixture reference").decode()]
         response = await client.post("/v1/images/edits", json={
             "prompt": "edit JSON reference", "async": True, "reference_image": "data:image/png;base64,eA=="})
@@ -277,8 +278,12 @@ async def check(source, home):
         print("bounded_queue=PASS")
         pending = module.store.create_task("image", "interrupted fixture")
         await module._startup()
-        assert module.store.get_task(pending["id"])["status"] == "failed"
-        print("restart_marks_interrupted_tasks_failed=PASS")
+        try:
+            restored = module.store.get_task(pending["id"])
+            assert restored["status"] == "interrupted" and restored["needs_reconcile"]
+        finally:
+            await module._shutdown()
+        print("restart_preserves_receipts_for_reconciliation=PASS")
     print("PASS async image API regression")
 
 

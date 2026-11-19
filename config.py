@@ -99,7 +99,9 @@ class Config:
     # 允许跨域调用导入接口的来源（Cookie 助手脚本从 muse.ai 页面提交时用）
     cors_origins: str = field(
         default_factory=lambda: _env("MUSE2API_CORS_ORIGINS",
-                                     "https://muse.ai,https://www.muse.ai"))
+                                     "https://muse.ai,https://www.muse.ai,http://127.0.0.1:3000,http://localhost:3000"))
+    allow_legacy_public_media: bool = field(
+        default_factory=lambda: _env("MUSE2API_ALLOW_LEGACY_PUBLIC_MEDIA", "0") == "1")
 
     # 生成
     image_timeout: int = field(default_factory=lambda: int(_env("MUSE2API_IMAGE_TIMEOUT", "240")))

@@ -67,6 +67,10 @@ class WebProviderError(RuntimeError):
         self.status = status
 
 
+class WebPostSendError(WebProviderError):
+    """The browser may already have submitted the request."""
+
+
 def chrome_debug_file():
     root = Path.home()
     if sys.platform == "darwin":
@@ -159,6 +163,7 @@ class WebProviders:
         self.port = port
         self.profile_preferred = profile_preferred
         self.linked_at: dict[str, int] = {}
+        self.linked_targets: dict[str, str] = {}
         self.profile_connection: ChromeProfileConnection | None = None
         self._connect_lock = threading.Lock()
 
@@ -167,6 +172,43 @@ class WebProviders:
         if self.profile_preferred:
             return bool(profile and profile.browser.ws.connected and provider_id in profile.profiles)
         return bool(self.port)
+
+    def capability_states(self, *, inspect=True):
+        profile = self.profile_connection
+        configured = bool(self.profile_preferred or self.port)
+        connected = False
+        tabs = []
+        try:
+            if inspect and profile and profile.browser.ws.connected:
+                result = profile.browser.send("Target.getTargets", timeout=1)["result"]
+                tabs = result["targetInfos"]
+                connected = isinstance(tabs, list)
+            elif inspect and self.port and not self.profile_preferred:
+                with requests.Session() as session:
+                    session.trust_env = False
+                    response = session.get(f"http://127.0.0.1:{self.port}/json/list",
+                                           timeout=1, allow_redirects=False)
+                    if response.ok:
+                        tabs = response.json()
+                        connected = isinstance(tabs, list)
+        except (*CHROME_ERRORS, requests.RequestException):
+            connected = False
+        states = {}
+        for provider_id, provider in PROVIDERS.items():
+            profile_id = profile.profiles.get(provider_id) if profile else None
+            target_id = self.linked_targets.get(provider_id)
+            ready = connected and any(
+                isinstance(tab, dict) and tab.get("type") == "page"
+                and _origin(str(tab.get("url", ""))) == _origin(provider.url)
+                and (bool(profile_id) and tab.get("browserContextId") == profile_id if profile
+                     else bool(target_id) and tab.get("id") == target_id)
+                for tab in tabs
+            )
+            reason = ("ready" if ready else "session_unverified" if connected else
+                      "not_configured" if not configured else "busy" if not inspect else "browser_disconnected")
+            states[provider_id] = {"configured": configured, "connected": connected,
+                                   "ready": ready, "reason": reason}
+        return states
 
     def connect_profile(self, muse_port: int, persist):
         with self._connect_lock:
@@ -181,6 +223,7 @@ class WebProviders:
             if self.profile_connection:
                 self.profile_connection.browser.close()
             self.linked_at.clear()
+            self.linked_targets.clear()
             self.profile_preferred = True
             self.profile_connection = profile
 
@@ -198,6 +241,7 @@ class WebProviders:
                 self.profile_connection = None
             if self.profile_preferred or self.port != port:
                 self.linked_at.clear()
+                self.linked_targets.clear()
             self.port = port
             self.profile_preferred = False
 
@@ -206,7 +250,8 @@ class WebProviders:
             if self.profile_connection:
                 self.profile_connection.browser.close()
                 self.profile_connection = None
-                self.linked_at.clear()
+            self.linked_at.clear()
+            self.linked_targets.clear()
 
     @staticmethod
     def probe_port(port: int):
@@ -350,6 +395,7 @@ class WebProviders:
                 page = CDP(f"ws://127.0.0.1:{self.port}/devtools/page/{target}", timeout=3, suppress_origin=True)
                 try:
                     if self._verify_marker(page, provider, origin, marker):
+                        self.linked_targets[provider_id] = target
                         checked = self.linked_at[provider_id] = int(time.time())
                         return checked
                 finally:
@@ -367,8 +413,15 @@ class WebProviders:
             if image:
                 prompt = "Hãy tạo một ảnh mới dựa trên yêu cầu sau và trả ảnh trong câu trả lời.\n" + prompt
             page.send("Input.insertText", {"text": prompt}, timeout=_remaining(deadline, 5))
-            self._send(page, provider, min(deadline, time.monotonic() + 10))
-            return self._wait_result(page, provider, deadline, image)
+            try:
+                self._send(page, provider, min(deadline, time.monotonic() + 10))
+                return self._wait_result(page, provider, deadline, image)
+            except CHROME_ERRORS as exc:
+                raise WebPostSendError("Mất xác nhận sau khi gửi yêu cầu. Hãy kiểm tra tác vụ gốc.", 503) from exc
+            except WebProviderError as exc:
+                if exc.status == 504:
+                    raise WebPostSendError(str(exc), exc.status) from exc
+                raise
 
     @staticmethod
     def _clean_composer(page, provider, deadline):
@@ -470,7 +523,10 @@ class WebProviders:
 
 
 def _origin(url):
-    parsed = urlsplit(url)
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return ""
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
@@ -482,7 +538,18 @@ def _remaining(deadline, limit):
 
 
 def _read_image(page, source: str, *, timeout=15):
-    if urlsplit(source).scheme not in ("https", "blob", "data"):
+    try:
+        address = urlsplit(source)
+        host = address.hostname or ""
+        public_hosts = ("chatgpt.com", "oaiusercontent.com", "oaistatic.com",
+                        "gemini.google.com", "googleusercontent.com", "gstatic.com",
+                        "storage.googleapis.com")
+        allowed_cdn = (address.scheme == "https" and not address.username and not address.password
+                       and address.port in (None, 443)
+                       and any(host == domain or host.endswith("." + domain) for domain in public_hosts))
+    except ValueError:
+        allowed_cdn = False
+    if not allowed_cdn and not source.startswith(("blob:", "data:")):
         raise WebProviderError("Địa chỉ ảnh do trang trả về không được hỗ trợ.")
     encoded = page.js(f"""(async () => {{
         const response = await fetch({json.dumps(source)}, {{redirect: 'error'}});

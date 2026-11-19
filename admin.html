@@ -739,7 +739,7 @@ curl -X POST <span class="s">"BASE/v1/chat/completions"</span> \
   <span class="k">"url"</span>:<span class="s">"http://your-server:18610/v1/media/xxxx.webp"</span>,
   <span class="k">"kind"</span>:<span class="s">"image"</span>,<span class="k">"bytes"</span>:23860}]}
 
-<span class="c"># url 是完整绝对地址，可直接给下游渲染 / 下载；/v1/media/* 无需鉴权。</span>
+<span class="c"># 可用返回的签名 URL 下载文件，签名最长有效 7 天。</span>
 <span class="c"># 想要 base64 就传 "response_format":"b64_json"。</span></pre>
 
       <h4>4. 生视频（curl，异步）</h4>
@@ -795,7 +795,7 @@ t = requests.post(<span class="s">"BASE/v1/videos"</span>, json={<span class="s"
 
       <h4>7. 鉴权</h4>
       <div class="hint" style="margin:0" data-i18n="auth-hint">
-        除 <code>/healthz</code>、<code>/readyz</code>、<code>/v1/media/*</code> 外，其余接口均需
+        受保护的接口需要
         <code>Authorization: Bearer &lt;API Key&gt;</code>。API Key 在服务器
         <code>/opt/muse2api/.env</code> 的 <code>MUSE2API_KEY</code> 中配置。
       </div>
@@ -1106,7 +1106,7 @@ const I18N_EN = {
   "'{\"prompt\":\"一只戴宇航头盔的柴犬\",\"size\":\"1:1\",\"response_format\":\"url\"}'": "'{\"prompt\":\"A Shiba Inu wearing a space helmet\",\"size\":\"1:1\",\"response_format\":\"url\"}'",
   "# 返回": "# Response",
   "\"一只戴宇航头盔的柴犬\"": "\"A Shiba Inu wearing a space helmet\"",
-  "# url 是完整绝对地址，可直接给下游渲染 / 下载；/v1/media/* 无需鉴权。": "# url is a full absolute address that downstream apps can render / download directly; /v1/media/* needs no auth.",
+  "# 可用返回的签名 URL 下载文件，签名最长有效 7 天。": "# Use the signed URL to download the file. The URL is valid for up to 7 days.",
   "# 想要 base64 就传 \"response_format\":\"b64_json\"。": "# For base64, pass \"response_format\":\"b64_json\".",
   "4. 生视频（curl，异步）": "4. Video generation (curl, async)",
   "# ① 创建任务": "# ① Create the task",
@@ -1158,7 +1158,7 @@ const I18N_EN = {
   "✓ 已登录": "✓ Logged in",
   "API Key 必填": "API Key required",
   "已清除 API Key": "API Key cleared",
-  "API Key 已保存到本机浏览器，下次打开自动带上": "API Key saved in this browser; it will be used automatically next time",
+  "API Key 已保存到当前标签页": "API Key retained in this tab",
   "API Key 未填写或填写错误": "API Key is missing or incorrect",
   "请求参数有误 (HTTP 400)，请检查输入内容": "Invalid request parameters (HTTP 400); please check your input",
   "服务器拒绝了该请求 (HTTP 403)，请确认登录状态与访问权限": "The server rejected the request (HTTP 403); please check your login state and permissions",
@@ -1349,7 +1349,7 @@ const I18N_EN_HTML = {
   "lifetime-hint": "Session validity is determined by upstream authentication. hatch_vml is an optional workspace token that may be absent or reissued; its absence or expiry alone does not prove the login is invalid. Test the account after import. Log in and import again when the upstream returns HTTP 401.",
   "docs-intro": "\n        The API follows the OpenAI style; downstream projects only need to change <code>base_url</code> and <code>api_key</code>.\n        <br>BASE URL: <code id=\"dBase\">—</code>\n      ",
   "models-hint": "\n        These three are the real capabilities of the Muse family: <b>Muse Spark</b> (language / code), <b>Muse Image</b> (images),\n        <b>Muse Video</b> (videos). The muse.ai web app is an auto-routing agent with no model picker in the UI,\n        so the <code>model</code> field is only for downstream compatibility: common names like <code>gpt-4o</code>,\n        <code>claude-sonnet-4</code> and <code>dall-e-3</code> are mapped to the matching capability automatically.\n      ",
-  "auth-hint": "\n        Except for <code>/healthz</code>, <code>/readyz</code> and <code>/v1/media/*</code>, all endpoints require\n        <code>Authorization: Bearer &lt;API Key&gt;</code>. The API Key is configured in\n        <code>MUSE2API_KEY</code> in <code>/opt/muse2api/.env</code> on the server.\n      ",
+  "auth-hint": "\n        Protected endpoints require\n        <code>Authorization: Bearer &lt;API Key&gt;</code>. The API Key is configured in\n        <code>MUSE2API_KEY</code> in <code>/opt/muse2api/.env</code> on the server.\n      ",
   "model-alias-hint": "\n        <b>Any model name works</b>: common names (<code>gpt-4o</code>, <code>gpt-5</code>,\n        <code>claude-sonnet-4</code>, <code>deepseek-chat</code>, <code>gemini-2.5-pro</code>, etc.)\n        are mapped to the matching capability automatically; unknown names are passed through unchanged. muse.ai routes automatically anyway,\n        so the result is the same.\n      ",
   "tool-calls-hint": "\n        <b>About the \"tool calling\" limitation (important, tested):</b><br>\n        The muse.ai web assistant has an explicit alignment policy that refuses to \"output fake tool-call JSON\". Its actual reply in testing was\n        \"I won't output 'fake tool calls' in this JSON format — I don't have a get_weather tool.\"\n        Three prompt protocols with different wording and placement were tried, and all failed.<br>\n        So: <b>autonomous agent modes</b> that depend on <code>tool_calls</code> (reading/writing files, running commands, etc.) can't be supported;\n        but all <b>Q&amp;A-style</b> usage (chat, coding, explaining, translating, summarizing, images, videos) <b>works fully</b>.<br>\n        If a client sends a <code>tools</code> field anyway, the API won't error: it ignores the tool declarations and answers as a normal chat.\n      ",
   "col-enabled": "Enabled",
@@ -1794,7 +1794,7 @@ const I18N_VI = {
   "'{\"prompt\":\"一只戴宇航头盔的柴犬\",\"size\":\"1:1\",\"response_format\":\"url\"}'": "'{\"prompt\":\"Một chú chó Shiba Inu đội mũ phi hành gia\",\"size\":\"1:1\",\"response_format\":\"url\"}'",
   "# 返回": "# Phản hồi",
   "\"一只戴宇航头盔的柴犬\"": "\"Một chú chó Shiba Inu đội mũ phi hành gia\"",
-  "# url 是完整绝对地址，可直接给下游渲染 / 下载；/v1/media/* 无需鉴权。": "# url là địa chỉ đầy đủ để tải hoặc xem tệp. /v1/media/* không yêu cầu xác thực.",
+  "# 可用返回的签名 URL 下载文件，签名最长有效 7 天。": "# Tải bằng URL có chữ ký. Chữ ký có hiệu lực tối đa 7 ngày.",
   "# 想要 base64 就传 \"response_format\":\"b64_json\"。": "# Để nhận base64, truyền \"response_format\":\"b64_json\".",
   "4. 生视频（curl，异步）": "4. Tạo video bất đồng bộ bằng curl",
   "# ① 创建任务": "# ① Tạo tác vụ",
@@ -1846,7 +1846,7 @@ const I18N_VI = {
   "✓ 已登录": "✓ Đã đăng nhập",
   "API Key 必填": "Cần API Key",
   "已清除 API Key": "Đã xóa API Key",
-  "API Key 已保存到本机浏览器，下次打开自动带上": "Đã lưu API Key trong trình duyệt để dùng lần sau",
+  "API Key 已保存到当前标签页": "Đã lưu API Key cho tab này",
   "API Key 未填写或填写错误": "API Key bị thiếu hoặc sai",
   "请求参数有误 (HTTP 400)，请检查输入内容": "Tham số không hợp lệ (HTTP 400). Hãy kiểm tra dữ liệu nhập",
   "服务器拒绝了该请求 (HTTP 403)，请确认登录状态与访问权限": "Máy chủ từ chối yêu cầu (HTTP 403). Hãy kiểm tra phiên và quyền truy cập",
@@ -2036,7 +2036,7 @@ const I18N_VI_HTML = {
   "lifetime-hint": "Muse xác định phiên còn hợp lệ hay không. Hãy kiểm tra tài khoản sau khi nhập cookie.",
   "docs-intro": "API theo định dạng OpenAI. Hãy thiết lập <code>base_url</code> và <code>api_key</code>.<br>BASE URL: <code id=\"dBase\">—</code>",
   "models-hint": "<b>Muse Spark</b> dùng cho văn bản và mã, <b>Muse Image</b> dùng cho ảnh, <b>Muse Video</b> dùng cho video.",
-  "auth-hint": "Các endpoint được bảo vệ cần header <code>Authorization: Bearer &lt;API Key&gt;</code>. Các đường dẫn công khai gồm <code>/healthz</code>, <code>/readyz</code> và <code>/v1/media/*</code>.",
+  "auth-hint": "Các endpoint được bảo vệ cần header <code>Authorization: Bearer &lt;API Key&gt;</code>. Tệp media sử dụng URL có chữ ký hoặc khóa của chủ tệp. <code>/healthz</code> và <code>/readyz</code> dùng để kiểm tra dịch vụ.",
   "model-alias-hint": "Các bí danh như <code>gpt-4o</code>, <code>claude-sonnet-4</code> và <code>gemini-2.5-pro</code> được ánh xạ sang khả năng của Muse.",
   "tool-calls-hint": "Hỗ trợ gọi công cụ dựa trên yêu cầu định dạng phản hồi trong prompt. Khả năng trả đúng cấu trúc phụ thuộc vào Muse.",
   "col-enabled": "Bật"
@@ -2112,7 +2112,13 @@ if (LANG !== 'zh') {
 /* ================= 基础 ================= */
 const $ = id => document.getElementById(id);
 const KEY_STORE = 'muse2api_key';
-let KEY = localStorage.getItem(KEY_STORE) || new URLSearchParams(location.search).get('key') || '';
+let KEY = sessionStorage.getItem(KEY_STORE) || '';
+localStorage.removeItem(KEY_STORE);
+const adminUrl = new URL(location.href);
+if (adminUrl.searchParams.has('key')) {
+  adminUrl.searchParams.delete('key');
+  history.replaceState(history.state, '', adminUrl);
+}
 $('key').value = KEY;
 $('dBase').textContent = location.origin + '/v1';
 $('museScopedBase').textContent = location.origin + '/muse/v1';
@@ -2130,9 +2136,9 @@ function setAuth(ok){
 
 function saveKey(){
   KEY = $('key').value.trim();
-  localStorage.setItem(KEY_STORE, KEY);
+  sessionStorage.setItem(KEY_STORE, KEY);
   if (!KEY){ setAuth(false); toast('已清除 API Key', 'warn'); return; }
-  toast('API Key 已保存到本机浏览器，下次打开自动带上', 'ok');
+  toast('API Key 已保存到当前标签页', 'ok');
   authOK = null;                 // 强制重新判定
   refreshAll();
 }
@@ -2457,7 +2463,7 @@ async function rotateKey(){
     const d = await api('/admin/apikey/rotate', {method:'POST'});
     realKey = d.api_key;
     KEY = d.api_key;
-    localStorage.setItem(KEY_STORE, KEY);
+    sessionStorage.setItem(KEY_STORE, KEY);
     $('key').value = KEY;
     keyShown = true; renderKey();
     $('cmdText').textContent = buildCmd($('inBase').value);
@@ -2806,9 +2812,9 @@ async function delAcc(id, label){
 async function loadTasks(){
   const translateTaskText = t;
   const states = {
-    vi: {queued: 'Đang chờ', processing: 'Đang xử lý', completed: 'Hoàn tất', succeeded: 'Hoàn tất', failed: 'Thất bại'},
-    en: {queued: 'Queued', processing: 'Processing', completed: 'Completed', succeeded: 'Completed', failed: 'Failed'},
-    zh: {queued: '排队', processing: '处理中', completed: '已完成', succeeded: '已完成', failed: '失败'},
+    vi: {queued: 'Đang chờ', processing: 'Đang xử lý', completed: 'Hoàn tất', succeeded: 'Hoàn tất', failed: 'Thất bại', cancelled: 'Đã hủy', interrupted: 'Cần đối chiếu'},
+    en: {queued: 'Queued', processing: 'Processing', completed: 'Completed', succeeded: 'Completed', failed: 'Failed', cancelled: 'Cancelled', interrupted: 'Needs reconciliation'},
+    zh: {queued: '排队', processing: '处理中', completed: '已完成', succeeded: '已完成', failed: '失败', cancelled: '已取消', interrupted: '需要核对'},
   };
   try{
     const d = await api('/admin/tasks?limit=60');
@@ -3068,7 +3074,7 @@ async function runImage(){
     let failures = 0;
     while (r.status !== 'completed') {
       if (Date.now() >= deadline) throw new Error('等待超过 15 分钟，请在任务记录查看结果，勿重复提交');
-      if (r.status === 'failed') throw new Error(r.error || '图片生成失败');
+      if (['failed', 'cancelled', 'interrupted'].includes(r.status)) throw new Error(r.error || r.status);
       box.textContent = `任务 ${taskId} · ${r.status} · 已等待 ${Math.floor((Date.now()-t0)/1000)} 秒`;
       await new Promise(resolve => setTimeout(resolve, 3000));
       try {
@@ -3112,8 +3118,8 @@ async function runVideo(){
           <pre class="out">${esc(JSON.stringify(s, null, 2))}</pre>`;
         btn.disabled = false; btn.textContent = '开始生成视频';
         loadMedia(); loadTasks();
-      }else if (s.status === 'failed'){
-        box.innerHTML = `<b style="color:var(--bad)">✗ 生成失败</b><pre class="out">${esc(s.error||'')}</pre>`;
+      }else if (['failed', 'cancelled', 'interrupted'].includes(s.status)){
+        box.innerHTML = `<pre class="out">${esc(s.error || s.status)}</pre>`;
         btn.disabled = false; btn.textContent = '开始生成视频';
       }else{
         box.innerHTML = `<span class="spin"></span>任务 ${esc(s.status)} · 已等待 ${el}s（视频通常 60–120 秒）…`;

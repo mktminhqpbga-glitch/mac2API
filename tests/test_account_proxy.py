@@ -37,7 +37,7 @@ async def request(method, path, body=None):
     messages = []
     scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
              "method": method, "scheme": "http", "path": path, "raw_path": path.encode(),
-             "query_string": b"", "root_path": "", "server": ("test", 80), "client": ("test", 1),
+             "query_string": b"", "root_path": "", "server": ("test", 80), "client": ("127.0.0.1", 1),
              "headers": [(b"authorization", b"Bearer test-only"),
                          (b"content-type", b"application/json"),
                          (b"content-length", str(len(payload)).encode())]}

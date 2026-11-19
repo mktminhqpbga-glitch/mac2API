@@ -33,7 +33,7 @@ class Client:
             "method": method, "scheme": "http", "path": path,
             "raw_path": path.encode(), "query_string": b"", "root_path": "",
             "headers": [(k.lower().encode(), v.encode()) for k, v in hdr.items()],
-            "server": ("test", 80), "client": ("test", 1)
+            "server": ("test", 80), "client": ("127.0.0.1", 1)
         }
         messages = []
         sent = False

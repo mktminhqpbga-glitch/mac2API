@@ -96,6 +96,8 @@ def _write(path: str, obj):
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(obj, f, ensure_ascii=False, indent=1)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, path)
     finally:
         if os.path.exists(tmp):
@@ -378,10 +380,10 @@ class Store:
             self.tasks = tasks
             return t
 
-    def update_task(self, tid: str, **kw):
+    def update_task(self, tid: str, *, expected_status=None, **kw):
         with _LOCK:
             t = self.tasks.get(tid)
-            if not t:
+            if not t or (expected_status and t.get("status") != expected_status):
                 return None
             updated = {**t, **kw, "updated_at": int(time.time())}
             tasks = {**self.tasks, tid: updated}
@@ -395,20 +397,43 @@ class Store:
             return updated
 
     def get_task(self, tid: str) -> dict | None:
-        return self.tasks.get(tid)
+        task = self.tasks.get(tid)
+        return task if task and not task.get("receipt_only") else None
+
+    def transition_task(self, tid: str, expected: str, **changes):
+        with _LOCK:
+            current = self.tasks.get(tid)
+            if not current or current.get("status") != expected:
+                return None
+            task = {**current, **changes, "updated_at": int(time.time())}
+            tasks = {**self.tasks, tid: task}
+            _write(self.cfg.tasks_file, tasks)
+            self.tasks = tasks
+            return task
 
     def list_tasks(self, limit: int = 50) -> list[dict]:
-        items = sorted(self.tasks.values(),
+        items = sorted((task for task in self.tasks.values() if not task.get("receipt_only")),
                        key=lambda t: t.get("created_at") or 0, reverse=True)
         return items[:limit]
 
+    @staticmethod
+    def _remove_task_history(tasks, task):
+        task_id = task["id"]
+        if task.get("request_key") or task.get("image_request_key"):
+            fields = ("id", "kind", "provider", "owner", "status", "progress", "created_at",
+                      "request_key", "request_hash", "image_request_key", "image_request_hash")
+            tasks[task_id] = {**{key: task[key] for key in fields if key in task}, "receipt_only": True}
+        else:
+            del tasks[task_id]
+
     def delete_task(self, tid: str) -> bool:
         with _LOCK:
-            task = self.tasks.get(tid)
+            task = self.get_task(tid)
             if task and task.get("status") in ("queued", "processing"):
                 raise ValueError("Không thể xóa tác vụ đang chờ hoặc đang chạy.")
             if task:
-                tasks = {key: value for key, value in self.tasks.items() if key != tid}
+                tasks = dict(self.tasks)
+                self._remove_task_history(tasks, task)
                 _write(self.cfg.tasks_file, tasks)
                 self.tasks = tasks
                 return True
@@ -416,12 +441,15 @@ class Store:
 
     def clear_tasks(self, keep: int = 0) -> int:
         with _LOCK:
-            items = sorted(self.tasks.values(),
+            items = sorted((task for task in self.tasks.values() if not task.get("receipt_only")),
                            key=lambda t: t.get("created_at") or 0, reverse=True)
             keep_ids = {t["id"] for t in items[:keep]}
             keep_ids.update(t["id"] for t in items if t.get("status") in ("queued", "processing"))
-            removed = len(self.tasks) - len(keep_ids)
-            tasks = {k: v for k, v in self.tasks.items() if k in keep_ids}
+            removed = len(items) - len(keep_ids)
+            tasks = dict(self.tasks)
+            for task in items:
+                if task["id"] not in keep_ids:
+                    self._remove_task_history(tasks, task)
             _write(self.cfg.tasks_file, tasks)
             self.tasks = tasks
             return max(0, removed)

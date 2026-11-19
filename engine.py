@@ -2150,7 +2150,7 @@ class MuseEngine:
                 self._debug_dump("extract-fail")
 
             if data and hashlib.sha256(data).hexdigest() in upload_hashes:
-                log.warning("命中的附件是本次上传的参考素材，忽略并继续等待: %s", selected_src[:80])
+                log.warning("Bỏ qua tệp tham chiếu trong kết quả, tiếp tục đợi tệp mới.")
                 baseline_sources |= {att.get(k) for k in ("src", "vSrc", "iSrc") if att.get(k)}
                 time.sleep(0.1)
                 continue

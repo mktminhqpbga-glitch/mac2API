@@ -32,12 +32,15 @@ import base64
 import collections
 import binascii
 import io
+import ipaddress
 import hashlib
 import hmac
 import json
 import logging
+import mimetypes
 import os
 import re
+import shutil
 import threading
 import time
 import uuid
@@ -57,10 +60,10 @@ from engine import (ESSENTIAL_COOKIES, MAX_REFERENCE_IMAGE_BYTES,
                     MuseModelRefusalError, MusePostSendError, RefImageSafetyError, reference_kind)
 from engine import MusePageUnavailable, MuseProxyError, MuseSessionUnavailable
 from store import Store, account_expiry, min_expiry
-from generation_timing import QueuePolicy, QueueSettings, TaskTiming
+from generation_timing import QueuePolicy, QueueSettings, TaskNotQueued, TaskTiming
 from proxy import normalize_server, request_proxy_context, split_proxy_url
-from media_storage import CAPACITY_BYTES, CLEANUP_BYTES, delete_media_file, media_entries, media_owner, new_media_name, prune_media, save_media
-from web_providers import DEFAULT_WEB_CDP_PORT, PROVIDERS as WEB_PROVIDERS, WebProviderError, WebProviders
+from media_storage import CAPACITY_BYTES, CLEANUP_BYTES, delete_media_file, media_entries, media_owner, new_media_name, save_media
+from web_providers import DEFAULT_WEB_CDP_PORT, PROVIDERS as WEB_PROVIDERS, WebPostSendError, WebProviderError, WebProviders
 from thumbnails import (VIDEO_FORMATS, ThumbnailUnavailable,
                         source_version, video_thumbnail)
 
@@ -90,18 +93,48 @@ app = FastAPI(title="muse2api", version=str(_read_local_version().get("version")
 # Cookie 助手脚本从 muse.ai 页面发起导入请求，需要放行该来源；
 # 浏览器扩展从 chrome-extension:// 发起，也一并放行。
 #
-# 这里直接放行所有来源：本服务用 Bearer Key 鉴权、不依赖 Cookie，
-# 放行来源不会带来越权风险；反之如果把来源限死，浏览器端的智能体
-# （Open WebUI / LobeChat / 各种 Web 客户端）会被 CORS 拦住用不了。
-_origins = [o.strip() for o in (CFG.cors_origins or "").split(",") if o.strip()]
+_origins = [o.strip() for o in (CFG.cors_origins or "").split(",") if o.strip() not in ("", "*")]
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 app.add_middleware(CORSMiddleware,
-                   allow_origins=["*"],
+                   allow_origins=_origins,
+                   allow_origin_regex=r"chrome-extension://[a-p]{32}",
                    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
                    allow_headers=["*"],
                    expose_headers=["*"],
                    max_age=600)
+
+
+@app.middleware("http")
+async def protect_bearer_transport(request: Request, call_next):
+    sensitive = "authorization" in request.headers or "access" in request.query_params
+    if sensitive and request.url.scheme != "https":
+        try:
+            loopback = ipaddress.ip_address(request.client.host if request.client else "").is_loopback
+        except ValueError:
+            loopback = False
+        if not loopback:
+            return JSONResponse(
+                {"error": {"code": "HTTPS_REQUIRED", "message": "Kết nối từ xa cần HTTPS."}},
+                status_code=403, headers={"Cache-Control": "no-store"})
+    response = await call_next(request)
+    if request.url.path.startswith(("/admin/apikey", "/admin/client-keys", "/admin/api-clients")):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+class AccessLogFilter(logging.Filter):
+    """Keep signed media query strings out of Uvicorn access logs."""
+
+    def filter(self, record):
+        if isinstance(record.args, tuple) and len(record.args) == 5:
+            client, method, target, protocol, status = record.args
+            if isinstance(target, str) and "?" in target:
+                record.args = client, method, target.split("?", 1)[0], protocol, status
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(AccessLogFilter())
 
 store = Store(CFG)
 chat_providers = ChatProviders(CFG.data_dir)
@@ -163,14 +196,14 @@ def _module_provider(model: str, kind: str) -> str | None:
     return provider if provider in WEB_PROVIDERS else None
 
 
-def _web_call(fn, *args, on_acquired=None, on_queue=None, **kwargs):
+def _web_call(fn, *args, on_acquired=None, on_queue=None, queue_guard=None, **kwargs):
     queued_at = time.monotonic()
-    acquired = GEN_LOCK.acquire(timeout=QUEUE_POLICY.settings()["queue_timeout"] or None)
+    acquired = _wait_for_generation_slot(QUEUE_POLICY.settings()["queue_timeout"], queue_guard)
     try:
         if on_queue:
             on_queue(time.monotonic() - queued_at)
         if not acquired:
-            raise HTTPException(429, "Hết thời gian chờ khe xử lý.")
+            raise _backpressure("QUEUE_TIMEOUT", "Hết thời gian chờ khe xử lý.", 1)
         if on_acquired:
             on_acquired()
         return fn(*args, **kwargs)
@@ -217,7 +250,7 @@ class ConcurrencyLock:
     确保向下兼容历史单锁断言与管理端操作。"""
     def __init__(self, limit: int = 2):
         self.limit = max(1, limit)
-        self._sem = threading.Semaphore(self.limit)
+        self._sem = threading.BoundedSemaphore(self.limit)
         self._count_lock = threading.Lock()
         self._active_count = 0
         self._idle_since = time.monotonic()
@@ -234,12 +267,13 @@ class ConcurrencyLock:
                 self._active_count += 1
         return ok
 
-    def release(self):
+    def release(self, *, touch_idle=True):
         with self._count_lock:
-            if self._active_count > 0:
-                self._active_count -= 1
-                if self._active_count == 0:
-                    self._idle_since = time.monotonic()
+            if not self._active_count:
+                raise RuntimeError("Không có khe xử lý đang được giữ.")
+            self._active_count -= 1
+            if touch_idle:
+                self._idle_since = time.monotonic()
         self._sem.release()
 
     def stop_browser_if_idle(self, browser, idle_seconds: int, has_queued_work) -> bool:
@@ -256,6 +290,10 @@ class ConcurrencyLock:
     def locked(self) -> bool:
         with self._count_lock:
             return self._active_count > 0
+
+    def full(self) -> bool:
+        with self._count_lock:
+            return self._active_count >= self.limit
 
     def __enter__(self):
         self.acquire()
@@ -274,10 +312,12 @@ class AccountPoolManager:
 
     def acquire(self, account_id: str | None = None, preferred_id: str | None = None,
                 rotate: bool = True, force_rotate: bool = False,
-                timeout: float | None = 60.0, record_use: bool = True) -> dict:
+                timeout: float | None = 60.0, record_use: bool = True, queue_guard=None) -> dict:
         deadline = None if timeout is None else time.monotonic() + timeout
         with self.cond:
             while True:
+                if queue_guard:
+                    queue_guard()
                 remaining = None if deadline is None else deadline - time.monotonic()
                 if remaining is not None and remaining <= 0:
                     raise MuseGenerationError("等待空闲账号超时，当前所有账号均处于繁忙中")
@@ -319,6 +359,19 @@ class AccountPoolManager:
 GEN_LOCK = ConcurrencyLock(limit=CFG.max_concurrency)
 ACCOUNT_POOL = AccountPoolManager(store)
 QUEUE_POLICY = QueuePolicy(os.path.join(CFG.data_dir, "generation-queue.json"))
+
+
+def _wait_for_generation_slot(timeout, guard):
+    if not guard:
+        return GEN_LOCK.acquire(timeout=timeout or None)
+    deadline = time.monotonic() + timeout if timeout else None
+    while True:
+        guard()
+        remaining = deadline - time.monotonic() if deadline is not None else 0.25
+        if remaining <= 0:
+            return False
+        if GEN_LOCK.acquire(timeout=min(remaining, 0.25)):
+            return True
 
 
 def _bind_account_proxy(account: dict):
@@ -386,12 +439,15 @@ def _err_type(status: int) -> str:
 @app.exception_handler(HTTPException)
 async def _http_exc(request: Request, exc: HTTPException):
     if request.url.path.startswith("/v1/") or _path_provider(request):
+        detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
+        headers = dict(exc.headers or {})
+        if exc.status_code == 429 and not any(key.lower() == "retry-after" for key in headers):
+            headers["Retry-After"] = "2"
         return JSONResponse(
             status_code=exc.status_code,
-            content={"error": {"message": str(exc.detail),
-                               "type": _err_type(exc.status_code),
-                               "param": None, "code": exc.status_code}},
-            headers=getattr(exc, "headers", None))
+            content={"error": {"type": _err_type(exc.status_code),
+                               "param": None, "code": exc.status_code, **detail}},
+            headers=headers)
     return JSONResponse(status_code=exc.status_code,
                         content={"detail": exc.detail},
                         headers=getattr(exc, "headers", None))
@@ -479,8 +535,27 @@ def auth(authorization: str | None = Header(default=None)):
 CLIENT_REQUESTS_PER_MINUTE = 20
 CLIENT_ACTIVE_POST_LIMIT = 2
 CLIENT_PENDING_MEDIA_LIMIT = 2
+KIND_PENDING_MEDIA_LIMIT = 8
 MEDIA_ADMISSION_LOCK = threading.Lock()
 CLIENT_MEDIA_PATTERN = re.compile(r"^client-([0-9a-f]{16})--")
+NO_STORE = {"Cache-Control": "no-store"}
+
+
+def _backpressure(code, message, retry_after):
+    return HTTPException(429, {"code": code, "message": message}, headers={"Retry-After": str(retry_after)})
+
+
+def contract_auth(request: Request, authorization: str | None = Header(default=None)):
+    token = _bearer_token(authorization)
+    if _is_admin(token):
+        raise HTTPException(403, "Endpoint này cần khóa người dùng m2c_.", headers=NO_STORE)
+    client = store.find_client(token)
+    if not client:
+        raise HTTPException(401, "API Key không hợp lệ hoặc đã bị thu hồi.", headers=NO_STORE)
+    scope = _path_provider(request)
+    if scope and scope not in client["providers"]:
+        raise HTTPException(403, "Khóa API không có quyền dùng Base URL này.", headers=NO_STORE)
+    return client
 
 
 async def api_auth(request: Request, authorization: str | None = Header(default=None)):
@@ -499,8 +574,7 @@ async def api_auth(request: Request, authorization: str | None = Header(default=
     if is_write and not store.acquire_client_request(
         client["id"], CLIENT_REQUESTS_PER_MINUTE, CLIENT_ACTIVE_POST_LIMIT
     ):
-        raise HTTPException(429, "Khóa API đã đạt giới hạn yêu cầu hoặc đang có yêu cầu xử lý. Hãy thử lại sau.",
-                            headers={"Retry-After": "60"})
+        raise _backpressure("CLIENT_RATE_LIMIT", "Khóa API đã đạt giới hạn yêu cầu hoặc đang có yêu cầu xử lý.", 60)
     try:
         yield client
     finally:
@@ -545,10 +619,10 @@ def _require_task_owner(task, client):
 
 def _check_media_admission(tasks, kind, owner):
     active = [task for task in tasks if task.get("status") in ("queued", "processing")]
-    if sum(task.get("kind") == kind for task in active) >= 8:
-        raise HTTPException(429, "Hàng đợi tạo nội dung đã đầy. Hãy thử lại sau.")
+    if sum(task.get("kind") == kind for task in active) >= KIND_PENDING_MEDIA_LIMIT:
+        raise _backpressure("QUEUE_FULL", "Hàng đợi tạo nội dung đã đầy.", 2)
     if owner and sum(task.get("owner") == owner for task in active) >= CLIENT_PENDING_MEDIA_LIMIT:
-        raise HTTPException(429, "Khóa API đang có tối đa 2 tác vụ media chờ hoặc đang chạy.")
+        raise _backpressure("CLIENT_PENDING_LIMIT", "Khóa API đang có tối đa 2 tác vụ media chờ hoặc đang chạy.", 2)
 
 
 def _public_task(task, client):
@@ -556,7 +630,7 @@ def _public_task(task, client):
     if _client_id(client):
         allowed = {"id", "object", "kind", "provider", "prompt", "status", "progress", "created_at",
                    "updated_at", "error", "last_error", "elapsed", "queue_elapsed", "total_elapsed",
-                   "result", "size", "response_format", "url", "video"}
+                   "result", "size", "response_format", "url", "video", "needs_reconcile", "error_code"}
         data = {key: value for key, value in data.items() if key in allowed}
     result = data.get("result")
     if isinstance(result, dict) and result.get("filename"):
@@ -623,7 +697,7 @@ def _renew_and_persist(acc_id: str, wake_vm: bool = True, force: bool = False) -
         log.warning("HTTP 预续签账号 %s 未分配工作区%s: %s", acc_id,
                     "（已保存轮换后的 cookie）" if exc.rotated else "", exc)
     except Exception as exc:
-        log.warning("HTTP 预续签账号 %s 异常: %s", acc_id, exc)
+        log.warning("HTTP 预续签账号 %s 异常: %s", acc_id, type(exc).__name__)
     return store.get_account(acc_id)
 
 
@@ -1036,9 +1110,14 @@ def _media_prompt_localized(r, refs, kinds, language, *, video=False):
                        if vi else "Use a full-screen vertical 9:16 frame, taller than wide, never landscape.")
         parts.append(orientation)
         if video:
-            parts.append("Dùng khung 720x1280, không có viền đen." if vi else "Use a 720x1280 frame without black bars.")
+            if (r.resolution or "").strip().lower() in ("", "720", "720p", "720x1280"):
+                parts.append("Dùng khung 720x1280, không có viền đen." if vi else "Use a 720x1280 frame without black bars.")
+            else:
+                parts.append("Khung hình không có viền đen." if vi else "Use a frame without black bars.")
     elif any(value in ratio or value in size for value in ("16:9", "16/9", "landscape", "横屏", "1280x720", "1920x1080")):
         parts.append("Dùng khung hình ngang 16:9." if vi else "Use a widescreen 16:9 landscape frame.")
+    elif video and ratio:
+        parts.append(f"Dùng tỷ lệ {r.aspect_ratio}." if vi else f"Use a {r.aspect_ratio} aspect ratio.")
     elif not video:
         if any(value in ratio or value in size for value in ("1:1", "square", "正方形", "1024x1024")):
             parts.append("Dùng khung hình vuông 1:1." if vi else "Use a square 1:1 frame.")
@@ -1381,10 +1460,12 @@ def build_video_prompt(r: VideoRequest, kinds: list[str] | None = None, *, langu
 
     parts = []
     if is_vertical:
+        dimensions = (", 720x1280" if (r.resolution or "").strip().lower()
+                      in ("", "720", "720p", "720x1280") else "")
         if has_ref:
-            parts.append(f"{reference_instruction}：生成一个严格9:16竖屏手机满屏的动态{gen_word}（9:16 vertical portrait video，720x1280，高大于宽的手机全屏竖版画面，严禁生成横屏或黑边，时长严格为 {dur} 秒）：{user_prompt}")
+            parts.append(f"{reference_instruction}：生成一个严格9:16竖屏手机满屏的动态{gen_word}（9:16 vertical portrait video{dimensions}，高大于宽的手机全屏竖版画面，严禁生成横屏或黑边，时长严格为 {dur} 秒）：{user_prompt}")
         else:
-            parts.append(f"全新文生视频创作（纯文本全新生成，严禁参考任何历史图片或上下文）：生成一个严格9:16竖屏手机满屏视频（9:16 vertical portrait video，720x1280，高大于宽的手机全屏竖版画面，严禁生成横屏或带有左右黑边，保持垂直构图，时长严格为 {dur} 秒）：{user_prompt}")
+            parts.append(f"全新文生视频创作（纯文本全新生成，严禁参考任何历史图片或上下文）：生成一个严格9:16竖屏手机满屏视频（9:16 vertical portrait video{dimensions}，高大于宽的手机全屏竖版画面，严禁生成横屏或带有左右黑边，保持垂直构图，时长严格为 {dur} 秒）：{user_prompt}")
     elif any(k in ar or k in sz for k in ("16:9", "16/9", "landscape", "横屏", "1280x720", "1920x1080")):
         if has_ref:
             parts.append(f"{reference_instruction}：生成一个16:9宽屏横屏{gen_word}（16:9 widescreen landscape video，时长严格为 {dur} 秒）：{user_prompt}")
@@ -1395,6 +1476,8 @@ def build_video_prompt(r: VideoRequest, kinds: list[str] | None = None, *, langu
             parts.append(f"{reference_instruction}：生成动态{gen_word}（时长严格为 {dur} 秒）：{user_prompt}")
         else:
             parts.append(f"全新文生视频创作（纯文本全新生成，严禁参考任何历史图片或上下文）：生成一个视频（时长严格为 {dur} 秒）：{user_prompt}")
+        if r.aspect_ratio:
+            parts.append(f"画面比例：{r.aspect_ratio}")
 
     if r.resolution:
         parts.append(f"画质规格：{r.resolution}")
@@ -1409,11 +1492,14 @@ def _media_signature(name: str, mode: str, expires: int):
     return hmac.new(CFG.api_key.encode(), payload, hashlib.sha256).hexdigest()
 
 
+MEDIA_URL_TTL_SECONDS = 7 * 86400
+
+
 def _media_access_query(name: str, *, admin: bool):
-    if not CLIENT_MEDIA_PATTERN.match(name):
+    if not CFG.api_key:
         return ""
-    mode = "a" if admin else "c"
-    expires = int(time.time()) + 7 * 86400
+    mode = "a" if admin or not CLIENT_MEDIA_PATTERN.match(name) else "c"
+    expires = int(time.time()) + MEDIA_URL_TTL_SECONDS
     return f"access={mode}.{expires}.{_media_signature(name, mode, expires)}"
 
 
@@ -1426,19 +1512,20 @@ def media_url(name: str, *, admin: bool = False) -> str:
 
 def _check_media_access(name: str, access: str, authorization: str | None):
     match = CLIENT_MEDIA_PATTERN.match(name)
-    if not match:
-        return False
-    owner = match[1]
+    owner = match[1] if match else None
     token = _bearer_token(authorization)
     client = store.find_client(token)
-    if _is_admin(token) or (client and client["id"] == owner):
+    if _is_admin(token) or (owner and client and client["id"] == owner):
         return True
     signature = re.fullmatch(r"([ac])\.([0-9]{1,12})\.([0-9a-f]{64})", access)
     if signature and CFG.api_key:
         mode, timestamp, mac = signature.groups()
-        if (int(timestamp) >= int(time.time()) and (mode == "a" or owner in store.clients)
+        now = int(time.time())
+        if (now <= int(timestamp) <= now + MEDIA_URL_TTL_SECONDS and (mode == "a" or owner in store.clients)
                 and hmac.compare_digest(mac, _media_signature(name, mode, int(timestamp)))):
             return True
+    if not owner and CFG.allow_legacy_public_media and not access:
+        return False
     raise HTTPException(404, "Không tìm thấy tệp.")
 
 
@@ -1542,12 +1629,15 @@ def _run_generation(prompt: str, kind: str, timeout: int,
                     account_id: str | None = None, on_progress=None,
                     reference_image: str | None = None,
                     reference_images: list[str] | None = None,
-                    on_acquired=None, on_account=None, on_queue=None, on_error=None) -> tuple[dict, str | None]:
+                    on_acquired=None, on_account=None, on_queue=None, on_error=None,
+                    queue_guard=None) -> tuple[dict, str | None]:
+    if queue_guard:
+        queue_guard()
     if not any(a.get("enabled", True) and a.get("cookies") for a in store.accounts):
         raise MuseGenerationError("没有可用的生成账号，请检查账号池")
     queue_timeout = QUEUE_POLICY.settings()["queue_timeout"]
     t0 = time.monotonic()
-    acquired = GEN_LOCK.acquire(timeout=queue_timeout or None)
+    acquired = _wait_for_generation_slot(queue_timeout, queue_guard)
     queued = time.monotonic() - t0
     _generation_callback(on_queue, queued)
     if not acquired:
@@ -1557,7 +1647,7 @@ def _run_generation(prompt: str, kind: str, timeout: int,
                                       on_progress, reference_image, reference_images,
                                       on_acquired=on_acquired, on_account=on_account,
                                       on_queue=on_queue, on_error=on_error,
-                                      queued=queued, queue_timeout=queue_timeout)
+                                      queued=queued, queue_timeout=queue_timeout, queue_guard=queue_guard)
     finally:
         GEN_LOCK.release()
 
@@ -1567,7 +1657,8 @@ def _run_generation_locked(prompt: str, kind: str, timeout: int,
                     reference_image: str | None = None,
                     reference_images: list[str] | None = None,
                     deadline=None, on_acquired=None, on_account=None,
-                    on_queue=None, on_error=None, queued=0.0, queue_timeout=None) -> tuple[dict, str | None]:
+                    on_queue=None, on_error=None, queued=0.0, queue_timeout=None,
+                    queue_guard=None) -> tuple[dict, str | None]:
     if queue_timeout is None:
         queue_timeout = QUEUE_POLICY.settings()["queue_timeout"]
 
@@ -1585,7 +1676,8 @@ def _run_generation_locked(prompt: str, kind: str, timeout: int,
                 deadline += waited
             _generation_callback(on_queue, queued)
 
-    cur_acc = lease(account_id=account_id, preferred_id=None, rotate=True)
+    cur_acc = lease(account_id=account_id, preferred_id=None, rotate=True,
+                    **({"queue_guard": queue_guard} if queue_guard else {}))
     if deadline is None:
         deadline = time.monotonic() + max(1, timeout)
     last_exc = None
@@ -1705,6 +1797,80 @@ def models(_=Depends(api_auth), request: Request = None):
     return {"object": "list", "data": data}
 
 
+def _muse_capability_state():
+    now = time.time()
+    accounts = [account for account in store.accounts if account.get("enabled", True)
+                and all((account.get("cookies") or {}).get(key) for key in ESSENTIAL_COOKIES)]
+    verified = [account for account in accounts if account.get("ok") is True
+                and (not account.get("expires_at") or account["expires_at"] > now)]
+    connected = bool(engine.proc and engine.proc.poll() is None)
+    browser_available = connected or bool(shutil.which(CFG.chromium))
+    ready = bool(verified and browser_available)
+    with ACCOUNT_POOL.cond:
+        accounts_busy = bool(verified) and all(account["id"] in ACCOUNT_POOL.busy_accounts
+                                               for account in verified)
+    busy = accounts_busy or GEN_LOCK.full()
+    reason = ("not_configured" if not accounts else "browser_unavailable" if not browser_available
+              else "session_unverified" if not verified else "busy" if busy
+              else "ready" if connected else "browser_idle")
+    return {"configured": bool(accounts), "connected": connected, "ready": ready,
+            "busy": busy, "reason": reason}
+
+
+@app.get("/muse/v1/capabilities")
+@app.get("/chatgpt/v1/capabilities")
+@app.get("/gemini/v1/capabilities")
+@app.get("/v1/capabilities")
+def capabilities(request: Request, client=Depends(contract_auth)):
+    scope = _path_provider(request)
+    allowed = {scope} if scope else set(client["providers"])
+    states = {}
+    if "muse" in allowed:
+        states["muse"] = _muse_capability_state()
+    if allowed.intersection(WEB_PROVIDERS):
+        lease = GEN_LOCK.acquire(blocking=False)
+        try:
+            web_states = web_providers.capability_states(inspect=lease)
+        finally:
+            if lease:
+                GEN_LOCK.release(touch_idle=False)
+        for provider, state in web_states.items():
+            if provider in allowed:
+                busy = GEN_LOCK.full()
+                states[provider] = {**state, "busy": busy,
+                                    "reason": "busy" if busy and state["ready"] else state["reason"]}
+    model_routes = {**MODULES, "muse-spark": ("muse", "text"),
+                    "muse-image": ("muse", "image"), "muse-video": ("muse", "video")}
+    for provider in chat_providers.status() if allowed.intersection(("openai", "gemini")) else ():
+        provider_id = provider["id"]
+        if provider_id in allowed:
+            configured = provider["configured"]
+            states[provider_id] = {"configured": configured, "connected": False, "ready": False, "busy": False,
+                                   "reason": "credentials_unverified" if configured else "not_configured"}
+            if configured:
+                model_routes[provider["model_id"]] = (provider_id, "text")
+    models = []
+    for model_id, (provider, kind) in model_routes.items():
+        if provider not in states:
+            continue
+        references = provider == "muse" and kind in ("image", "video")
+        modes = ["text", "singleImage"] if references else ["text"]
+        if references and kind == "image":
+            modes.append("multiReference")
+        models.append({"id": model_id, "provider": provider, "type": kind, **states[provider],
+                       "modes": modes, "maxReferences": (1 if kind == "video" else MAX_REFERENCE_IMAGES) if references else 0,
+                       "allowedMimeTypes": [mime for mime in REFERENCE_MIME_EXT if mime.startswith("image/")] if references else [],
+                       "maxReferenceBytes": MAX_REFERENCE_IMAGE_BYTES if references else 0})
+    return JSONResponse({
+        "contractVersion": 1,
+        "serverVersion": _read_local_version()["version"],
+        "providers": [{"id": provider, **state} for provider, state in states.items()],
+        "models": models,
+        "limits": {"perClientPending": CLIENT_PENDING_MEDIA_LIMIT, "perKindPending": KIND_PENDING_MEDIA_LIMIT},
+        "features": {"idempotency": True, "lookupByRequestKey": True, "cancel": True},
+    }, headers=NO_STORE)
+
+
 # ------------------------- 生图 -------------------------
 def _image_response(req: ImageRequest, res: dict, *, admin: bool = False) -> dict:
     item = {"revised_prompt": req.prompt, "url": media_url(res["filename"], admin=admin),
@@ -1748,25 +1914,33 @@ def _prepare_reference_images(images: list[str], *, public_only: bool = False) -
 def _media_submission(req, key):
     if not key:
         return {}
-    if len(key) > 256:
-        raise HTTPException(400, "Idempotency-Key dài quá 256 ký tự.")
+    key_hash = _request_key_hash(key)
     digest = hashlib.sha256()
     encoder = json.JSONEncoder(sort_keys=True, ensure_ascii=False)
     for chunk in encoder.iterencode(req.model_dump(by_alias=True)):
         digest.update(chunk.encode())
-    return {"request_key": hashlib.sha256(key.encode()).hexdigest(), "request_hash": digest.hexdigest()}
+    uuid_key = bool(re.fullmatch(r"[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}", key, re.I))
+    return {"request_key": key_hash, "request_hash": digest.hexdigest(), "request_v1": uuid_key}
+
+
+def _request_key_hash(key):
+    if not key or not key.strip() or len(key) > 256:
+        raise HTTPException(400, "Cần Idempotency-Key hợp lệ, tối đa 256 ký tự.", headers=NO_STORE)
+    return hashlib.sha256(key.encode()).hexdigest()
 
 
 def _replayed_media_task(tasks, kind, provider, owner, submission, *, legacy=None):
     if not submission:
         return None
     for task in tasks:
-        if (task.get("kind") != kind or (task.get("provider") or "muse") != provider
-                or task.get("owner") != owner):
+        if task.get("owner") != owner:
             continue
+        same_route = task.get("kind") == kind and (task.get("provider") or "muse") == provider
+        if not same_route and not submission.get("request_v1"):
+            continue  # Older callers used opaque keys with route-local scope.
         if task.get("request_key") == submission["request_key"]:
-            matches = task.get("request_hash") == submission["request_hash"]
-        elif legacy is not None and task.get("image_request_key") == submission["request_key"]:
+            matches = same_route and task.get("request_hash") == submission["request_hash"]
+        elif same_route and legacy is not None and task.get("image_request_key") == submission["request_key"]:
             req, references = legacy
             payload = {"request": req.model_dump(by_alias=True), "references": references}
             digest = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
@@ -1774,14 +1948,69 @@ def _replayed_media_task(tasks, kind, provider, owner, submission, *, legacy=Non
         else:
             continue
         if not matches:
-            raise HTTPException(409, "Idempotency-Key này đã được dùng với nội dung khác.")
+            raise HTTPException(409, {"code": "IDEMPOTENCY_CONFLICT",
+                                      "message": "Idempotency-Key này đã được dùng với nội dung khác."})
         return task
     return None
 
 
 def _task_receipt(task):
     return {"id": task["id"], "task_id": task["id"], "object": f"{task['kind']}.task",
-            "status": task["status"], "progress": task.get("progress", 0), "created_at": task["created_at"]}
+            "kind": task["kind"], "status": task["status"], "progress": task.get("progress", 0),
+            "created_at": task["created_at"]}
+
+
+@app.get("/muse/v1/tasks/by-request")
+@app.get("/chatgpt/v1/tasks/by-request")
+@app.get("/gemini/v1/tasks/by-request")
+@app.get("/v1/tasks/by-request")
+def lookup_task_by_request(request: Request, idempotency_key: Annotated[str | None, Header()] = None,
+                           client=Depends(contract_auth)):
+    digest = _request_key_hash(idempotency_key)
+    scope = _path_provider(request)
+    matches = []
+    for task in store.tasks.values():
+        provider = task.get("provider") or "muse"
+        if (task.get("owner") == client["id"] and provider in client["providers"]
+                and (not scope or provider == scope)
+                and digest in (task.get("request_key"), task.get("image_request_key"))):
+            matches.append(task)
+    if len(matches) != 1:
+        raise HTTPException(404, "Không tìm thấy biên nhận duy nhất.", headers=NO_STORE)
+    receipt = _task_receipt(matches[0])
+    return JSONResponse({key: receipt[key] for key in ("id", "task_id", "status", "kind", "progress")},
+                        headers=NO_STORE)
+
+
+@app.post("/muse/v1/images/tasks/{task_id}/cancel")
+@app.post("/chatgpt/v1/images/tasks/{task_id}/cancel")
+@app.post("/gemini/v1/images/tasks/{task_id}/cancel")
+@app.post("/v1/images/tasks/{task_id}/cancel")
+@app.post("/muse/v1/videos/{task_id}/cancel")
+@app.post("/v1/videos/{task_id}/cancel")
+def cancel_media_task(task_id: str, request: Request, client=Depends(contract_auth)):
+    scope = _path_provider(request)
+    kind = "image" if "/images/tasks/" in request.url.path else "video"
+    task = store.get_task(task_id)
+    provider = (task or {}).get("provider") or "muse"
+    if (not task or task.get("kind") != kind or task.get("owner") != client["id"]
+            or provider not in client["providers"] or (scope and scope != provider)):
+        raise HTTPException(404, "Không tìm thấy tác vụ.", headers=NO_STORE)
+    try:
+        cancelled = store.transition_task(task_id, "queued", status="cancelled")
+    except OSError as exc:
+        raise HTTPException(507, "Không lưu được trạng thái hủy.", headers=NO_STORE) from exc
+    if cancelled:
+        return JSONResponse({"task_id": task_id, "status": "cancelled", "cancelled": True},
+                            headers=NO_STORE)
+    task = store.get_task(task_id)
+    if not task:
+        raise HTTPException(404, "Không tìm thấy tác vụ.", headers=NO_STORE)
+    processing = task["status"] == "processing"
+    return JSONResponse({"code": "CANNOT_CANCEL_RUNNING" if processing else "ALREADY_TERMINAL",
+                         "status": task["status"],
+                         "message": "Không thể dừng tác vụ đang chạy an toàn." if processing
+                         else "Tác vụ đã kết thúc."}, status_code=409, headers=NO_STORE)
 
 
 def _create_media_task(kind, prompt, **metadata):
@@ -1795,8 +2024,30 @@ def _start_media_worker(task, owner, worker):
     try:
         threading.Thread(target=_generate_owned, args=(owner, worker), daemon=True).start()
     except (OSError, RuntimeError):
-        return store.update_task(task["id"], status="failed", error="Không thể khởi động tác vụ trên máy chủ.")
+        return _fail_media_task(TaskTiming(store, task["id"]), RuntimeError("Không thể khởi động tác vụ trên máy chủ.")) or task
     return task
+
+
+def _redact_task_error(message):
+    return re.sub(r"(?i)\b(?:https?|socks5h?)://[^\s]+|\bm2[ac]_[\w.-]+|\bhatch_\w+=[^\s;]+",
+                  "[đã ẩn]", message)[:600]
+
+
+def _fail_media_task(timing, exc):
+    expected = "processing" if timing.started else "queued"
+    detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+    error = str(detail.get("message") or "") if isinstance(detail, dict) else detail
+    uncertain = isinstance(exc, MusePostSendError) or isinstance(getattr(exc, "__cause__", None), WebPostSendError)
+    changes = {"status": "interrupted" if uncertain else "failed", "needs_reconcile": uncertain,
+               "error": _redact_task_error(error), **timing.finish()}
+    if isinstance(detail, dict) and detail.get("code"):
+        changes["error_code"] = detail["code"]
+    try:
+        store.transition_task(timing.task_id, expected, **changes)
+    except OSError:
+        log.warning("Không lưu được lỗi tác vụ %s.", timing.task_id)
+        store.update_task(timing.task_id, expected_status=expected, **changes)
+    return store.get_task(timing.task_id)
 
 
 def _queue_image(req: ImageRequest, prompt: str, reference_images: list[str], *, owner=None, submission=None):
@@ -1820,9 +2071,11 @@ def _queue_image(req: ImageRequest, prompt: str, reference_images: list[str], *,
             timing.acquired()
             store.update_task(tid, progress=5)
         try:
+            timing.check_queued()
             if web_provider:
                 res = _run_web_image(web_provider, prompt, req.timeout or CFG.image_timeout,
-                                     on_acquired=_on_acquired, on_queue=timing.queued)
+                                     on_acquired=_on_acquired, on_queue=timing.queued,
+                                     queue_guard=timing.check_queued)
                 acc_id = None
             else:
                 res, acc_id = _run_generation(
@@ -1830,16 +2083,16 @@ def _queue_image(req: ImageRequest, prompt: str, reference_images: list[str], *,
                     reference_images=reference_images,
                     on_progress=lambda p: store.update_task(tid, progress=p),
                     on_acquired=_on_acquired, on_account=timing.account,
-                    on_queue=timing.queued, on_error=timing.error)
+                    on_queue=timing.queued, on_error=lambda message: timing.error(_redact_task_error(message)),
+                    queue_guard=timing.check_queued)
             # Store only media metadata, not large base64 payloads or reference credentials.
             store.update_task(tid, status="completed", progress=100, account=acc_id,
                               **timing.finish(),
-                              url=media_url(res["filename"]),
-                              result={**{k: res[k] for k in ("filename", "size", "kind")},
-                                      "url": media_url(res["filename"])})
+                              result={k: res[k] for k in ("filename", "size", "kind")})
+        except TaskNotQueued:
+            return
         except Exception as exc:  # noqa: BLE001
-            store.update_task(tid, status="failed", error=str(exc),
-                              **timing.finish())
+            _fail_media_task(timing, exc)
 
     return JSONResponse(status_code=202, content=_task_receipt(_start_media_worker(task, owner, worker)))
 
@@ -1859,6 +2112,7 @@ def create_image_task(req: ImageRequest,
     existing = _replayed_media_task(store.tasks.values(), "image", provider or "muse", owner, submission)
     if existing:
         return JSONResponse(status_code=202, content=_task_receipt(existing))
+    _check_media_admission(store.tasks.values(), "image", owner)
     options = {"owner": owner, "submission": submission}
     if provider:
         return _queue_image(req, _web_image_prompt(req), [], **options)
@@ -2039,6 +2293,16 @@ async def create_video(req: VideoRequest, _=Depends(api_auth), request: Request 
     existing = _replayed_media_task(store.tasks.values(), "video", "muse", owner, submission)
     if existing:
         return _task_receipt(existing)
+    if owner:
+        ratio = (req.aspect_ratio or "").strip().lower()
+        resolution = (req.resolution or "").strip().lower()
+        if ((req.duration is not None and req.duration <= 0)
+                or (ratio and not re.fullmatch(r"[1-9]\d*[:/][1-9]\d*|portrait|landscape|auto", ratio))
+                or (resolution and not re.fullmatch(
+                    r"[1-9]\d{2,3}p?|[1-9]\d?k|[1-9]\d{2,4}x[1-9]\d{2,4}|auto|default", resolution))):
+            raise HTTPException(400, {"code": "UNSUPPORTED_MEDIA_OPTIONS",
+                                      "message": "Thời lượng, tỷ lệ hoặc độ phân giải video không được hỗ trợ."})
+    _check_media_admission(store.tasks.values(), "video", owner)
     ref_images = await asyncio.to_thread(
         _prepare_reference_images, _video_references(req), **({"public_only": True} if owner else {}))
 
@@ -2059,22 +2323,21 @@ async def create_video(req: VideoRequest, _=Depends(api_auth), request: Request 
             timing.acquired()
             store.update_task(task["id"], progress=15)
         try:
+            timing.check_queued()
             def prog_cb(p):
                 store.update_task(task["id"], progress=p)
             res, acc_id = _run_generation(prompt, "video", timeout, on_progress=prog_cb,
                                           reference_images=ref_images, on_acquired=_on_acquired, on_account=timing.account,
-                on_queue=timing.queued, on_error=timing.error)
-            vurl = media_url(res["filename"])
+                on_queue=timing.queued, on_error=lambda message: timing.error(_redact_task_error(message)),
+                queue_guard=timing.check_queued)
             store.update_task(task["id"], status="completed", progress=100, account=acc_id,
                               **timing.finish(),
-                              url=vurl,
-                              video={"url": vurl},
-                              result={"url": vurl,
-                                      "filename": res["filename"],
+                              result={"filename": res["filename"],
                                       "bytes": res["size"], "kind": res["kind"]})
+        except TaskNotQueued:
+            return
         except Exception as exc:  # noqa: BLE001
-            store.update_task(task["id"], status="failed",
-                              **timing.finish(), error=str(exc))
+            _fail_media_task(timing, exc)
 
     return _task_receipt(_start_media_worker(task, owner, worker))
 
@@ -2464,7 +2727,13 @@ def get_media(name: str, access: str = "", authorization: str | None = Header(de
     p = os.path.join(CFG.media_dir, name)
     if os.path.islink(p) or not os.path.isfile(p):
         raise HTTPException(404, "文件不存在")
-    return FileResponse(p, headers={"Cache-Control": "private, no-store"} if private else None)
+    headers = {"X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer"}
+    if private:
+        headers["Cache-Control"] = "private, no-store"
+    mime = mimetypes.guess_type(name)[0] or ""
+    if mime.startswith(("image/", "video/", "audio/")) and mime != "image/svg+xml":
+        return FileResponse(p, media_type=mime, headers=headers)
+    return FileResponse(p, media_type="application/octet-stream", filename=name, headers=headers)
 
 
 @app.get("/admin/muse-prompt")
@@ -2929,10 +3198,9 @@ def rotate_apikey(_=Depends(auth)):
     """生成新的 API Key，写入 .env 并立即生效（不用重启）。"""
     import secrets
     new_key = "m2a_" + secrets.token_hex(24)
-    old = CFG.api_key
-    CFG.api_key = new_key
     _persist_env("MUSE2API_KEY", new_key)
-    return {"ok": True, "api_key": new_key, "previous": old,
+    CFG.api_key = new_key
+    return {"ok": True, "api_key": new_key,
             "message": "已生成新 Key 并立即生效；旧 Key 已失效，请更新下游项目"}
 
 
@@ -3328,6 +3596,7 @@ TRACKED_REPO_PATHS = [
     "app.py", "engine.py", "store.py", "cdp.py", "config.py", "proxy.py",
     "generation_timing.py", "thumbnails.py", "media_storage.py", "chat_providers.py", "web_providers.py", "GENERATION_QUEUE.md", "VERSION_REPORTING.md",
     "admin.html", "start-mac2api.command", "README.md", "AGENTS.md", "CHANGELOG.md", "version.json", "requirements.txt",
+    "MAC2API_API_CONTRACT_TESTS.md",
     "Dockerfile", "docker-compose.yml", ".env.example", ".gitignore",
     "LICENSE", "extension", "deploy", "tools", "adapters",
 ]
@@ -3623,18 +3892,14 @@ async def _chromium_idle_loop():
 async def _startup():
     for task in list(store.tasks.values()):
         if task.get("kind") in ("image", "video") and task.get("status") in ("queued", "processing"):
-            store.update_task(task["id"], status="failed",
-                              error="Dịch vụ khởi động lại trong khi tác vụ đang chờ hoặc đang chạy. Hãy kiểm tra kết quả trước khi gửi yêu cầu mới.")
+            store.transition_task(task["id"], task["status"], status="interrupted", needs_reconcile=True,
+                                  error="Dịch vụ đã khởi động lại. Hãy đối chiếu kết quả trước khi gửi yêu cầu mới.")
     if not CFG.api_key:
         import secrets
         new_key = "m2a_" + secrets.token_hex(24)
-        CFG.api_key = new_key
         _persist_env("MUSE2API_KEY", new_key)
-        log.info("🔑 未检测到 MUSE2API_KEY，已自动生成初始密钥: %s", new_key)
-    try:
-        await asyncio.to_thread(prune_media, CFG.media_dir)
-    except OSError:
-        log.exception("Could not prune the media library during startup")
+        CFG.api_key = new_key
+        log.info("Đã tạo khóa quản trị trong tệp .env của dịch vụ.")
     app.state.keepalive_task = asyncio.create_task(_keepalive_loop())
     if CFG.chromium_idle_seconds:
         app.state.chromium_idle_task = asyncio.create_task(_chromium_idle_loop())

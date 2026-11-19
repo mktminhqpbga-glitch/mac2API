@@ -91,6 +91,8 @@ BASE_URL=http://127.0.0.1:18610
 | Video bất đồng bộ | `POST /v1/videos`, `GET /v1/videos/{task_id}` |
 | Tải tệp kết quả | `GET /v1/media/{name}` |
 
+MacFlow dùng khóa `m2c_…` để đọc `GET /v1/capabilities`, tra cứu `GET /v1/tasks/by-request` bằng UUID đã lưu và hủy tác vụ chờ qua các tuyến `/cancel`. Xem [hợp đồng API và mẫu HTTP đã kiểm thử](MAC2API_API_CONTRACT_TESTS.md).
+
 Model chính gồm `muse-spark`, `muse-image` và `muse-video`. Bí danh như `gpt-4o`, `claude-sonnet-4` và `gemini-2.5-pro` được ánh xạ sang Muse. Với chat, thêm `"stream":true` để nhận SSE. Khả năng gọi công cụ phụ thuộc vào phản hồi Muse.
 
 ### Chat
@@ -155,7 +157,9 @@ Mỗi địa chỉ riêng có `GET /models` và chỉ chấp nhận mô-đun ph�
 
 Trong bảng quản trị, mở **Khóa người dùng**, nhập nhãn rồi chọn các nhà cung cấp được phép. Sao chép khóa `m2c_…` ngay sau khi tạo và điền vào trường **API Key** trong MacFlow hoặc ứng dụng gọi API. Mỗi người hoặc ứng dụng có thể dùng khóa riêng. Khóa quản trị `m2a_…` vẫn dùng được để vận hành dịch vụ và quản lý toàn bộ tác vụ.
 
-Khóa người dùng chỉ xem được tác vụ của chính khóa đó. Tệp do khóa này tạo cần khóa của chủ tác vụ hoặc liên kết kết quả có chữ ký. Liên kết tải có hiệu lực tối đa 7 ngày. Gọi lại API tác vụ để lấy liên kết mới. Khi thu hồi khóa, các liên kết do khóa đó nhận cũng hết hiệu lực. Các tệp được tạo bằng khóa quản trị tiếp tục tải theo cơ chế cũ.
+Khóa người dùng chỉ xem được tác vụ của chính khóa đó. Tải tệp bằng URL đã ký hoặc Bearer của chủ tệp hay quản trị viên. Chữ ký có hiệu lực tối đa 7 ngày. Gọi lại API tác vụ để lấy URL mới nếu tệp vẫn còn. Khi thu hồi khóa người dùng, các URL ký cho khóa đó hết hiệu lực. URL quản trị chưa ký từ bản cũ có thể tải với Bearer quản trị hoặc lấy lại từ bảng điều khiển. Khi cần thời gian chuyển đổi, đặt `MUSE2API_ALLOW_LEGACY_PUBLIC_MEDIA=1` cho các URL quản trị cũ.
+
+Dùng HTTPS khi gửi Bearer từ xa. Với proxy ngược, chuyển scheme qua proxy tin cậy để ứng dụng nhận biết HTTPS. Thêm từng origin được phép vào `MUSE2API_CORS_ORIGINS`, cách nhau bằng dấu phẩy. Bảng quản trị giữ khóa trong phiên của tab hiện tại.
 
 Mỗi khóa có tối đa 20 yêu cầu `POST` mỗi phút, 2 yêu cầu `POST` đồng thời và 2 tác vụ media đang chờ hoặc đang chạy. Việc đọc trạng thái tác vụ dùng `GET`. Các khóa cùng chia sẻ tài khoản nhà cung cấp, hạn mức upstream, kho media và khe Chromium của tiến trình. Cấu hình này hỗ trợ nhiều người dùng trên một tiến trình mac2API với thư mục `data/` bền vững.
 
@@ -173,7 +177,7 @@ Giữ Chrome mở trong khi chạy tác vụ. Nếu Chrome hoặc mac2API khởi
 
 Các mô-đun web tạo một ảnh từ mô tả, tùy quyền của tài khoản. Chat web lấy câu trả lời hoàn chỉnh rồi mới trả về, kể cả khi client yêu cầu SSE. Mỗi yêu cầu mở và đóng tab riêng. mac2API xóa bản nháp và kiểm tra ô nhập trước khi gửi. Muse thử mở một phiên riêng mới nếu vẫn còn tệp hoặc nội dung cũ. Nếu còn bị kẹt, tác vụ dừng và giải thích trong phần **Chi tiết lỗi**. Chỉ các tệp trong ô nhập của tác vụ mới được dọn.
 
-Để thêm nhà cung cấp media trong MacFlow/Toonflow, nhập [mac2Api.ts](adapters/mac2Api.ts). Tệp này khai báo mô-đun ảnh và video. Các mô-đun chat dùng cấu hình nhà cung cấp văn bản với giao thức OpenAI Chat Completions.
+Để thêm media trong MacFlow/Toonflow, nhập từng tệp trong [bộ adapter theo hợp đồng v1](adapters/2.0.7/). Tệp [mac2Api.ts](adapters/mac2Api.ts) dùng cho cấu hình tổng hợp cũ. Các mô-đun chat dùng cấu hình nhà cung cấp văn bản với giao thức OpenAI Chat Completions.
 
 ## Tương thích với kết nối API chính thức đã có
 
