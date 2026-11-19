@@ -166,7 +166,7 @@ function imageInput(input: MediaInput) {
 export default {
   id: "mac2ApiMuse",
   label: "mac2API · Muse",
-  version: "2.0.1",
+  version: "2.0.2",
   readme: "Tạo ảnh và video qua tài khoản Muse đã cấu hình trong mac2API. Dùng Base URL và khóa m2a_ của mac2API.",
   rules: [
     { type: "input", field: "baseUrl", title: "Base URL mac2API", value: "https://mac2api.onrender.com/v1",
@@ -197,10 +197,12 @@ export default {
     if (input.model !== "muse/video" || (input.mode && !["text", "singleImage"].includes(String(input.mode)))) {
       throw new Error("Chỉ hỗ trợ Muse Video từ văn bản hoặc một ảnh mở đầu.");
     }
-    if (input.lastFrame || input.videos?.length || input.audios?.length ||
-        input.generateAudio !== undefined || input.watermark !== undefined) {
-      throw new Error("Chưa hỗ trợ khung cuối, audio/video tham chiếu hay tùy chọn âm thanh hoặc hình mờ.");
+    if (input.lastFrame) throw new Error("Muse Video chưa hỗ trợ ảnh khung cuối.");
+    if (input.videos?.length || input.audios?.length) {
+      throw new Error("Muse Video chưa hỗ trợ âm thanh hoặc video làm tệp tham chiếu.");
     }
+    if (input.generateAudio === true) throw new Error("Muse Video chưa hỗ trợ bật tùy chọn Tạo âm thanh.");
+    if (input.watermark === true) throw new Error("Muse Video chưa hỗ trợ bật tùy chọn Hình mờ.");
     const images = input.images ?? [];
     if (images.length > 1 || (input.firstFrame && images.length)) {
       throw new Error("Chỉ gửi một ảnh mở đầu.");

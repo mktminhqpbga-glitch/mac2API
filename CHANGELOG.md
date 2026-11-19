@@ -1,5 +1,9 @@
 # Nhật ký và bàn giao mac2API
 
+## Adapter Muse Video 2.0.2
+
+- Giá trị tắt mặc định của tùy chọn âm thanh và hình mờ được chấp nhận khi tạo video. Các tùy chọn bật hoặc tệp tham chiếu chưa được adapter hỗ trợ có thông báo riêng bằng tiếng Việt. Bản sửa có trong `mac2ApiMuse.ts` và `mac2Api.ts`.
+
 ## mac2API 1.6.12 · 19/11/2026
 
 Bản tổng hợp gồm máy chủ, bảng quản trị, tiện ích 1.0.5 và bộ chuyển đổi MacFlow/Toonflow 2.0.1. Tài liệu kết nối Chrome hiện tại nằm trong README.
