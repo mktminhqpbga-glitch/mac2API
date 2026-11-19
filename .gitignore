@@ -74,3 +74,6 @@ data/muse-prompt.json
 
 # Local Chrome Web enablement
 data/web-chrome.json
+
+# Per-user API key digests and permissions
+data/api-clients.json

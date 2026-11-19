@@ -1,7 +1,11 @@
 """账号池与任务存储（JSON 落盘，原子写）。"""
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
+import re
+import secrets
 import os
 import tempfile
 import threading
@@ -105,6 +109,71 @@ class Store:
             if _is_pos(ce.get("hatch_vml")):
                 a["expires_at"] = int(ce["hatch_vml"])
         self.tasks: dict[str, dict] = _read(cfg.tasks_file, {})
+        self.clients_file = os.path.join(cfg.data_dir, "api-clients.json")
+        self.clients = _read(self.clients_file, {})
+        self._client_requests: dict[str, list[float]] = {}
+        self._client_active: dict[str, int] = {}
+
+    @staticmethod
+    def _public_client(client: dict) -> dict:
+        return {key: value for key, value in client.items() if key != "digest"}
+
+    def list_clients(self):
+        with _LOCK:
+            return [self._public_client(client) for client in self.clients.values()]
+
+    def create_client(self, label: str, providers: list[str]):
+        client_id = uuid.uuid4().hex[:16]
+        token = f"m2c_{client_id}.{secrets.token_urlsafe(32)}"
+        client = {"id": client_id, "label": label, "providers": providers,
+                  "digest": hashlib.sha256(token.encode()).hexdigest(), "created_at": int(time.time())}
+        with _LOCK:
+            clients = {**self.clients, client_id: client}
+            _write(self.clients_file, clients)
+            self.clients = clients
+        return {**self._public_client(client), "api_key": token}
+
+    def revoke_client(self, client_id: str) -> bool:
+        with _LOCK:
+            if client_id not in self.clients:
+                return False
+            clients = dict(self.clients)
+            del clients[client_id]
+            _write(self.clients_file, clients)
+            self.clients = clients
+            self._client_requests.pop(client_id, None)
+            return True
+
+    def find_client(self, token: str) -> dict | None:
+        match = re.fullmatch(r"m2c_([0-9a-f]{16})\.[A-Za-z0-9_-]{43}", token)
+        if not match:
+            return None
+        client = self.clients.get(match[1])
+        if client and hmac.compare_digest(client["digest"], hashlib.sha256(token.encode()).hexdigest()):
+            return self._public_client(client)
+        return None
+
+    def acquire_client_request(self, client_id: str, rate_limit: int, active_limit: int) -> bool:
+        now = time.monotonic()
+        with _LOCK:
+            if client_id not in self.clients:
+                return False
+            recent = [seen for seen in self._client_requests.get(client_id, []) if seen > now - 60]
+            active = self._client_active.get(client_id, 0)
+            if len(recent) >= rate_limit or active >= active_limit:
+                return False
+            recent.append(now)
+            self._client_requests[client_id] = recent
+            self._client_active[client_id] = active + 1
+            return True
+
+    def release_client_request(self, client_id: str):
+        with _LOCK:
+            active = self._client_active.get(client_id, 0)
+            if active > 1:
+                self._client_active[client_id] = active - 1
+            else:
+                self._client_active.pop(client_id, None)
 
     def web_chrome_enabled(self):
         return _read(os.path.join(self.cfg.data_dir, "web-chrome.json"), False) is True
@@ -293,12 +362,12 @@ class Store:
                 "expiring": expiring, "expired": expired}
 
     # ---------- 任务 ----------
-    def create_task(self, kind: str, prompt: str) -> dict:
+    def create_task(self, kind: str, prompt: str, **metadata) -> dict:
         with _LOCK:
             tid = "task_" + uuid.uuid4().hex[:20]
             t = {"id": tid, "object": "task", "kind": kind, "prompt": prompt,
                  "status": "queued", "created_at": int(time.time()),
-                 "updated_at": int(time.time()), "result": None, "error": None}
+                 "updated_at": int(time.time()), "result": None, "error": None, **metadata}
             self.tasks[tid] = t
             _write(self.cfg.tasks_file, self.tasks)
             return t
@@ -323,7 +392,10 @@ class Store:
 
     def delete_task(self, tid: str) -> bool:
         with _LOCK:
-            if tid in self.tasks:
+            task = self.tasks.get(tid)
+            if task and task.get("status") in ("queued", "processing"):
+                raise ValueError("Không thể xóa tác vụ đang chờ hoặc đang chạy.")
+            if task:
                 del self.tasks[tid]
                 _write(self.cfg.tasks_file, self.tasks)
                 return True
@@ -334,6 +406,7 @@ class Store:
             items = sorted(self.tasks.values(),
                            key=lambda t: t.get("created_at") or 0, reverse=True)
             keep_ids = {t["id"] for t in items[:keep]}
+            keep_ids.update(t["id"] for t in items if t.get("status") in ("queued", "processing"))
             removed = len(self.tasks) - len(keep_ids)
             self.tasks = {k: v for k, v in self.tasks.items() if k in keep_ids}
             _write(self.cfg.tasks_file, self.tasks)

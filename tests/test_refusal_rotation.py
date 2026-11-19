@@ -1,4 +1,4 @@
-"""A model refusal is terminal and must not consume a second account."""
+"""A refusal or an uncertain delivery must not send on a second account."""
 import importlib.util
 import os
 from pathlib import Path
@@ -20,19 +20,18 @@ with tempfile.TemporaryDirectory() as home:
                                    "hatch_native_auth_device": "one"}, "one")
     app.store.add_account({"hatch_sess": "two", "hatch_vml": "two",
                            "hatch_native_auth_device": "two"}, "two")
-    calls = []
-    def refuse(cookies, prompt, **kwargs):
-        calls.append(cookies["hatch_sess"])
-        raise app.MuseModelRefusalError("模型未生成媒体，仅返回文本: 地区不可用")
-    with patch.object(app, "_renew_and_persist", side_effect=lambda ident, **_: app.store.get_account(ident)), \
-         patch.object(app.engine, "start"), patch.object(app.engine, "generate", side_effect=refuse), \
-         patch.object(app.engine, "reset_thread"), patch.object(app.engine, "close_current_page"):
-        try:
-            app._run_generation_locked("video", "video", 30, account_id=first["id"],
-                                       deadline=app.time.monotonic() + 30)
-        except app.MuseModelRefusalError:
-            pass
-        else:
-            raise AssertionError("refusal was not propagated")
-    assert calls == ["one"], calls
-print("PASS: model refusal is propagated without rotating to another account")
+    for error in (app.MuseModelRefusalError("模型未生成媒体，仅返回文本: 地区不可用"),
+                  app.MusePostSendError("Không xác minh được Muse đã gửi yêu cầu.")):
+        with patch.object(app, "_renew_and_persist", side_effect=lambda ident, **_: app.store.get_account(ident)), \
+             patch.object(app.engine, "start"), patch.object(app.engine, "generate", side_effect=error) as generate, \
+             patch.object(app.engine, "reset_thread"), patch.object(app.engine, "close_current_page"):
+            try:
+                app._run_generation_locked("video", "video", 30, account_id=first["id"],
+                                           deadline=app.time.monotonic() + 30)
+            except type(error) as actual:
+                assert actual is error
+            else:
+                raise AssertionError("terminal error was not propagated")
+        generate.assert_called_once()
+        assert generate.call_args.args[0]["hatch_sess"] == "one"
+print("PASS: model refusal and uncertain delivery do not automatically resubmit")

@@ -186,20 +186,62 @@ class WebProviders:
         deadline = time.monotonic() + timeout
         with self._page(provider) as page:
             self._wait_composer(page, provider, min(deadline, time.monotonic() + 25))
-            focused = page.js(f"""(() => {{
-                if (location.origin !== {json.dumps(_origin(provider.url))}) return false;
-                const editor = document.querySelector({json.dumps(provider.composer)});
-                if (!editor) return false;
-                editor.focus();
-                return document.activeElement === editor || editor.contains(document.activeElement);
-            }})()""")
-            if focused is not True:
-                raise WebProviderError("Không thể nhập nội dung vào ô chat.")
+            self._clean_composer(page, provider, min(deadline, time.monotonic() + 3))
             if image:
                 prompt = "Hãy tạo một ảnh mới dựa trên yêu cầu sau và trả ảnh trong câu trả lời.\n" + prompt
             page.send("Input.insertText", {"text": prompt})
             self._send(page, provider, min(deadline, time.monotonic() + 10))
             return self._wait_result(page, provider, deadline, image)
+
+    @staticmethod
+    def _clean_composer(page, provider, deadline):
+        payload = json.dumps(provider.composer)
+        origin = json.dumps(_origin(provider.url))
+        composer = rf"""
+            const root = editor.closest('form,#composer-background,input-container') || editor.parentElement;
+            const remove = 'button[data-testid*="remove-attachment"],button[data-test-id*="remove-attachment"]';
+            const removeButtons = [...root.querySelectorAll('button[aria-label],button[title],' + remove)]
+                .filter(button => button.matches(remove) || [button.getAttribute('aria-label'), button.title]
+                    .some(label => /(?:remove|delete|gỡ|xóa|xoá)\s+(?:(?:an?|the)\s+)?(?:attachment|file|image|video|audio|tệp|ảnh)/iu.test(label || '')));
+            const inputs = [...root.querySelectorAll('input[type=file]')];"""
+        reset = f"""(() => {{
+            if (location.origin !== {origin}) return false;
+            const editor = document.querySelector({payload});
+            if (!editor) return false;
+            {composer}
+            removeButtons.forEach(button => button.click());
+            for (const input of inputs) if (input.files?.length) input.value = '';
+            if (editor instanceof HTMLTextAreaElement) {{
+                Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(editor, '');
+            }} else if (editor.isContentEditable && editor.innerText.trim()) {{
+                editor.replaceChildren();
+            }}
+            editor.dispatchEvent(new Event('input', {{bubbles: true}}));
+            return true;
+        }})()"""
+        if page.js(reset) is not True:
+            raise WebProviderError("Không thể dọn ô nhập của phiên web.")
+        verify = f"""(() => {{
+            if (location.origin !== {origin}) return false;
+            const editor = document.querySelector({payload});
+            if (!editor) return false;
+            {composer}
+            const cards = root.querySelectorAll('[data-testid*="attachment-preview"],[data-test-id*="attachment-preview"],'
+                + '[data-testid*="attachment-card"],[data-test-id*="attachment-card"],[data-uploading="true"],'
+                + 'img[src^="blob:"],video[src^="blob:"]');
+            if ((editor.value ?? editor.innerText ?? '').trim() || inputs.some(input => input.files?.length)
+                || [...removeButtons, ...cards].some(node => node.getClientRects().length)) return false;
+            editor.focus();
+            return document.activeElement === editor || editor.contains(document.activeElement);
+        }})()"""
+        empty_before = False
+        while time.monotonic() < deadline:
+            empty = page.js(verify) is True
+            if empty and empty_before:
+                return
+            empty_before = empty
+            time.sleep(0.15)
+        raise WebProviderError("Ô nhập phiên web còn nội dung cũ. Đã dừng trước khi gửi yêu cầu.")
 
     @staticmethod
     def _send(page, provider, deadline):

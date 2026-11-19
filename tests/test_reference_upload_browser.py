@@ -13,6 +13,7 @@ import sys
 import tempfile
 import time
 from types import SimpleNamespace
+from unittest.mock import patch
 import requests
 
 parser = argparse.ArgumentParser()
@@ -101,6 +102,20 @@ with tempfile.TemporaryDirectory(prefix="muse-upload-check-", dir=Path.home()) a
                 "awaitPromise": True, "returnByValue": True})
             assert response["result"]["result"]["value"] == upload.read_text(), response
             assert page.js("document.querySelector('.chat-user-bubble input').files.length") == 0
+            fixture(history_only=True)
+            engine._set_input_files([str(upload)])
+            page.js("document.querySelector('#uploader').hidden = true")
+            assert page.js(engine._COMPOSER_EMPTY_JS) is False
+            engine._clear_attachments()
+            assert page.js("document.querySelector('#uploader').files.length") == 0
+            page.js("""document.querySelector('section').insertAdjacentHTML('afterbegin',
+                '<div data-testid="hatch-composer-attachment-audio">old-audio.mp3</div>');""")
+            with patch.object(engine, '_close_page') as close, \
+                 patch.object(engine, 'ensure_page', side_effect=lambda *_args, **_kwargs: fixture(history_only=True)) as reopen:
+                engine._ensure_clean_composer({}, None, 'fixture')
+            close.assert_called_once()
+            reopen.assert_called_once_with({}, None, account_id='fixture')
+            assert page.js(engine._COMPOSER_EMPTY_JS) is True
             # Muse may render a preview without a localized remove button.
             fixture(history_only=True)
             page.js("""document.querySelector('#uploader').addEventListener('change', function() {
@@ -128,7 +143,7 @@ with tempfile.TemporaryDirectory(prefix="muse-upload-check-", dir=Path.home()) a
             finally:
                 module.REFERENCE_MIME_EXT.clear()
                 module.REFERENCE_MIME_EXT.update(original_extensions)
-            print("PASS: old/new layouts, history exclusion, correct input and actual file bytes", flush=True)
+            print("PASS: old/new layouts, history exclusion, hidden input cleanup, stuck audio card fallback and actual file bytes", flush=True)
     finally:
         if page:
             try:

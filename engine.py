@@ -34,7 +34,7 @@ import uuid
 import unicodedata
 
 from cdp import CDP, http_json
-from media_storage import save_media
+from media_storage import new_media_name, save_media
 from proxy import HTTPProxyRelay, request_proxy_context
 
 log = logging.getLogger("muse2api")
@@ -217,6 +217,10 @@ class MuseAuthError(RuntimeError):
 
 class MuseGenerationError(RuntimeError):
     pass
+
+
+class MusePostSendError(MuseGenerationError):
+    """The site may already be acting on this request, so do not submit it again."""
 
 
 class MuseProxyError(MuseGenerationError):
@@ -1597,8 +1601,14 @@ class MuseEngine:
         timeout = int(timeout or getattr(self.cfg, "chat_timeout", 300))
         self.ensure_page(cookies, expires, account_id=account_id)
         self.reset_thread(for_chat=True)
+        self._ensure_clean_composer(cookies, expires, account_id)
         base_agent, base_text, _ = self._poll_chat()
-        self._send(prompt)
+        try:
+            delivery = self._send(prompt)
+        except Exception as exc:
+            raise MusePostSendError("Mất kết nối khi gửi tin nhắn Muse. Yêu cầu không được gửi lại tự động.") from exc
+        if delivery not in ("clicked", "enter-sent"):
+            raise MusePostSendError("Không xác minh được Muse đã gửi tin nhắn. Yêu cầu không được gửi lại tự động.")
 
         t_sent = time.time()
         deadline = t_sent + timeout
@@ -1619,7 +1629,7 @@ class MuseEngine:
                     except Exception:
                         tail = ""
                     if "Still sending" in tail or "Connecting..." in tail:
-                        raise MuseGenerationError("云端 VM 连接超时 (Still sending)")
+                        raise MusePostSendError("云端 VM 连接超时 (Still sending)")
                 continue
 
             delta = cur[len(sent):] if cur.startswith(sent) else cur
@@ -1631,7 +1641,7 @@ class MuseEngine:
                 break
 
         if not got_first:
-            raise MuseGenerationError("等待助手首字响应超时")
+            raise MusePostSendError("等待助手首字响应超时")
 
         # 2. 持续捕获增量文本
         while time.time() < deadline:
@@ -1653,11 +1663,8 @@ class MuseEngine:
                 # Stop 按钮消失说明前端生成彻底结束，连续 3 次（约 0.18s）无新文本即正常退出
                 if not has_stop and stable >= 3:
                     return
-                # Stop 按钮仍在时绝不过早截断（模型思考、代码块或网络抖动），允许等待至 stable >= 80（约 5s）防卡死
-                if has_stop and stable >= 80:
-                    return
 
-        raise MuseGenerationError("等待助手回复超时")
+        raise MusePostSendError("等待助手回复超时")
 
     def chat(self, cookies: dict, prompt: str, expires: dict | None = None,
              timeout: int | None = None, account_id: str | None = None) -> str:
@@ -1713,7 +1720,7 @@ class MuseEngine:
                     return p
         return None
 
-    def _normalize_image(self, img: str) -> tuple[str, str]:
+    def _normalize_image(self, img: str, *, public_only: bool = False) -> tuple[str, str]:
         """Normalize one reference file (image/video/audio/document) and enforce
         source, MIME, size and video-duration policy."""
         if not img:
@@ -1762,7 +1769,7 @@ class MuseEngine:
             try:
                 req = urllib.request.Request(img, headers={"User-Agent": "Mozilla/5.0"})
                 response = (urllib.request.urlopen(req, timeout=20)
-                            if self.cfg.ref_image_private_fetch
+                            if not public_only and self.cfg.ref_image_private_fetch
                             else _open_public_ref_image(img))
                 with response as resp:
                     declared = resp.headers.get("Content-Type")
@@ -1781,7 +1788,7 @@ class MuseEngine:
         except (binascii.Error, ValueError):
             pass
 
-        if not self.cfg.ref_image_local_files:
+        if public_only or not self.cfg.ref_image_local_files:
             raise RefImageSafetyError(
                 "参考图本地路径被拒绝；如确需读取服务器文件，请显式设置 "
                 "MUSE2API_REF_IMAGE_LOCAL_FILES=1")
@@ -1800,16 +1807,31 @@ class MuseEngine:
                     f"读取本地参考图失败: {type(exc).__name__}") from exc
         raise MuseGenerationError("参考图必须是 URL、Data URL、本地图片或有效 Base64")
 
-    _REMOVE_ATTACHMENT_LABEL = r"remove\s*attachment|移除附件|删除附件|(?:xóa|gỡ|bỏ|loại bỏ)\s+(?:(?:tệp|tập tin|ảnh|nội dung)\s+)?đính kèm"
+    _REMOVE_ATTACHMENT_LABEL = (
+        r"remove\s+(?:(?:an?|the)\s+)?(?:attachment|file|image|video|audio)|移除附件|删除附件|"
+        r"(?:xóa|xoá|gỡ|bỏ|loại bỏ)\s+(?:tệp(?:\s+đính kèm)?|tập tin|ảnh|video|âm thanh|đính kèm)"
+    )
+
+    def _ensure_clean_composer(self, cookies, expires, account_id):
+        try:
+            self._clear_attachments()
+        except MuseGenerationError:
+            log.info("Ô nhập Muse chưa sạch. Đang mở phiên trình duyệt mới trước khi gửi.")
+            self._close_page()
+            self.ensure_page(cookies, expires, account_id=account_id)
+            self._clear_attachments()
 
     def _clear_attachments(self):
         """Clear and verify the current composer before preparing new media."""
         try:
             self.page.js(self._CLEAR_COMPOSER_JS)
             deadline = time.monotonic() + 3
+            empty_before = False
             while time.monotonic() < deadline:
-                if self.page.js(self._COMPOSER_EMPTY_JS) is True:
+                empty = self.page.js(self._COMPOSER_EMPTY_JS) is True
+                if empty and empty_before:
                     return
+                empty_before = empty
                 time.sleep(0.15)
         except Exception as exc:
             raise MuseGenerationError(
@@ -1849,10 +1871,13 @@ class MuseEngine:
 
     _COMPOSER_ATTACHMENTS_JS = _COMPOSER_ROOTS_JS + rf"""
         const removeLabel = /{_REMOVE_ATTACHMENT_LABEL}/iu;
+        const attachmentCard = '[data-testid="hatch-composer-attachment"],'
+            + '[data-testid^="hatch-composer-attachment-"],[data-testid*="attachment-preview"]';
         function currentAttachments() {{
             for (const root of __composerRoots()) {{
-                const buttons = [...root.querySelectorAll('button[aria-label]')].filter(button =>
-                    removeLabel.test(button.getAttribute('aria-label') || '') && !button.closest(bubble));
+                const buttons = [...root.querySelectorAll('button[aria-label],button[title]')].filter(button =>
+                    !button.closest(bubble) && [button.getAttribute('aria-label'), button.title]
+                        .some(label => removeLabel.test(label || '')));
                 if (buttons.length) return buttons;
             }}
             return [];
@@ -1864,14 +1889,12 @@ class MuseEngine:
                     if (node.closest(bubble) || !node.getClientRects().length) return false;
                     if (requireReady && node.closest('[aria-busy="true"],[data-uploading="true"]')) return false;
                     const src = node.currentSrc || node.getAttribute('src') || '';
-                    const inAttachment = node.closest(
-                        '[data-testid^="hatch-composer-attachment"],[data-testid*="attachment-preview"]'
-                    );
+                    const inAttachment = node.closest(attachmentCard);
                     if (!inAttachment && !/^(blob:|data:image\/)/i.test(src)) return false;
                     return !requireReady || (node.tagName === 'IMG' ? node.complete && node.naturalWidth > 0 : node.readyState >= 1);
                 }});
                 if (previews.length) return new Set(previews.map(node =>
-                    node.closest('[data-testid^="hatch-composer-attachment"],[data-testid*="attachment-preview"]') || node
+                    node.closest(attachmentCard) || node
                 )).size;
             }}
             return 0;
@@ -1902,8 +1925,10 @@ class MuseEngine:
         const textarea = document.querySelector('textarea');
         const roots = __composerRoots();
         return Boolean(textarea && !textarea.value && !currentAttachments().length && !attachmentPreviews(false)
-            && !roots.some(root => [...root.querySelectorAll('input[type=file]')]
-                .some(input => !input.closest(bubble) && input.files?.length)));
+            && !roots.some(root => [...root.querySelectorAll(
+                'input[type=file], ' + attachmentCard
+            )].some(node => !node.closest(bubble) && (node.matches('input') ? node.files?.length
+                : node.getClientRects().length))));
     })()"""
 
     def _set_input_files(self, paths: list[str]):
@@ -2000,11 +2025,10 @@ class MuseEngine:
         deadline = time.monotonic() + timeout
         self.ensure_page(cookies, expires, account_id=account_id)
         self.reset_thread(for_chat=False)
+        self._ensure_clean_composer(cookies, expires, account_id)
         self._scroll_bottom()
         refs = list(reference_images or ([] if not reference_image else [reference_image]))
         upload = self._attach_images(refs) if refs else None
-        if not refs:
-            self._clear_attachments()
         try:
             return self._generate_attached(prompt, expect, deadline, on_progress,
                                            stop_event, (upload or {}).get("hashes") or set())
@@ -2021,8 +2045,19 @@ class MuseEngine:
         base_agent_cnt = self._agent_count()
         if time.monotonic() >= deadline:
             raise MuseGenerationError("任务准备超时，已停止发送")
-        if self._send(prompt) not in ("clicked", "enter-sent"):
-            raise MuseGenerationError("提示词发送未确认，已停止生成")
+        try:
+            if self._send(prompt) not in ("clicked", "enter-sent"):
+                raise MusePostSendError("Chưa xác nhận gửi prompt. Yêu cầu không được gửi lại tự động.")
+            return self._collect_generated_media(expect, deadline, on_progress, stop_event,
+                                                 upload_hashes, baseline_sources, baseline_src,
+                                                 base_agent_cnt, len(atts_before))
+        except (MuseModelRefusalError, MusePostSendError):
+            raise
+        except Exception as exc:
+            raise MusePostSendError(str(exc)) from exc
+
+    def _collect_generated_media(self, expect, deadline, on_progress, stop_event, upload_hashes,
+                                 baseline_sources, baseline_src, base_agent_cnt, baseline_count):
         os.makedirs(self.cfg.media_dir, exist_ok=True)
         # 页面若把刚上传的素材渲染成"结果"，按哈希识别出来并继续等待真正的成品
         while time.monotonic() < deadline:
@@ -2030,7 +2065,7 @@ class MuseEngine:
                 raise MuseGenerationError("任务已取消")
             att = self._wait_attachment(
                 baseline_src, max(0, deadline - time.monotonic()), expect, on_progress=on_progress,
-                base_agent_cnt=base_agent_cnt, base_att_cnt=len(atts_before),
+                base_agent_cnt=base_agent_cnt, base_att_cnt=baseline_count,
                 stop_event=stop_event, baseline_sources=baseline_sources
             )
             if not att:
@@ -2052,7 +2087,7 @@ class MuseEngine:
 
             if data:
                 ext = self._pick_ext(mime, url, expect)
-                name = f"{uuid.uuid4().hex}{ext}"
+                name = new_media_name(ext)
                 kind = "video" if ext in (".mp4", ".webm", ".mov") else "image"
                 if expect == "video" and kind != "video":
                     raise MuseGenerationError(f"期望生成视频，但提取成品类型为图片 ({ext})，拒绝以图片冒充视频交付")
@@ -2077,7 +2112,7 @@ class MuseEngine:
                 time.sleep(0.1)
                 continue
             ext = os.path.splitext(path)[1].lower() or ".bin"
-            name = f"{uuid.uuid4().hex}{ext}"
+            name = new_media_name(ext)
             kind = "video" if ext in (".mp4", ".webm", ".mov") else "image"
             if expect == "video" and kind != "video":
                 raise MuseGenerationError(f"期望生成视频，但下载成品类型为图片 ({ext})，拒绝以图片冒充视频交付")

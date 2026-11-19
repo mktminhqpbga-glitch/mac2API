@@ -33,6 +33,7 @@ import collections
 import binascii
 import io
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -53,12 +54,12 @@ from config import CFG
 from engine import (ESSENTIAL_COOKIES, MAX_REFERENCE_IMAGE_BYTES,
                     MAX_REFERENCE_IMAGES, MAX_REFERENCE_TOTAL_BYTES,
                     REFERENCE_MIME_EXT, MuseAuthError, MuseEngine, MuseGenerationError,
-                    MuseModelRefusalError, RefImageSafetyError, reference_kind)
+                    MuseModelRefusalError, MusePostSendError, RefImageSafetyError, reference_kind)
 from engine import MuseProxyError, MuseSessionUnavailable
 from store import Store, account_expiry, min_expiry
 from generation_timing import QueuePolicy, QueueSettings, TaskTiming
 from proxy import normalize_server, request_proxy_context, split_proxy_url
-from media_storage import CAPACITY_BYTES, CLEANUP_BYTES, delete_media_file, media_entries, prune_media, save_media
+from media_storage import CAPACITY_BYTES, CLEANUP_BYTES, delete_media_file, media_entries, media_owner, new_media_name, prune_media, save_media
 from web_providers import DEFAULT_WEB_CDP_PORT, PROVIDERS as WEB_PROVIDERS, WebProviderError, WebProviders
 from thumbnails import (VIDEO_FORMATS, ThumbnailUnavailable,
                         source_version, video_thumbnail)
@@ -103,6 +104,41 @@ MODULES.update({f"{provider}/{kind}": (provider, kind)
                 for provider in WEB_PROVIDERS for kind in ("text", "image")})
 
 
+PROVIDER_PREFIXES = {"muse": "muse", "chatgpt": "chatgpt", "gemini": "gemini-web"}
+MUSE_MODELS_BY_KIND = {"text": "muse-spark", "image": "muse-image", "video": "muse-video"}
+
+
+def _path_provider(request: Request | None) -> str | None:
+    if request is None:
+        return None
+    scope = getattr(request, "scope", {})
+    route = scope.get("route")
+    path = route.path if route else scope.get("path", "")
+    prefix, _, rest = path.lstrip("/").partition("/")
+    return PROVIDER_PREFIXES.get(prefix) if rest.startswith("v1/") else None
+
+
+def _scoped_model(request: Request | None, kind: str, model: str | None) -> str | None:
+    provider = _path_provider(request)
+    if provider is None:
+        return model
+    default = f"{provider}/{kind}"
+    if model is None:
+        return default
+    if model == default or (provider == "muse" and model in (
+        MUSE_MODELS_BY_KIND[kind], f"muse/{MUSE_MODELS_BY_KIND[kind]}"
+    )):
+        return model
+    raise HTTPException(400, f"Base URL này chỉ nhận mô-đun {default} cho loại yêu cầu này.")
+
+
+def _scope_request_model(request: Request | None, kind: str, req):
+    if _path_provider(request) is None:
+        return req
+    model = req.model if "model" in req.model_fields_set else None
+    return req.model_copy(update={"model": _scoped_model(request, kind, model)})
+
+
 def _module_provider(model: str, kind: str) -> str | None:
     route = MODULES.get(model)
     if route is None:
@@ -136,7 +172,7 @@ def _web_call(fn, *args, on_acquired=None, on_queue=None, **kwargs):
 def _run_web_image(provider, prompt, timeout, **callbacks):
     data, ext = _web_call(web_providers.generate, provider, prompt, image=True,
                           timeout=timeout, **callbacks)
-    name = uuid.uuid4().hex + ext
+    name = new_media_name(ext)
     try:
         path, size = save_media(CFG.media_dir, name, data=data)
     except (OSError, ValueError) as exc:
@@ -270,7 +306,6 @@ class AccountPoolManager:
 
 GEN_LOCK = ConcurrencyLock(limit=CFG.max_concurrency)
 ACCOUNT_POOL = AccountPoolManager(store)
-IMAGE_TASK_LOCK = threading.Lock()
 QUEUE_POLICY = QueuePolicy(os.path.join(CFG.data_dir, "generation-queue.json"))
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -339,7 +374,7 @@ def _err_type(status: int) -> str:
 
 @app.exception_handler(HTTPException)
 async def _http_exc(request: Request, exc: HTTPException):
-    if request.url.path.startswith("/v1/"):
+    if request.url.path.startswith("/v1/") or _path_provider(request):
         return JSONResponse(
             status_code=exc.status_code,
             content={"error": {"message": str(exc.detail),
@@ -356,7 +391,7 @@ async def _validation_exc(request: Request, exc: RequestValidationError):
     # Never echo user-supplied proxy credentials in validation errors.
     errors = [{k: v for k, v in error.items() if k not in ("input", "ctx")}
               for error in exc.errors()]
-    if request.url.path.startswith("/v1/"):
+    if request.url.path.startswith("/v1/") or _path_provider(request):
         return JSONResponse(status_code=422, content={"error": {
             "message": "请求参数校验失败：" + str(errors)[:400],
             "type": "invalid_request_error", "param": None, "code": 422}})
@@ -410,16 +445,115 @@ def resolve_model(name: str | None, default: str = "muse-image") -> str:
 
 
 # ------------------------- 鉴权 -------------------------
+def _bearer_token(authorization: str | None):
+    parts = authorization.split(None, 1) if authorization else []
+    if len(parts) == 2 and parts[0].lower() == "bearer":
+        return parts[1].strip()
+    return ""
+
+
+def _is_admin(token: str) -> bool:
+    return bool(CFG.api_key and token and hmac.compare_digest(token.encode(), CFG.api_key.encode()))
+
+
 def auth(authorization: str | None = Header(default=None)):
-    if not CFG.api_key:
+    token = _bearer_token(authorization)
+    if _is_admin(token) or (not CFG.api_key and not token):
         return True
-    if not authorization or not authorization.lower().startswith("bearer "):
+    if not token:
         raise HTTPException(401, "缺少 Authorization: Bearer <key>")
-    parts = authorization.split(None, 1)
-    token = parts[1].strip() if len(parts) > 1 else ""
-    if not token or token != CFG.api_key:
-        raise HTTPException(401, "API key 无效")
-    return True
+    raise HTTPException(401, "API key 无效")
+
+
+CLIENT_REQUESTS_PER_MINUTE = 20
+CLIENT_ACTIVE_POST_LIMIT = 2
+CLIENT_PENDING_MEDIA_LIMIT = 2
+MEDIA_ADMISSION_LOCK = threading.Lock()
+CLIENT_MEDIA_PATTERN = re.compile(r"^client-([0-9a-f]{16})--")
+
+
+async def api_auth(request: Request, authorization: str | None = Header(default=None)):
+    """Return the restricted client, or None for the existing administrator workflow."""
+    token = _bearer_token(authorization)
+    if _is_admin(token) or (not CFG.api_key and not token):
+        yield None
+        return
+    client = store.find_client(token)
+    if not client:
+        raise HTTPException(401, "API Key không hợp lệ hoặc đã bị thu hồi.")
+    provider = _path_provider(request)
+    if provider and provider not in client["providers"]:
+        raise HTTPException(403, "Khóa API này không có quyền dùng nhà cung cấp ở Base URL này.")
+    is_write = request.method == "POST"
+    if is_write and not store.acquire_client_request(
+        client["id"], CLIENT_REQUESTS_PER_MINUTE, CLIENT_ACTIVE_POST_LIMIT
+    ):
+        raise HTTPException(429, "Khóa API đã đạt giới hạn yêu cầu hoặc đang có yêu cầu xử lý. Hãy thử lại sau.",
+                            headers={"Retry-After": "60"})
+    try:
+        yield client
+    finally:
+        if is_write:
+            store.release_client_request(client["id"])
+
+
+def _authorize_model(client, model: str, kind: str):
+    if not isinstance(client, dict):
+        return
+    module = MODULES.get(model)
+    official = chat_providers.route(model)
+    if module:
+        provider = module[0]
+    elif official and kind == "text":
+        provider = official[0]
+    elif model in (MUSE_MODELS_BY_KIND[kind], f"muse/{MUSE_MODELS_BY_KIND[kind]}"):
+        provider = "muse"
+    else:
+        raise HTTPException(400, "Hãy chỉ định model có trong danh sách /models của khóa API này.")
+    if provider not in client["providers"]:
+        raise HTTPException(403, "Khóa API này không có quyền dùng mô-đun đã chọn.")
+
+
+def _client_id(client):
+    return client.get("id") if isinstance(client, dict) else None
+
+
+def _generate_owned(owner, fn, *args, **kwargs):
+    token = media_owner.set(owner)
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        media_owner.reset(token)
+
+
+def _require_task_owner(task, client):
+    owner = _client_id(client)
+    if owner and task.get("owner") != owner:
+        raise HTTPException(404, "Không tìm thấy tác vụ.")
+
+
+def _check_media_admission(tasks, kind, owner):
+    active = [task for task in tasks if task.get("status") in ("queued", "processing")]
+    if sum(task.get("kind") == kind for task in active) >= 8:
+        raise HTTPException(429, "Hàng đợi tạo nội dung đã đầy. Hãy thử lại sau.")
+    if owner and sum(task.get("owner") == owner for task in active) >= CLIENT_PENDING_MEDIA_LIMIT:
+        raise HTTPException(429, "Khóa API đang có tối đa 2 tác vụ media chờ hoặc đang chạy.")
+
+
+def _public_task(task, client):
+    data = dict(task)
+    if _client_id(client):
+        allowed = {"id", "object", "kind", "provider", "prompt", "status", "progress", "created_at",
+                   "updated_at", "error", "last_error", "elapsed", "queue_elapsed", "total_elapsed",
+                   "result", "size", "response_format", "url", "video"}
+        data = {key: value for key, value in data.items() if key in allowed}
+    result = data.get("result")
+    if isinstance(result, dict) and result.get("filename"):
+        url = media_url(result["filename"], admin=not _client_id(client))
+        data.update(result={**result, "url": url}, url=url)
+        if data.get("kind") == "video":
+            data["video"] = {"url": url}
+    return data
 
 
 # ------------------------- 请求模型 -------------------------
@@ -506,6 +640,7 @@ def safe_chat_stream(cookies: dict, prompt: str, expires: dict | None,
                     return
                 if attempt > 0:
                     if leased_id:
+                        engine.close_current_page()
                         ACCOUNT_POOL.release(leased_id)
                         leased_id = None
                     try:
@@ -548,6 +683,9 @@ def safe_chat_stream(cookies: dict, prompt: str, expires: dict | None,
                         store.mark(cur_id, True, "")
                         _sync_cookies(cur_id)
                     return
+                except MusePostSendError as exc:
+                    last_exc = exc
+                    break
                 except MuseAuthError as exc:
                     last_exc = exc
                     if cur_id:
@@ -569,8 +707,6 @@ def safe_chat_stream(cookies: dict, prompt: str, expires: dict | None,
             q.put(("error", exc))
         finally:
             try:
-                if leased_id:
-                    ACCOUNT_POOL.release(leased_id)
                 engine.close_current_page()
             except Exception as exc:
                 log.warning("对话清理失败: %s", type(exc).__name__)
@@ -578,9 +714,13 @@ def safe_chat_stream(cookies: dict, prompt: str, expires: dict | None,
                 try:
                     _clear_account_proxy()
                 finally:
-                    if slot_acquired:
-                        GEN_LOCK.release()
-                    q.put(("done", None))
+                    try:
+                        if leased_id:
+                            ACCOUNT_POOL.release(leased_id)
+                    finally:
+                        if slot_acquired:
+                            GEN_LOCK.release()
+                        q.put(("done", None))
 
     threading.Thread(target=worker, daemon=True).start()
 
@@ -1234,15 +1374,42 @@ def build_video_prompt(r: VideoRequest, kinds: list[str] | None = None, *, langu
     return "，".join(parts)
 
 
-def media_url(name: str) -> str:
-    """媒体地址。
+def _media_signature(name: str, mode: str, expires: int):
+    payload = f"{mode}:{expires}:{name}".encode()
+    return hmac.new(CFG.api_key.encode(), payload, hashlib.sha256).hexdigest()
 
-    配了 public_base 就返回**绝对 URL** —— OpenAI 兼容客户端（以及各类智能体
-    平台）拿到 data[].url 后一般会直接渲染或下载，相对路径会被解析到客户端
-    自己的域名上，导致 404。public_base 为空时退回相对路径。
-    """
-    base = _public_base()
-    return f"{base}/v1/media/{name}" if base else f"/v1/media/{name}"
+
+def _media_access_query(name: str, *, admin: bool):
+    if not CLIENT_MEDIA_PATTERN.match(name):
+        return ""
+    mode = "a" if admin else "c"
+    expires = int(time.time()) + 7 * 86400
+    return f"access={mode}.{expires}.{_media_signature(name, mode, expires)}"
+
+
+def media_url(name: str, *, admin: bool = False) -> str:
+    from urllib.parse import quote
+    url = f"{_public_base()}/v1/media/{quote(name, safe='')}"
+    query = _media_access_query(name, admin=admin)
+    return f"{url}?{query}" if query else url
+
+
+def _check_media_access(name: str, access: str, authorization: str | None):
+    match = CLIENT_MEDIA_PATTERN.match(name)
+    if not match:
+        return False
+    owner = match[1]
+    token = _bearer_token(authorization)
+    client = store.find_client(token)
+    if _is_admin(token) or (client and client["id"] == owner):
+        return True
+    signature = re.fullmatch(r"([ac])\.([0-9]{1,12})\.([0-9a-f]{64})", access)
+    if signature and CFG.api_key:
+        mode, timestamp, mac = signature.groups()
+        if (int(timestamp) >= int(time.time()) and (mode == "a" or owner in store.clients)
+                and hmac.compare_digest(mac, _media_signature(name, mode, int(timestamp)))):
+            return True
+    raise HTTPException(404, "Không tìm thấy tệp.")
 
 
 # ------------------------- cookie 解析 -------------------------
@@ -1397,15 +1564,17 @@ def _run_generation_locked(prompt: str, kind: str, timeout: int,
             on_acquired()
         for attempt in range(2):
             # Preserve the original failure, including a refusal at the deadline boundary.
-            if isinstance(last_exc, MuseModelRefusalError) or time.monotonic() >= deadline:
+            if isinstance(last_exc, (MuseModelRefusalError, MusePostSendError)) or time.monotonic() >= deadline:
                 if last_exc is not None:
                     raise last_exc
                 raise MuseGenerationError("生成时限已到（不含排队时间），已停止等待")
             if attempt > 0:
                 old_id = cur_acc["id"] if cur_acc else None
-                if old_id:
-                    ACCOUNT_POOL.release(old_id)
                 cur_acc = None
+                try:
+                    engine.close_current_page()
+                finally:
+                    ACCOUNT_POOL.release(old_id)
                 try:
                     alt = lease(rotate=True, force_rotate=True)
                 except (MuseAuthError, MuseGenerationError):
@@ -1458,10 +1627,12 @@ def _run_generation_locked(prompt: str, kind: str, timeout: int,
                 on_error(str(last_exc))
         raise last_exc
     finally:
-        if cur_acc:
-            ACCOUNT_POOL.release(cur_acc.get("id"))
-        engine.close_current_page()
-        _clear_account_proxy()
+        try:
+            engine.close_current_page()
+        finally:
+            _clear_account_proxy()
+            if cur_acc:
+                ACCOUNT_POOL.release(cur_acc.get("id"))
 
 
 # ------------------------- 基础接口 -------------------------
@@ -1478,9 +1649,13 @@ def readyz():
             "browser_running": bool(engine.proc and engine.proc.poll() is None)}
 
 
+@app.get("/muse/v1/models")
+@app.get("/chatgpt/v1/models")
+@app.get("/gemini/v1/models")
 @app.get("/v1/models")
-def models(_=Depends(auth)):
-    external = [
+def models(_=Depends(api_auth), request: Request = None):
+    provider = _path_provider(request)
+    external = [] if provider else [
         {"id": item["model_id"], "object": "model", "owned_by": item["id"]}
         for item in chat_providers.status() if item["configured"]
     ]
@@ -1489,12 +1664,17 @@ def models(_=Depends(auth)):
         for model, (provider, kind) in MODULES.items()
         if provider == "muse" or web_providers.port
     ]
-    return {"object": "list", "data": [*MODELS, *modules, *external]}
+    data = [*MODELS, *modules, *external]
+    if provider:
+        data = [model for model in data if model["owned_by"] == provider]
+    if isinstance(_, dict):
+        data = [model for model in data if model["owned_by"] in _["providers"]]
+    return {"object": "list", "data": data}
 
 
 # ------------------------- 生图 -------------------------
-def _image_response(req: ImageRequest, res: dict) -> dict:
-    item = {"revised_prompt": req.prompt, "url": media_url(res["filename"]),
+def _image_response(req: ImageRequest, res: dict, *, admin: bool = False) -> dict:
+    item = {"revised_prompt": req.prompt, "url": media_url(res["filename"], admin=admin),
             "size": req.size or "auto", "kind": res["kind"], "bytes": res["size"]}
     if req.response_format == "b64_json":
         fpath = res.get("path") or os.path.join(CFG.media_dir, res["filename"])
@@ -1511,13 +1691,13 @@ def _generic_upload_mime(mime: str) -> bool:
         "audio/m4a", "audio/x-flac", "audio/x-aac", "video/x-m4v")
 
 
-def _prepare_reference_images(images: list[str]) -> list[str]:
+def _prepare_reference_images(images: list[str], *, public_only: bool = False) -> list[str]:
     """Validate and snapshot all sources before a task is accepted."""
     prepared = []
     total_bytes = 0
     for index, image in enumerate(images):
         try:
-            b64, mime = engine._normalize_image(image)
+            b64, mime = engine._normalize_image(image, public_only=True) if public_only else engine._normalize_image(image)
             data = base64.b64decode(b64, validate=True)
         except (RefImageSafetyError, MuseGenerationError, binascii.Error, ValueError) as exc:
             raise HTTPException(400, f"images[{index}]: {exc}") from exc
@@ -1530,20 +1710,23 @@ def _prepare_reference_images(images: list[str]) -> list[str]:
 
 
 def _queue_image(req: ImageRequest, prompt: str, reference_images: list[str],
-                 idempotency_key: str | None = None):
+                 idempotency_key: str | None = None, *, owner=None):
     """Opt-in polling avoids reverse-proxy timeouts; no generation is repeated by polling."""
     if idempotency_key and len(idempotency_key) > 256:
         raise HTTPException(400, "Idempotency-Key too long")
     web_provider = _image_module(req)
+    provider = web_provider or "muse"
     key_hash = hashlib.sha256(idempotency_key.encode()).hexdigest() if idempotency_key else None
     request_hash = hashlib.sha256(json.dumps(
         {"request": req.model_dump(by_alias=True), "references": reference_images},
         sort_keys=True, ensure_ascii=False).encode()).hexdigest()
-    with IMAGE_TASK_LOCK:
+    with MEDIA_ADMISSION_LOCK:
         tasks = list(store.tasks.values())
         if key_hash:
             for existing in tasks:
-                if existing.get("image_request_key") == key_hash:
+                if (existing.get("image_request_key") == key_hash
+                        and (existing.get("provider") or "muse") == provider
+                        and existing.get("owner") == owner):
                     if existing.get("image_request_hash") != request_hash:
                         raise HTTPException(409, "Idempotency-Key reused with different request")
                     return JSONResponse(status_code=202, content={
@@ -1551,15 +1734,12 @@ def _queue_image(req: ImageRequest, prompt: str, reference_images: list[str],
                         "object": "image.task", "status": existing["status"],
                         "progress": existing.get("progress", 0),
                         "created_at": existing["created_at"]})
-        # ponytail: one Chromium worker; cap admission instead of adding a broker.
-        if sum(t.get("kind") == "image" and t.get("status") in ("queued", "processing")
-               for t in tasks) >= 8:
-            raise HTTPException(429, "Image queue is full; retry later")
-        task = store.create_task("image", req.prompt)
+        _check_media_admission(tasks, "image", owner)
+        task = store.create_task(
+            "image", req.prompt, api_prompt=prompt, size=req.size, provider=provider, owner=owner,
+            response_format=req.response_format, progress=0, queue_elapsed=0.0,
+            image_request_key=key_hash, image_request_hash=request_hash)
         tid = task["id"]
-        store.update_task(tid, api_prompt=prompt, size=req.size,
-                          response_format=req.response_format, progress=0, queue_elapsed=0.0,
-                          image_request_key=key_hash, image_request_hash=request_hash)
 
     def worker():
         timing = TaskTiming(store, tid)
@@ -1588,54 +1768,76 @@ def _queue_image(req: ImageRequest, prompt: str, reference_images: list[str],
             store.update_task(tid, status="failed", error=str(exc),
                               **timing.finish())
 
-    threading.Thread(target=worker, daemon=True).start()
+    threading.Thread(target=_generate_owned, args=(owner, worker), daemon=True).start()
     return JSONResponse(status_code=202, content={
         "id": tid, "task_id": tid, "object": "image.task", "status": "queued",
         "progress": 0, "created_at": task["created_at"]})
 
 
+@app.post("/muse/v1/images/tasks")
+@app.post("/chatgpt/v1/images/tasks")
+@app.post("/gemini/v1/images/tasks")
 @app.post("/v1/images/tasks")
 def create_image_task(req: ImageRequest,
-                      idempotency_key: str | None = Header(default=None), _=Depends(auth)):
+                      idempotency_key: str | None = Header(default=None), _=Depends(api_auth),
+                      request: Request = None):
+    req = _scope_request_model(request, "image", req)
+    _authorize_model(_, req.model, "image")
+    owner = _client_id(_)
+    options = {"owner": owner} if owner else {}
     provider = _image_module(req)
     if provider:
-        return _queue_image(req, _web_image_prompt(req), [], idempotency_key)
-    refs = _prepare_reference_images(_image_references(req))
-    return _queue_image(req, build_image_prompt(req, _reference_kinds(refs), language=store.muse_prompt_language()), refs, idempotency_key)
+        return _queue_image(req, _web_image_prompt(req), [], idempotency_key, **options)
+    refs = _prepare_reference_images(_image_references(req), **({"public_only": True} if owner else {}))
+    prompt = build_image_prompt(req, _reference_kinds(refs), language=store.muse_prompt_language())
+    return _queue_image(req, prompt, refs, idempotency_key, **options)
 
 
+@app.get("/muse/v1/images/tasks/{task_id}")
+@app.get("/chatgpt/v1/images/tasks/{task_id}")
+@app.get("/gemini/v1/images/tasks/{task_id}")
 @app.get("/v1/images/tasks/{task_id}")
-def get_image_task(task_id: str, _=Depends(auth)):
+def get_image_task(task_id: str, _=Depends(api_auth), request: Request = None):
     task = store.get_task(task_id)
-    if not task or task.get("kind") != "image":
+    scope = _path_provider(request)
+    if (not task or task.get("kind") != "image"
+            or (scope and scope != (task.get("provider") or "muse"))):
         raise HTTPException(404, "image task 不存在")
-    out = dict(task)
+    _require_task_owner(task, _)
+    out = _public_task(task, _)
     if out.get("status") == "completed":
         req = ImageRequest(prompt=out["prompt"], size=out.get("size"),
                            response_format=out.get("response_format") or "url")
-        out.update(_image_response(req, out["result"]))
+        out.update(_image_response(req, out["result"], admin=not _client_id(_)))
     return out
 
 
+@app.post("/muse/v1/images/generations")
+@app.post("/chatgpt/v1/images/generations")
+@app.post("/gemini/v1/images/generations")
 @app.post("/v1/images/generations")
-async def images_generations(req: ImageRequest, _=Depends(auth)):
+async def images_generations(req: ImageRequest, _=Depends(api_auth), request: Request = None):
+    req = _scope_request_model(request, "image", req)
+    _authorize_model(_, req.model, "image")
+    owner = _client_id(_)
+    options = {"owner": owner} if owner else {}
     provider = _image_module(req)
     if provider:
         prompt = _web_image_prompt(req)
         if req.async_:
-            return _queue_image(req, prompt, [])
-        res = await asyncio.to_thread(_run_web_image, provider, prompt, req.timeout or CFG.image_timeout)
+            return _queue_image(req, prompt, [], **options)
+        res = await asyncio.to_thread(_generate_owned, owner, _run_web_image, provider, prompt, req.timeout or CFG.image_timeout)
         return _image_response(req, res)
     ref_images = await asyncio.to_thread(
-        _prepare_reference_images, _image_references(req))
+        _prepare_reference_images, _image_references(req), **({"public_only": True} if owner else {}))
 
     prompt = build_image_prompt(req, _reference_kinds(ref_images), language=store.muse_prompt_language())
     timeout = req.timeout or CFG.image_timeout
     if req.async_:
-        return _queue_image(req, prompt, ref_images)
+        return _queue_image(req, prompt, ref_images, **options)
     try:
         res, _acc = await asyncio.to_thread(
-            _run_generation, prompt, "image", timeout, reference_images=ref_images)
+            _generate_owned, owner, _run_generation, prompt, "image", timeout, reference_images=ref_images)
     except MuseAuthError as exc:
         raise HTTPException(401, str(exc)) from exc
     except MuseGenerationError as exc:
@@ -1643,8 +1845,9 @@ async def images_generations(req: ImageRequest, _=Depends(auth)):
     return _image_response(req, res)
 
 
+@app.post("/muse/v1/images/edits")
 @app.post("/v1/images/edits")
-async def images_edits(request: Request, _=Depends(auth)):
+async def images_edits(request: Request, _=Depends(api_auth)):
     """OpenAI 兼容的图生图/图像编辑接口，兼容 multipart/form-data 与 application/json。"""
     content_type = request.headers.get("content-type", "").lower()
     prompt = ""
@@ -1717,7 +1920,7 @@ async def images_edits(request: Request, _=Depends(auth)):
 
     req_obj = ImageRequest(
         prompt=prompt,
-        model=model,
+        model=_scoped_model(request, "image", model),
         size=size,
         aspect_ratio=aspect_ratio,
         response_format=response_format,
@@ -1725,17 +1928,19 @@ async def images_edits(request: Request, _=Depends(auth)):
         images=ref_image_data,
         **{"async": async_mode}
     )
+    _authorize_model(_, req_obj.model, "image")
+    owner = _client_id(_)
     if _module_provider(req_obj.model, "image"):
         raise HTTPException(400, "Mô-đun web chưa hỗ trợ chỉnh sửa ảnh.")
     ref_image_data = await asyncio.to_thread(
-        _prepare_reference_images, ref_image_data)
+        _prepare_reference_images, ref_image_data, **({"public_only": True} if owner else {}))
     full_prompt = build_image_prompt(req_obj, _reference_kinds(ref_image_data), language=store.muse_prompt_language())
     gen_timeout = timeout or CFG.image_timeout
     if req_obj.async_:
-        return _queue_image(req_obj, full_prompt, ref_image_data)
+        return _queue_image(req_obj, full_prompt, ref_image_data, **({"owner": owner} if owner else {}))
     try:
         res, _acc = await asyncio.to_thread(
-            _run_generation, full_prompt, "image", gen_timeout,
+            _generate_owned, owner, _run_generation, full_prompt, "image", gen_timeout,
             reference_images=ref_image_data)
     except MuseAuthError as exc:
         raise HTTPException(401, str(exc)) from exc
@@ -1746,19 +1951,24 @@ async def images_edits(request: Request, _=Depends(auth)):
 
 
 # ------------------------- 生视频（异步任务） -------------------------
+@app.post("/muse/v1/videos")
 @app.post("/v1/videos")
+@app.post("/muse/v1/videos/generations")
 @app.post("/v1/videos/generations")
-async def create_video(req: VideoRequest, _=Depends(auth)):
+async def create_video(req: VideoRequest, _=Depends(api_auth), request: Request = None):
+    req = _scope_request_model(request, "video", req)
+    _authorize_model(_, req.model, "video")
+    owner = _client_id(_)
     _module_provider(req.model, "video")
     ref_images = await asyncio.to_thread(
-        _prepare_reference_images, _video_references(req))
+        _prepare_reference_images, _video_references(req), **({"public_only": True} if owner else {}))
 
     prompt = build_video_prompt(req, _reference_kinds(ref_images), language=store.muse_prompt_language())
     timeout = req.timeout or CFG.video_timeout
-    task = store.create_task("video", req.prompt)
-    store.update_task(task["id"], api_prompt=prompt, queue_elapsed=0.0)
-
-    store.update_task(task["id"], progress=10)
+    with MEDIA_ADMISSION_LOCK:
+        _check_media_admission(list(store.tasks.values()), "video", owner)
+        task = store.create_task("video", req.prompt, owner=owner, provider="muse",
+                                 api_prompt=prompt, queue_elapsed=0.0, progress=10)
 
     def worker():
         timing = TaskTiming(store, task["id"])
@@ -1783,18 +1993,21 @@ async def create_video(req: VideoRequest, _=Depends(auth)):
             store.update_task(task["id"], status="failed",
                               **timing.finish(), error=str(exc))
 
-    threading.Thread(target=worker, daemon=True).start()
+    threading.Thread(target=_generate_owned, args=(owner, worker), daemon=True).start()
     return {"id": task["id"], "task_id": task["id"], "object": "video.task", "status": "queued",
             "progress": 10, "created_at": task["created_at"]}
 
 
+@app.get("/muse/v1/videos/{task_id}")
 @app.get("/v1/videos/{task_id}")
+@app.get("/muse/v1/videos/generations/{task_id}")
 @app.get("/v1/videos/generations/{task_id}")
-def get_video(task_id: str, _=Depends(auth)):
+def get_video(task_id: str, _=Depends(api_auth)):
     t = store.get_task(task_id)
-    if not t:
+    if not t or t.get("kind") != "video":
         raise HTTPException(404, "task 不存在")
-    out = dict(t)
+    _require_task_owner(t, _)
+    out = _public_task(t, _)
     status = out.get("status")
     if status in ("succeeded", "success", "done"):
         out["status"] = "completed"
@@ -1857,8 +2070,11 @@ _SSE_HEADERS = {
 }
 
 
+@app.post("/muse/v1/chat/completions")
+@app.post("/chatgpt/v1/chat/completions")
+@app.post("/gemini/v1/chat/completions")
 @app.post("/v1/chat/completions")
-async def chat_completions(req: ChatRequest, request: Request, _=Depends(auth)):
+async def chat_completions(req: ChatRequest, request: Request, _=Depends(api_auth)):
     """OpenAI 兼容的对话接口 —— 各类智能体客户端都能接。
 
     说明：muse.ai 网页是**自动路由**的 agent，界面上没有模型选择器，所有请求
@@ -1870,6 +2086,8 @@ async def chat_completions(req: ChatRequest, request: Request, _=Depends(auth)):
 
     对话与生图/生视频共用同一个浏览器实例，靠 `GEN_LOCK` 串行。
     """
+    req = _scope_request_model(request, "text", req)
+    _authorize_model(_, req.model, "text")
     web_provider = _module_provider(req.model, "text")
     if web_provider:
         if req.tools or any(isinstance(msg.content, list) and any(
@@ -2066,13 +2284,16 @@ def _sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+@app.post("/muse/v1/responses")
 @app.post("/v1/responses")
-async def responses_api(req: ResponsesRequest, _=Depends(auth)):
+async def responses_api(req: ResponsesRequest, _=Depends(api_auth), request: Request = None):
     """OpenAI Responses API —— 新版 Codex 默认走这个端点。
 
     只实现 Codex 实际用到的子集：文本进 → 文本出（含流式事件）。
     muse.ai 不会返回结构化的 tool_calls，关于工具调用的边界见 README。
     """
+    req = _scope_request_model(request, "text", req)
+    _authorize_model(_, req.model, "text")
     if _module_provider(req.model, "text") or chat_providers.route(req.model):
         raise HTTPException(400, "Hãy dùng /v1/chat/completions cho OpenAI hoặc Gemini.")
     prompt = build_chat_prompt(_responses_messages(req), language=store.muse_prompt_language())
@@ -2155,13 +2376,14 @@ async def responses_api(req: ResponsesRequest, _=Depends(auth)):
 
 
 @app.get("/v1/media/{name}")
-def get_media(name: str):
+def get_media(name: str, access: str = "", authorization: str | None = Header(default=None)):
     if name.startswith(".") or "/" in name or "\\" in name or ".." in name:
         raise HTTPException(400, "非法文件名")
+    private = _check_media_access(name, access, authorization)
     p = os.path.join(CFG.media_dir, name)
     if os.path.islink(p) or not os.path.isfile(p):
         raise HTTPException(404, "文件不存在")
-    return FileResponse(p)
+    return FileResponse(p, headers={"Cache-Control": "private, no-store"} if private else None)
 
 
 @app.get("/admin/muse-prompt")
@@ -2185,7 +2407,8 @@ def save_generation_queue(req: QueueSettings, _=Depends(auth)):
     return QUEUE_POLICY.settings()
 
 @app.get("/v1/media/{name}/thumbnail")
-def get_media_thumbnail(name: str):
+def get_media_thumbnail(name: str, access: str = "", authorization: str | None = Header(default=None)):
+    private = _check_media_access(name, access, authorization)
     try:
         path = video_thumbnail(CFG.media_dir, os.path.join(CFG.data_dir, "thumbnails"), name)
     except ValueError as exc:
@@ -2195,7 +2418,7 @@ def get_media_thumbnail(name: str):
     except ThumbnailUnavailable:
         raise HTTPException(503, "视频缩略图暂不可用")
     return FileResponse(path, media_type="image/jpeg",
-                        headers={"Cache-Control": "public, max-age=86400"})
+                        headers={"Cache-Control": "private, no-store" if private else "public, max-age=86400"})
 
 
 # ------------------------- 管理：总览 -------------------------
@@ -2257,6 +2480,32 @@ def save_chat_provider(provider: ProviderName, settings: ProviderSettings, _=Dep
 @app.post("/admin/chat-providers/{provider}/test")
 async def test_chat_provider(provider: ProviderName, _=Depends(auth)):
     return await chat_providers.test(provider)
+
+
+class ClientKeyRequest(BaseModel):
+    label: str = Field(min_length=1, max_length=80)
+    providers: list[Literal["muse", "chatgpt", "gemini-web", "openai", "gemini"]] = Field(min_length=1, max_length=5)
+
+
+@app.get("/admin/client-keys")
+def list_client_keys(_=Depends(auth)):
+    return {"clients": store.list_clients()}
+
+
+@app.post("/admin/client-keys", status_code=201)
+def create_client_key(req: ClientKeyRequest, _=Depends(auth)):
+    label = req.label.strip()
+    if not label:
+        raise HTTPException(400, "Hãy nhập tên người dùng.")
+    client = store.create_client(label, list(dict.fromkeys(req.providers)))
+    return JSONResponse(status_code=201, content=client, headers={"Cache-Control": "no-store"})
+
+
+@app.delete("/admin/client-keys/{client_id}")
+def revoke_client_key(client_id: str, _=Depends(auth)):
+    if not store.revoke_client(client_id):
+        raise HTTPException(404, "Không tìm thấy khóa người dùng.")
+    return {"revoked": True}
 
 
 @app.get("/admin/status")
@@ -2673,12 +2922,16 @@ def extension_files():
 # ------------------------- 管理：任务 / 媒体 -------------------------
 @app.get("/admin/tasks")
 def admin_tasks(limit: int = 50, _=Depends(auth)):
-    return {"tasks": store.list_tasks(limit)}
+    return {"tasks": [_public_task(task, None) for task in store.list_tasks(limit)]}
 
 
 @app.delete("/admin/tasks/{tid}")
 def del_task(tid: str, _=Depends(auth)):
-    if not store.delete_task(tid):
+    try:
+        removed = store.delete_task(tid)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if not removed:
         raise HTTPException(404, "任务不存在")
     return {"deleted": True}
 
@@ -2695,11 +2948,14 @@ def admin_media(_=Depends(auth)):
     for path, stat in reversed(entries):
         name = path.name
         is_video = path.suffix.lower() in VIDEO_FORMATS
-        item = {"name": name, "url": media_url(name), "bytes": stat.st_size,
+        item = {"name": name, "url": media_url(name, admin=True), "bytes": stat.st_size,
                 "mtime": int(stat.st_mtime), "kind": "video" if is_video else "image"}
         if is_video:
             from urllib.parse import quote
             item["thumbnail_url"] = f"/v1/media/{quote(name, safe='')}/thumbnail?v={source_version(stat)}"
+            query = _media_access_query(name, admin=True)
+            if query:
+                item["thumbnail_url"] += "&" + query
         items.append(item)
     return {"media": items, "count": len(items),
             "used_bytes": sum(info.st_size for _, info in entries),

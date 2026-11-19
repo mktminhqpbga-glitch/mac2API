@@ -291,6 +291,7 @@
     <button class="active" data-t="pool">账号池</button>
     <button data-t="openai">ChatGPT Web</button>
     <button data-t="gemini">Gemini Web</button>
+    <button data-t="clients">Khóa người dùng</button>
     <button data-t="cookie">获取 Cookie</button>
     <button data-t="tasks">任务记录</button>
     <button data-t="media">媒体库</button>
@@ -301,6 +302,33 @@
   <div class="card" id="extensionUpgradeNotice" style="border-color:var(--warn)" role="note" data-i18n="extension-upgrade-notice"><b>重要：请手动升级浏览器插件至 1.0.4</b><br>更新服务不会自动升级已加载的扩展。下载新包，替换原扩展目录文件，再到 <code>chrome://extensions</code> 或 <code>edge://extensions</code> 点击“重新加载”。不同浏览器个人资料需分别升级。<br><a href="/admin/extension">下载扩展 1.0.4</a>；油猴用户请升级脚本至 1.1.2。</div>
 
 
+  <section class="tab" id="tab-clients">
+    <div class="card">
+      <h3>Khóa API người dùng</h3>
+      <form id="clientKeyForm">
+        <label for="clientKeyLabel">Tên người dùng</label>
+        <input id="clientKeyLabel" required maxlength="80" autocomplete="off">
+        <fieldset>
+          <legend>Nhà cung cấp được phép</legend>
+          <label><input type="checkbox" name="provider" value="muse" checked> Muse</label>
+          <label><input type="checkbox" name="provider" value="chatgpt"> ChatGPT Web</label>
+          <label><input type="checkbox" name="provider" value="gemini-web"> Gemini Web</label>
+          <label><input type="checkbox" name="provider" value="openai"> OpenAI API</label>
+          <label><input type="checkbox" name="provider" value="gemini"> Gemini API</label>
+        </fieldset>
+        <button type="submit">Tạo khóa người dùng</button>
+      </form>
+      <div id="clientKeyNew" hidden>
+        <label for="clientKeyResult">Khóa mới chỉ hiện một lần. Sao chép để gửi cho người dùng.</label>
+        <div class="row">
+          <input id="clientKeyResult" readonly autocomplete="off" spellcheck="false">
+          <button type="button" class="ghost" onclick="copyEl('clientKeyResult')">Sao chép khóa</button>
+        </div>
+      </div>
+      <p id="clientKeyStatus" class="hint" role="status"></p>
+      <ul id="clientKeyList"></ul>
+    </div>
+  </section>
   <section class="tab" id="tab-openai"></section>
   <section class="tab" id="tab-gemini"></section>
   <template id="chatProviderTemplate">
@@ -308,6 +336,10 @@
       <h3 data-provider-title></h3>
       <p class="hint" data-provider-status role="status"></p>
       <p class="hint" data-provider-model-id></p>
+      <div class="row">
+        <label>Base URL riêng <input data-provider-base readonly spellcheck="false"></label>
+        <button type="button" class="ghost" data-provider-copy-base>Sao chép Base URL</button>
+      </div>
       <p class="hint">Đăng nhập trong hồ sơ Chrome riêng trên máy chạy mac2API. Sau đó kiểm tra kết nối với phiên web.</p>
       <details data-web-setup>
         <summary>Thiết lập Chrome trên máy Mac</summary>
@@ -359,6 +391,9 @@
             <button class="danger mini" onclick="rotateKey()">重新生成</button>
           </div>
         </div>
+      </div>
+      <div class="hint">Base URL riêng cho Muse: <code id="museScopedBase"></code>
+        <button class="ghost mini" onclick="copyText($('museScopedBase').textContent)">Sao chép</button>
       </div>
       <div class="hint" style="margin:11px 0 0" data-i18n="model-names-hint">
         模型名：<code>muse-spark</code>（对话/代码）、<code>muse-image</code>（生图）、<code>muse-video</code>（生视频）。
@@ -2082,6 +2117,7 @@ const KEY_STORE = 'muse2api_key';
 let KEY = localStorage.getItem(KEY_STORE) || new URLSearchParams(location.search).get('key') || '';
 $('key').value = KEY;
 $('dBase').textContent = location.origin + '/v1';
+$('museScopedBase').textContent = location.origin + '/muse/v1';
 
 /* 登录状态：控制提示条和 Key 输入框高亮 */
 let authOK = null;
@@ -2196,11 +2232,74 @@ document.querySelectorAll('nav.tabs button').forEach(b => {
     $('tab-' + b.dataset.t).classList.add('active');
     if (chatProviderPanels.has(b.dataset.t)) loadChatProvider(b.dataset.t);
     if (b.dataset.t === 'tasks') loadTasks();
+    if (b.dataset.t === 'clients') loadClientKeys();
+    else {
+      $('clientKeyNew').hidden = true;
+      $('clientKeyResult').value = '';
+    }
     if (b.dataset.t === 'media') loadMedia();
     if (b.dataset.t === 'cookie') $('cmdText').textContent = buildCmd($('inBase').value);
   };
 });
 
+
+const clientKeyLabels = {
+  muse: 'Muse', chatgpt: 'ChatGPT Web', 'gemini-web': 'Gemini Web',
+  openai: 'OpenAI API', gemini: 'Gemini API',
+};
+
+async function loadClientKeys() {
+  try {
+    const {clients} = await api('/admin/client-keys');
+    const list = $('clientKeyList');
+    list.replaceChildren();
+    for (const client of clients) {
+      const row = document.createElement('li');
+      row.textContent = client.label + ' · ' + client.providers.map(id => clientKeyLabels[id] || id).join(', ') + ' ';
+      const button = document.createElement('button');
+      button.className = 'ghost mini';
+      button.textContent = 'Thu hồi';
+      button.onclick = async () => {
+        if (!confirm('Thu hồi khóa của ' + client.label + '?')) return;
+        button.disabled = true;
+        try {
+          await api('/admin/client-keys/' + encodeURIComponent(client.id), {method: 'DELETE'});
+          $('clientKeyNew').hidden = true;
+          $('clientKeyResult').value = '';
+          await loadClientKeys();
+        } catch (error) {
+          $('clientKeyStatus').textContent = error.message;
+          button.disabled = false;
+        }
+      };
+      row.append(button);
+      list.append(row);
+    }
+    $('clientKeyStatus').textContent = clients.length ? '' : 'Chưa có khóa người dùng.';
+  } catch (error) { $('clientKeyStatus').textContent = error.message; }
+}
+
+$('clientKeyForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const providers = new FormData(form).getAll('provider');
+  if (!providers.length) {
+    $('clientKeyStatus').textContent = 'Hãy chọn ít nhất một nhà cung cấp.';
+    return;
+  }
+  const button = form.querySelector('button[type=submit]');
+  button.disabled = true;
+  try {
+    const client = await api('/admin/client-keys', {
+      method: 'POST', body: JSON.stringify({label: $('clientKeyLabel').value.trim(), providers}),
+    });
+    $('clientKeyResult').value = client.api_key;
+    $('clientKeyNew').hidden = false;
+    $('clientKeyLabel').value = '';
+    await loadClientKeys();
+  } catch (error) { $('clientKeyStatus').textContent = error.message; }
+  finally { button.disabled = false; }
+});
 
 const chatProviderPanels = new Map([
   ['openai', 'chatgpt', 'ChatGPT Web'],
@@ -2210,6 +2309,11 @@ const chatProviderPanels = new Map([
   panel.append($('chatProviderTemplate').content.cloneNode(true));
   panel.querySelector('[data-provider-title]').textContent = title;
   panel.querySelector('[data-provider-model-id]').textContent = 'Mô-đun: ' + id + '/text · ' + id + '/image';
+  const base = panel.querySelector('[data-provider-base]');
+  const prefix = id === 'chatgpt' ? 'chatgpt' : 'gemini';
+  base.value = location.origin + '/' + prefix + '/v1';
+  panel.querySelector('[data-provider-copy-base]').onclick = () => copyText(base.value);
+
   const test = panel.querySelector('[data-provider-test]');
   const chat = panel.querySelector('[data-provider-chat]');
   const send = chat.querySelector('button');

@@ -1,5 +1,10 @@
 # Nhật ký và bàn giao mac2API
 
+## Base URL theo nhà cung cấp và khóa người dùng
+
+- Thêm `/muse/v1`, `/chatgpt/v1` và `/gemini/v1`. Danh sách model và truy vấn tác vụ theo đúng nhà cung cấp. Giữ `/v1` dùng chung và khóa quản trị hiện có.
+- Trang **Khóa người dùng** tạo và thu hồi từng khóa `m2c_…`, giới hạn nhà cung cấp, tần suất gọi và số tác vụ đồng thời. Mỗi khóa chỉ truy vấn tác vụ của chính nó. Tệp media từ các khóa này có liên kết tải có chữ ký, hỗ trợ tải kết quả từ MacFlow.
+
 ## Xác nhận ảnh tham chiếu và chẩn đoán tác vụ
 
 - Nhận ảnh xem trước đã tải trong ô nhập, kể cả khi nút gỡ tệp không xuất hiện. Chờ xác nhận từng tệp trước khi đưa tệp tiếp theo vào ô tải lên. Lỗi ghi số tệp xác nhận và vị trí tệp đang chờ.
@@ -17,7 +22,8 @@
 
 ## Dọn bản nháp và hiển thị lỗi Muse
 
-- Trước khi tạo ảnh/video, xác nhận ô nhập đã hết văn bản và tệp cũ. Bỏ qua tệp trong lịch sử. Nếu không xác minh được, dừng trước khi gửi.
+- Trước khi gửi tác vụ mới, xóa prompt, các mục đính kèm và tệp đã chọn còn sót trong ô nhập. Muse xác nhận ô nhập trống hai lần và thử lại trong phiên riêng nếu tệp cũ bị kẹt. ChatGPT Web và Gemini Web kiểm tra ngay trong tab tác vụ.
+- Nếu ô nhập vẫn còn tệp hoặc văn bản cũ, dừng trước khi gửi. Khi không xác định được Muse đã nhận yêu cầu, dừng tác vụ để tránh gửi lặp qua tài khoản khác.
 - Ghi chú tài khoản và chi tiết tác vụ dịch lỗi tải tệp tham chiếu cũ sang tiếng Việt. Khi có lỗi mới, nhật ký ghi số tệp đã xác nhận mà không ghi nội dung tệp.
 
 ## Mô-đun web và tệp nhập MacFlow/Toonflow

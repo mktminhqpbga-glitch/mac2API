@@ -1,4 +1,5 @@
 """Retention policy for generated media."""
+from contextvars import ContextVar
 import logging
 import os
 from pathlib import Path
@@ -7,6 +8,7 @@ import stat
 from tempfile import NamedTemporaryFile
 from threading import RLock
 import time
+import uuid
 
 from thumbnails import clear_thumbnail
 
@@ -15,6 +17,15 @@ CLEANUP_BYTES = CAPACITY_BYTES * 70 // 100
 _STAGING_PREFIX = ".mac2api-media-"
 _lock = RLock()
 _log = logging.getLogger("muse2api")
+
+
+media_owner = ContextVar("media_owner", default=None)
+
+
+def new_media_name(extension):
+    owner = media_owner.get()
+    prefix = f"client-{owner}--" if owner else ""
+    return f"{prefix}{uuid.uuid4().hex}{extension}"
 
 
 def media_entries(directory):

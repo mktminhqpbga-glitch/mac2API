@@ -118,6 +118,27 @@ Dùng `images` để gửi ảnh tham chiếu cho video. Ảnh đầu tiên là 
 
 Trong **Quản lý tài khoản**, chọn **Ngôn ngữ chỉ dẫn Muse** rồi bấm **Lưu ngôn ngữ chỉ dẫn**. Có ba lựa chọn là tiếng Việt (mặc định), tiếng Anh và tiếng Trung. Cài đặt lưu trong `data/muse-prompt.json`, áp dụng cho yêu cầu Muse mới và giữ nguyên prompt đầu vào. Phần chỉ dẫn tạo ảnh/video đề nghị Muse xác nhận bằng ngôn ngữ đã chọn. Muse tự quyết định lời đáp thực tế. Chat chỉ có một tin nhắn người dùng vẫn gửi trực tiếp. Khóa và tin nhắn gửi tới OpenAI hoặc Gemini sử dụng luồng riêng.
 
+## Base URL dùng chung hoặc riêng theo nhà cung cấp
+
+Dùng khóa mac2API có quyền gọi nhà cung cấp tương ứng. Thay `http://127.0.0.1:18610` bằng tên máy chủ đang chạy dịch vụ khi truy cập từ xa.
+
+| Base URL | Mô-đun |
+|---|---|
+| `http://127.0.0.1:18610/v1` | Tất cả mô-đun. Chỉ định trường `model` để chọn dịch vụ |
+| `http://127.0.0.1:18610/muse/v1` | Muse Text, Ảnh, Video |
+| `http://127.0.0.1:18610/chatgpt/v1` | ChatGPT Web Text, Ảnh |
+| `http://127.0.0.1:18610/gemini/v1` | Gemini Web Text, Ảnh |
+
+Mỗi địa chỉ riêng có `GET /models` và chỉ chấp nhận mô-đun phù hợp. Nếu bỏ `model`, API riêng tự chọn theo đường dẫn và loại tác vụ. Ví dụ, `POST /gemini/v1/chat/completions` mặc định dùng `gemini-web/text`. Tạo và thăm dò tác vụ ảnh với cùng Base URL. URL tải tệp kết quả vẫn có dạng `/v1/media/...`. Có thể nhập một trong các Base URL này vào trường **Base URL mac2API** của adapter MacFlow.
+
+### Cấp khóa API cho nhiều người dùng
+
+Trong bảng quản trị, mở **Khóa người dùng**, nhập nhãn rồi chọn các nhà cung cấp được phép. Sao chép khóa `m2c_…` ngay sau khi tạo và điền vào trường **API Key** trong MacFlow hoặc ứng dụng gọi API. Mỗi người hoặc ứng dụng có thể dùng khóa riêng. Khóa quản trị `m2a_…` vẫn dùng được để vận hành dịch vụ và quản lý toàn bộ tác vụ.
+
+Khóa người dùng chỉ xem được tác vụ của chính khóa đó. Tệp do khóa này tạo cần khóa của chủ tác vụ hoặc liên kết kết quả có chữ ký. Liên kết tải có hiệu lực tối đa 7 ngày. Gọi lại API tác vụ để lấy liên kết mới. Khi thu hồi khóa, các liên kết do khóa đó nhận cũng hết hiệu lực. Các tệp được tạo bằng khóa quản trị tiếp tục tải theo cơ chế cũ.
+
+Mỗi khóa có tối đa 20 yêu cầu `POST` mỗi phút, 2 yêu cầu `POST` đồng thời và 2 tác vụ media đang chờ hoặc đang chạy. Việc đọc trạng thái tác vụ dùng `GET`. Các khóa cùng chia sẻ tài khoản nhà cung cấp, hạn mức upstream, kho media và khe Chromium của tiến trình. Cấu hình này hỗ trợ nhiều người dùng trên một tiến trình mac2API với thư mục `data/` bền vững.
+
 ## ChatGPT Web và Gemini Web
 
 Các mô-đun mới dùng một Base URL và khóa mac2API. `muse/text`, `chatgpt/text` và `gemini-web/text` dùng `/v1/chat/completions`. `muse/image`, `chatgpt/image` và `gemini-web/image` dùng `/v1/images/generations` hoặc `/v1/images/tasks`. `muse/video` dùng `/v1/videos`. Tên Muse cũ vẫn dùng được.
@@ -130,7 +151,7 @@ open -na "Google Chrome" --args --remote-debugging-port=19211 --user-data-dir="$
 
 Trong cửa sổ vừa mở, đăng nhập ChatGPT và Gemini bằng tài khoản bạn muốn dùng, rồi giữ Chrome mở. Mở tab **ChatGPT Web** hoặc **Gemini Web** trong bảng quản trị và bấm **Kết nối Chrome** để kiểm tra và lưu cổng 19211. Nếu dùng cổng khác, đặt `MUSE2API_WEB_CDP_PORT` trên máy chạy dịch vụ. Nạp tiện ích v1.0.4 vào Chrome này. Mở tab đã đăng nhập và chọn **ChatGPT** hoặc **Gemini** trong tiện ích. Bảng quản trị hiển thị thời điểm xác minh trong đúng mục. Bạn cũng có thể bấm **Kiểm tra phiên trình duyệt** ở bảng quản trị, rồi thử chat. Chỉ dùng cổng DevTools cục bộ. Bản mac2API trên Render không tự dùng được Chrome trên máy Mac.
 
-Các mô-đun web tạo một ảnh từ mô tả, tùy quyền của tài khoản. Chat web lấy câu trả lời hoàn chỉnh rồi mới trả về, kể cả khi client yêu cầu SSE. Mỗi yêu cầu mở và đóng tab riêng. Khả năng hoạt động phụ thuộc vào giao diện của từng trang web.
+Các mô-đun web tạo một ảnh từ mô tả, tùy quyền của tài khoản. Chat web lấy câu trả lời hoàn chỉnh rồi mới trả về, kể cả khi client yêu cầu SSE. Mỗi yêu cầu mở và đóng tab riêng. mac2API xóa bản nháp và kiểm tra ô nhập trước khi gửi. Muse thử mở một phiên riêng mới nếu vẫn còn tệp hoặc nội dung cũ. Nếu còn bị kẹt, tác vụ dừng và giải thích trong phần **Chi tiết lỗi**. Chỉ các tệp trong ô nhập của tác vụ mới được dọn.
 
 Để thêm nhà cung cấp media trong MacFlow/Toonflow, nhập [mac2Api.ts](adapters/mac2Api.ts). Tệp này khai báo mô-đun ảnh và video. Các mô-đun chat dùng cấu hình nhà cung cấp văn bản với giao thức OpenAI Chat Completions.
 
