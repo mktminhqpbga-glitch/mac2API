@@ -86,6 +86,7 @@ function taskErrorDetail(context: Context, value: unknown) {
   }
   const detail = key ? value.split(key).join("[đã ẩn]") : value;
   return detail
+    .replace(/^模型未生成媒体[，,]\s*仅返回文本\s*[:：]\s*/, "Muse chỉ trả văn bản và chưa gửi tệp kết quả. Phản hồi của Muse: ")
     .replace(/\bBearer\s+\S+/gi, "Bearer [đã ẩn]")
     .replace(/\bm2a_[\w-]+/gi, "[đã ẩn]")
     .replace(/\b(?:https?|socks5h?):\/\/[^\s<>"']+/gi, "[đã ẩn URL]")
@@ -170,7 +171,7 @@ function imageInput(input: MediaInput) {
 export default {
   id: "mac2ApiMuse",
   label: "mac2API · Muse",
-  version: "2.0.3",
+  version: "2.0.4",
   readme: "Tạo ảnh và video qua tài khoản Muse đã cấu hình trong mac2API. Dùng Base URL và khóa m2a_ của mac2API.",
   rules: [
     { type: "input", field: "baseUrl", title: "Base URL mac2API", value: "https://mac2api.onrender.com/v1",

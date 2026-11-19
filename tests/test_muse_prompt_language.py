@@ -43,14 +43,21 @@ async def run():
         assert (await client.put("/admin/muse-prompt", json={"language": "en"})).status_code == 401
         assert (await client.put("/admin/muse-prompt", headers=headers,
                                  json={"language": "invalid"})).status_code == 422
-        for language, expected in [("vi", "tiếng Việt"), ("en", "English"), ("zh", "全新文生图创作")]:
+        for language, expected, delivery in [
+            ("vi", "tiếng Việt", "đính kèm tệp ảnh kết quả"),
+            ("en", "English", "attach the resulting image file"),
+            ("zh", "全新文生图创作", "附上图片成品"),
+        ]:
             response = await client.put("/admin/muse-prompt", headers=headers, json={"language": language})
             assert response.status_code == 200
             assert app.Store(app.CFG).muse_prompt_language() == language
             with patch.object(app, "_queue_image", return_value={"ok": True}) as queue:
                 response = await client.post("/v1/images/tasks", headers=headers, json={"prompt": original})
             assert response.status_code == 200
-            assert expected in queue.call_args.args[1] and original in queue.call_args.args[1]
+            submitted = queue.call_args.args[1]
+            assert expected in submitted and original in submitted
+            assert submitted.index(original) < submitted.index(delivery)
+            assert "Viết lời xác nhận" not in submitted and "Write the confirmation" not in submitted
         assert (await client.get("/admin/muse-prompt", headers=headers)).json() == {"language": "zh"}
     print("PASS: default Vietnamese, three persisted languages, authenticated settings, media and chat prompts")
 

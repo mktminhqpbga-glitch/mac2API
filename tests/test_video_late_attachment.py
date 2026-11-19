@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def load_waiter(path):
     tree = ast.parse(Path(path).read_text(encoding="utf-8"))
     engine = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "MuseEngine")
-    names = {"_wait_attachment", "_clean_model_text", "_media_refusal_text", "_media_status_pending"}
+    names = {"_wait_attachment", "_clean_model_text", "_media_refusal_text", "_media_status_pending", "_media_text_error"}
     methods = [n for n in engine.body if isinstance(n, ast.FunctionDef) and n.name in names]
     module = ast.Module(body=[
         ast.ClassDef(name="MuseGenerationError", bases=[ast.Name(id="RuntimeError", ctx=ast.Load())],
@@ -30,7 +30,7 @@ def load_waiter(path):
     return scope
 
 
-def scenario(source, text, ready_at=25, timeout=90, later_text=None, stop_until=0, cover=False):
+def scenario(source, text, ready_at=25, timeout=90, later_text=None, stop_until=0, cover=False, expect="video"):
     scope = load_waiter(source)
     clock = SimpleNamespace(now=0.0)
     def sleep(seconds):
@@ -53,7 +53,7 @@ def scenario(source, text, ready_at=25, timeout=90, later_text=None, stop_until=
         return []
     waiter.attachments = attachments
     try:
-        result = waiter._wait_attachment("", timeout, "video")
+        result = waiter._wait_attachment("", timeout, expect)
         outcome = "video" if result and result.get("vSrc") else "timeout"
         return {"outcome": outcome, "elapsed": round(clock.now, 1)}
     except scope["MuseGenerationError"] as exc:
@@ -76,6 +76,10 @@ def cases(source):
     refusal = "视频没生成成功：你这个账号所在的国家/地区目前不支持视频生成。"
     result["explicit_refusal"] = scenario(source, refusal)
     result["claim_then_refusal"] = scenario(source, cn, later_text=(12, refusal))
+    result["image_approval_reply"] = scenario(
+        source, "Phương án tạo ảnh, bạn duyệt giúp mình nhé: 1 ảnh con mèo", ready_at=None, expect="image")
+    result["image_account_check_reply"] = scenario(
+        source, "Please confirm your account region.", ready_at=None, expect="image")
     for label, text in (
         ("negated_cn", "视频没有生成成功，请重新尝试。"),
         ("negated_en", "The video has not been generated successfully. Please try again."),
@@ -107,6 +111,11 @@ def main():
         else:
             assert item["outcome"] == "MuseModelRefusalError", (name, item)
             assert item["elapsed"] < 25, (name, item)
+            if name == "image_approval_reply":
+                assert "Muse đã gửi phương án chờ duyệt" in item["error"], item
+                assert "1 ảnh con mèo" in item["error"], item
+            if name == "image_account_check_reply":
+                assert "Muse chỉ trả văn bản" in item["error"], item
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     print(f"PASS: {len(result)} late-video, deadline, cover and refusal cases")
 

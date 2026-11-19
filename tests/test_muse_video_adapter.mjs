@@ -41,6 +41,25 @@ for (const name of ['mac2ApiMuse', 'mac2Api']) {
       return true;
     });
   });
+
+  test(`${name} translates the saved text-only media error and preserves the reply`, {
+    skip: !process.features.typescript && 'Node TypeScript stripping is required',
+  }, async () => {
+    const { default: adapter } = await import(`../adapters/${name}.ts`);
+    const { context } = fixture();
+    context.tool.fetch = async (_url, options) => {
+      assert.equal(options.method, 'GET');
+      return Response.json({
+        status: 'failed', error: '模型未生成媒体，仅返回文本: Phương án tạo ảnh, bạn duyệt giúp mình nhé',
+      });
+    };
+    await assert.rejects(adapter.resumeTask.call(context, { id: 'task_fixture', kind: 'image', base: `${base}/v1` }), (error) => {
+      assert.equal(error.code, 'MEDIA_TASK_FAILED');
+      assert.match(error.message, /task_fixture.*Muse chỉ trả văn bản.*Phương án tạo ảnh/);
+      assert.doesNotMatch(error.message, /模型未生成媒体/);
+      return true;
+    });
+  });
 }
 
 for (const name of ['mac2ApiMuse', 'mac2Api']) {

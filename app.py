@@ -977,6 +977,17 @@ _MUSE_PROMPT_LABELS = {
     "en": {"image": "image", "video": "video", "audio": "audio clip", "document": "document"},
 }
 
+_MUSE_MEDIA_DELIVERY = {
+    "vi": "Dùng chức năng tạo {kind} của Muse ngay trong lượt này và đính kèm tệp {kind} kết quả. "
+          "Khi mô tả đủ để thực hiện, hãy tạo trực tiếp, đừng trình phương án hoặc xin duyệt. "
+          "Nếu có chú thích hoặc cần báo lý do chưa thể tạo, dùng tiếng Việt.",
+    "en": "Use Muse's {kind} generation in this turn and attach the resulting {kind} file. "
+          "When the description is sufficient, generate it now without a proposal or approval step. "
+          "Use English for any caption or explanation if generation is unavailable.",
+    "zh": "请在本轮使用 Muse 的生成能力直接生成并附上{kind}成品。"
+          "描述充分时直接生成，无需提交方案或请求确认。若无法生成，请说明原因。",
+}
+
 
 def _media_prompt_localized(r, refs, kinds, language, *, video=False):
     """Build the translated media instructions around the caller's original description."""
@@ -1043,10 +1054,10 @@ def _media_prompt_localized(r, refs, kinds, language, *, video=False):
         parts.append(f"Thời lượng chính xác {duration} giây." if vi else f"Duration must be exactly {duration} seconds.")
         if r.resolution:
             parts.append(f"Độ phân giải: {r.resolution}." if vi else f"Resolution: {r.resolution}.")
-    parts.append("Viết lời xác nhận bằng tiếng Việt." if vi else "Write the confirmation in English.")
     parts.append(r.prompt)
     if r.extra:
         parts.append(r.extra)
+    parts.append(_MUSE_MEDIA_DELIVERY[language].format(kind=labels["video" if video else "image"]))
     return "\n".join(parts)
 
 
@@ -1113,6 +1124,7 @@ def build_image_prompt(r: ImageRequest, kinds: list[str] | None = None, *, langu
 
     if r.extra:
         parts.append(r.extra)
+    parts.append(_MUSE_MEDIA_DELIVERY["zh"].format(kind="图片"))
     return "，".join(parts)
 
 
@@ -1388,6 +1400,7 @@ def build_video_prompt(r: VideoRequest, kinds: list[str] | None = None, *, langu
         parts.append(f"画质规格：{r.resolution}")
     if r.extra:
         parts.append(r.extra)
+    parts.append(_MUSE_MEDIA_DELIVERY["zh"].format(kind="视频"))
     return "，".join(parts)
 
 

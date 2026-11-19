@@ -1474,7 +1474,7 @@ class MuseEngine:
                 else:
                     refusal_last, refusal_stable = refusal, 0
                 if refusal_stable >= 4 and elapsed > 8.0:
-                    raise MuseModelRefusalError(f"模型未生成媒体，仅返回文本: {refusal}")
+                    raise self._media_text_error(refusal)
             else:
                 refusal_last, refusal_stable = "", 0
 
@@ -1487,9 +1487,7 @@ class MuseEngine:
                     else:
                         last_txt, txt_stable = cur_txt, 0
                     if txt_stable >= 15 and elapsed > 8.0:
-                        clean = self._clean_model_text(cur_txt)
-                        raise MuseModelRefusalError(
-                            f"模型未生成媒体，仅返回文本: {clean}")
+                        raise self._media_text_error(cur_txt)
                 else:
                     txt_stable = 0
             else:
@@ -1510,6 +1508,18 @@ class MuseEngine:
     def _clean_model_text(text: str, limit: int = 240) -> str:
         clean = re.sub(r"\s+", " ", text or "").strip()
         return clean[:limit]
+
+    @classmethod
+    def _media_text_error(cls, text: str) -> MuseModelRefusalError:
+        if re.search(
+            r"\b(?:bạn duyệt giúp|bạn xác nhận phương án|(?:please|kindly) approve)\b|"
+            r"\b(?:please|kindly) confirm (?:the|this) (?:plan|proposal|prompt)\b|"
+            r"请(?:先|您)?确认[^。！？\n]{0,24}(?:方案|后再生成)", text, re.I
+        ):
+            reason = "Muse đã gửi phương án chờ duyệt và chưa trả tệp kết quả."
+        else:
+            reason = "Muse chỉ trả văn bản và chưa gửi tệp kết quả."
+        return MuseModelRefusalError(f"{reason} Phản hồi của Muse: {cls._clean_model_text(text)}")
 
     @staticmethod
     def _media_status_pending(text: str) -> bool:

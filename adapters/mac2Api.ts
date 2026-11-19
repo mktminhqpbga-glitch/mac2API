@@ -86,6 +86,7 @@ function taskErrorDetail(context: Context, value: unknown) {
   }
   const detail = key ? value.split(key).join("[đã ẩn]") : value;
   return detail
+    .replace(/^模型未生成媒体[，,]\s*仅返回文本\s*[:：]\s*/, "Muse chỉ trả văn bản và chưa gửi tệp kết quả. Phản hồi của Muse: ")
     .replace(/\bBearer\s+\S+/gi, "Bearer [đã ẩn]")
     .replace(/\bm2a_[\w-]+/gi, "[đã ẩn]")
     .replace(/\b(?:https?|socks5h?):\/\/[^\s<>"']+/gi, "[đã ẩn URL]")
@@ -176,7 +177,7 @@ function imageInput(input: MediaInput) {
 export default {
   id: "mac2Api",
   label: "mac2API",
-  version: "2.0.3",
+  version: "2.0.4",
   readme: "Dùng một Base URL và khóa m2a_ của mac2API. ChatGPT Web và Gemini Web cần Chrome đã đăng nhập trên cùng máy với mac2API. Adapter này thêm mô-đun ảnh và video.",
   rules: [
     { type: "input", field: "baseUrl", title: "Base URL mac2API", value: "https://mac2api.onrender.com/v1",

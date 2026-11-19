@@ -1,5 +1,10 @@
 # Nhật ký và bàn giao mac2API
 
+## Tạo ảnh và video trực tiếp trong Muse
+
+- Chỉ dẫn tạo media yêu cầu Muse đính kèm tệp kết quả ngay trong lượt hiện tại khi mô tả đã đủ.
+- Khi Muse chỉ gửi phương án chờ duyệt hoặc trả văn bản, mac2API báo rõ lý do bằng tiếng Việt. Adapter Muse 2.0.4 hiển thị tiếng Việt cho cả lỗi chỉ trả văn bản được lưu ở bản cũ.
+
 ## Kiểm tra trang Muse và thông báo quá hạn
 
 - Muse có thể bắt đầu khi ô chat đã sẵn sàng trong lúc tài nguyên phụ còn tải. Lỗi điều hướng rõ ràng được phát hiện sớm. Một số lỗi kết nối tạm thời được thử lại một lần trong cùng phiên trình duyệt và cùng tuyến proxy của tài khoản.
