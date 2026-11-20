@@ -168,6 +168,32 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(accounts.busy_accounts)
             self.assertEqual(app.store.get_task(task_id)["status"], "completed")
 
+    async def test_video_duration_reaches_muse_prompt_without_a_preset_or_default(self):
+        endpoint = "/v1/videos"
+        with patch.object(app, "_start_media_worker", side_effect=lambda task, *_: task) as start:
+            for duration, marker in ((125, "125 giây"), (None, None)):
+                body = {"prompt": "Video fixture", "aspect_ratio": "9:16", "resolution": "1080p"}
+                if duration is not None:
+                    body["duration"] = duration
+                response = await self.http.post(endpoint, headers=self.a, json=body)
+                self.assertEqual(response.status_code, 200, response.text)
+                task_id = response.json()["task_id"]
+                prompt = app.store.get_task(task_id)["api_prompt"]
+                for token in (body["prompt"], "9:16", "1080p"):
+                    self.assertIn(token, prompt)
+                if marker:
+                    self.assertIn(marker, prompt)
+                    self.assertIn("thời lượng gần nhất", prompt)
+                else:
+                    self.assertNotIn("Thời lượng mong muốn", prompt)
+                cancelled = await self.http.post(f"{endpoint}/{task_id}/cancel", headers=self.a)
+                self.assertEqual(cancelled.status_code, 200, cancelled.text)
+            for duration in (0, -1, 2.5):
+                response = await self.http.post(endpoint, headers=self.a,
+                                                json={"prompt": "Video fixture", "duration": duration})
+                self.assertIn(response.status_code, (400, 422), response.text)
+            self.assertEqual(start.call_count, 2)
+
     async def test_missing_references_are_rejected_before_browser_admission(self):
         with patch.object(app, "_start_media_worker", side_effect=AssertionError("invalid input started a worker")):
             for endpoint, prompt in (

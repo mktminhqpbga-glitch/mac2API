@@ -21,6 +21,12 @@ async def run():
     prompt = app.build_video_prompt(video, language="vi")
     assert all(text in prompt for text in (original, "9:16", "720x1280", "5 giây", "tiếng Việt"))
     assert not re.search(r"[\u4e00-\u9fff]", prompt)
+    for language, marker in (("en", "125 seconds"), ("zh", "125 秒")):
+        video = app.VideoRequest(prompt=original, duration=125)
+        assert marker in app.build_video_prompt(video, language=language)
+        video.duration = None
+        assert all(token not in app.build_video_prompt(video, language=language)
+                   for token in ("Target duration", "目标时长"))
 
     mixed = app.VideoRequest(prompt="[图1] dùng cùng video", images=["a"], videos=["b"])
     prompt = app.build_video_prompt(mixed, ["image", "video"], language="en")

@@ -1,8 +1,8 @@
 export default {
     id: "mac2ApiMuse",
     label: "mac2API · Muse",
-    version: "2.0.9",
-    readme: "Tạo ảnh và video qua tài khoản Muse đã cấu hình trong mac2API. Độ phân giải, tỷ lệ và thời lượng là thông số yêu cầu gửi tới Muse. Kết quả thực tế phụ thuộc vào Muse. Nhập Base URL đang dùng và khóa người dùng mac2API (m2c_…).",
+    version: "2.0.10",
+    readme: "Tạo ảnh và video qua tài khoản Muse đã cấu hình trong mac2API. Trong cài đặt video, ô Thời lượng tùy chỉnh (giây) ghi đè thời lượng chọn nhanh khi có giá trị. Độ phân giải, tỷ lệ và thời lượng là thông số yêu cầu gửi tới Muse. Kết quả thực tế phụ thuộc vào Muse. Nhập Base URL đang dùng và khóa người dùng mac2API (m2c_…).",
     rules: [
         {
             type: "input",
@@ -91,6 +91,19 @@ export default {
             ],
             rules: [
                 {
+                    type: "input",
+                    field: "mac2ApiVideoDuration",
+                    title: "Thời lượng tùy chỉnh (giây)",
+                    value: "",
+                    required: false,
+                    props: {
+                        type: "number",
+                        min: 1,
+                        step: 1,
+                        placeholder: "Dùng thời lượng chọn nhanh"
+                    }
+                },
+                {
                     type: "select",
                     field: "mac2ApiVideoRatio",
                     title: "Khung hình Muse",
@@ -144,7 +157,8 @@ export default {
     },
     async generateVideo (input) {
         checkPrompt(input, [
-            "mac2ApiVideoRatio"
+            "mac2ApiVideoRatio",
+            "mac2ApiVideoDuration"
         ]);
         if (input.model !== "muse/video" || input.mode && ![
             "text",
@@ -529,17 +543,12 @@ function videoOptions(input) {
     ].includes(requestedResolution.toLowerCase())) {
         throw new Error("Hãy chọn mức video 740, 1080, 1K, 2K hoặc 4K.");
     }
-    const duration = input.duration;
-    if (duration !== undefined && ![
-        5,
-        10,
-        15,
-        20,
-        30,
-        45,
-        60
-    ].includes(duration)) {
-        throw new Error("Hãy chọn thời lượng 5, 10, 15, 20, 30, 45 hoặc 60 giây.");
+    const override = input.other?.mac2ApiVideoDuration;
+    const value = typeof override === "string" ? override.trim() : override;
+    const duration = value == null || value === "" ? input.duration ?? undefined
+        : typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value;
+    if (duration !== undefined && (!Number.isSafeInteger(duration) || duration < 1)) {
+        throw new Error("Thời lượng video phải là số nguyên dương (giây).");
     }
     return {
         ...ratio ? {

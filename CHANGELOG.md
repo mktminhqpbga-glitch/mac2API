@@ -1,5 +1,10 @@
 # Nhật ký và bàn giao mac2API
 
+## Thời lượng video Muse
+
+- Adapter Muse 2.0.10 giữ các mốc chọn nhanh và thêm ô nhập số giây tùy chỉnh. Mục Thử API cũng nhận số giây dương ngoài các mốc có sẵn.
+- API chuyển thời lượng đã chọn thành mục tiêu cho Muse. Khi bỏ trống, Muse làm theo mô tả và thiết lập của mình. Thời lượng thực tế tùy clip Muse trả về.
+
 ## Chẩn đoán lỗi tạo ảnh và video Muse
 
 - Dùng cùng ô nhập đang hiển thị để điền mô tả và kiểm tra tệp. Cho nút Gửi tối đa 10 giây trong thời hạn tác vụ. Chi tiết tác vụ phân biệt ô nhập làm mất mô tả, thiếu nút Gửi và nút Gửi bị khóa.

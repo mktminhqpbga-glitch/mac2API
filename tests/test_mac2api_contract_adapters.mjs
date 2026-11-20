@@ -142,20 +142,32 @@ test("Muse exposes the pre-send missing-reference error and stops", async () => 
     assert.deepEqual(f.traffic, [["GET", "/capabilities"], ["POST", "/images/tasks"]]);
 });
 
-test("Muse keeps structured 9:16 and 1080p in the same video request", async () => {
+test("Muse forwards preset and unrestricted durations with the selected ratio and resolution", async () => {
     const { default: adapter } = await import("../adapters/2.0.7/mac2ApiMuse.ts");
-    const f = fixture((path, init) => {
-        if (path === "/capabilities") return discovery("muse/video");
-        if (path === "/videos") {
-            const payload = JSON.parse(init.body);
-            assert.equal(payload.aspect_ratio, "9:16");
-            assert.equal(payload.resolution, "1080p");
-            assert.equal(payload.duration, 45);
-            return Response.json({ ...receipt, kind: "video" });
-        }
-        return Response.json({ status: "completed", url: "/v1/media/fixture.mp4" });
-    });
-    const output = await adapter.generateVideo.call(f.context, { model: "muse/video", prompt: "Video thử",
-        mode: "text", duration: 45, ratio: "9:16", resolution: "1080" });
-    assert.equal(output[0].mediaType, "video");
+    const request = { model: "muse/video", prompt: "Video thử", mode: "text", ratio: "9:16", resolution: "1080" };
+    for (const [duration, customDuration, expected] of [
+        [45, "", 45], [73, undefined, 73], [5, "125", 125], [10, 120, 120], [undefined, "", undefined],
+    ]) {
+        const f = fixture((path, init) => {
+            if (path === "/capabilities") return discovery("muse/video");
+            if (path === "/videos") {
+                const payload = JSON.parse(init.body);
+                assert.equal(payload.aspect_ratio, "9:16");
+                assert.equal(payload.resolution, "1080p");
+                assert.equal(payload.duration, expected);
+                return Response.json({ ...receipt, kind: "video" });
+            }
+            return Response.json({ status: "completed", url: "/v1/media/fixture.mp4" });
+        });
+        const output = await adapter.generateVideo.call(f.context, { ...request, duration,
+            other: { mac2ApiVideoDuration: customDuration } });
+        assert.equal(output[0].mediaType, "video");
+        assert.equal(f.traffic.filter(([method]) => method === "POST").length, 1);
+    }
+    const invalid = fixture(() => assert.fail("Invalid video duration tried to contact mac2API"));
+    for (const customDuration of [0, -1, 2.5, "10 giây", Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+        await assert.rejects(adapter.generateVideo.call(invalid.context, { ...request,
+            other: { mac2ApiVideoDuration: customDuration } }), /số nguyên dương/);
+    }
+    assert.equal(invalid.saved.length, 0);
 });

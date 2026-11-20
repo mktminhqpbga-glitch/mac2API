@@ -1078,6 +1078,12 @@ _MUSE_MEDIA_DELIVERY = {
           "若无法生成或原请求需要替代方案，请说明原因。",
 }
 
+_MUSE_VIDEO_DURATION = {
+    "vi": "Thời lượng mong muốn là {duration} giây. Nếu Muse chỉ hỗ trợ các thời lượng cố định, hãy tạo và đính kèm clip có thời lượng gần nhất.",
+    "en": "Target duration: {duration} seconds. If Muse offers fixed lengths, generate and attach the closest available clip.",
+    "zh": "目标时长为 {duration} 秒。如果 Muse 只支持固定时长，请直接生成并附上最接近该时长的视频。",
+}
+
 
 def _media_prompt_localized(r, refs, kinds, language, *, video=False):
     """Build the translated media instructions around the caller's original description."""
@@ -1145,8 +1151,8 @@ def _media_prompt_localized(r, refs, kinds, language, *, video=False):
             shape = (r.aspect_ratio or r.size)
             parts.append(f"Kích thước hoặc tỷ lệ: {shape}." if vi else f"Size or aspect ratio: {shape}.")
     if video:
-        duration = r.duration or 6
-        parts.append(f"Thời lượng chính xác {duration} giây." if vi else f"Duration must be exactly {duration} seconds.")
+        if r.duration is not None:
+            parts.append(_MUSE_VIDEO_DURATION[language].format(duration=r.duration))
         if r.resolution:
             parts.append(f"Độ phân giải: {r.resolution}." if vi else f"Resolution: {r.resolution}.")
     parts.append(r.prompt)
@@ -1480,7 +1486,6 @@ def build_video_prompt(r: VideoRequest, kinds: list[str] | None = None, *, langu
     user_prompt = r.prompt.strip()
     ar = (r.aspect_ratio or "").strip().lower()
     sz = (r.size or "").strip().lower()
-    dur = r.duration or 6
     refs = _video_references(r)
     has_ref = bool(refs)
     kinds = kinds or ["image"] * len(refs)
@@ -1513,22 +1518,24 @@ def build_video_prompt(r: VideoRequest, kinds: list[str] | None = None, *, langu
         dimensions = (", 720x1280" if (r.resolution or "").strip().lower()
                       in ("", "720", "720p", "720x1280") else "")
         if has_ref:
-            parts.append(f"{reference_instruction}：生成一个严格9:16竖屏手机满屏的动态{gen_word}（9:16 vertical portrait video{dimensions}，高大于宽的手机全屏竖版画面，严禁生成横屏或黑边，时长严格为 {dur} 秒）：{user_prompt}")
+            parts.append(f"{reference_instruction}：生成一个严格9:16竖屏手机满屏的动态{gen_word}（9:16 vertical portrait video{dimensions}，高大于宽的手机全屏竖版画面，严禁生成横屏或黑边）：{user_prompt}")
         else:
-            parts.append(f"全新文生视频创作（纯文本全新生成，严禁参考任何历史图片或上下文）：生成一个严格9:16竖屏手机满屏视频（9:16 vertical portrait video{dimensions}，高大于宽的手机全屏竖版画面，严禁生成横屏或带有左右黑边，保持垂直构图，时长严格为 {dur} 秒）：{user_prompt}")
+            parts.append(f"全新文生视频创作（纯文本全新生成，严禁参考任何历史图片或上下文）：生成一个严格9:16竖屏手机满屏视频（9:16 vertical portrait video{dimensions}，高大于宽的手机全屏竖版画面，严禁生成横屏或带有左右黑边，保持垂直构图）：{user_prompt}")
     elif any(k in ar or k in sz for k in ("16:9", "16/9", "landscape", "横屏", "1280x720", "1920x1080")):
         if has_ref:
-            parts.append(f"{reference_instruction}：生成一个16:9宽屏横屏{gen_word}（16:9 widescreen landscape video，时长严格为 {dur} 秒）：{user_prompt}")
+            parts.append(f"{reference_instruction}：生成一个16:9宽屏横屏{gen_word}（16:9 widescreen landscape video）：{user_prompt}")
         else:
-            parts.append(f"全新文生视频创作（纯文本全新生成，严禁参考任何历史图片或上下文）：生成一个16:9横屏宽屏视频（16:9 widescreen landscape video，时长严格为 {dur} 秒）：{user_prompt}")
+            parts.append(f"全新文生视频创作（纯文本全新生成，严禁参考任何历史图片或上下文）：生成一个16:9横屏宽屏视频（16:9 widescreen landscape video）：{user_prompt}")
     else:
         if has_ref:
-            parts.append(f"{reference_instruction}：生成动态{gen_word}（时长严格为 {dur} 秒）：{user_prompt}")
+            parts.append(f"{reference_instruction}：生成动态{gen_word}：{user_prompt}")
         else:
-            parts.append(f"全新文生视频创作（纯文本全新生成，严禁参考任何历史图片或上下文）：生成一个视频（时长严格为 {dur} 秒）：{user_prompt}")
+            parts.append(f"全新文生视频创作（纯文本全新生成，严禁参考任何历史图片或上下文）：生成一个视频：{user_prompt}")
         if r.aspect_ratio:
             parts.append(f"画面比例：{r.aspect_ratio}")
 
+    if r.duration is not None:
+        parts.append(_MUSE_VIDEO_DURATION["zh"].format(duration=r.duration))
     if r.resolution:
         parts.append(f"画质规格：{r.resolution}")
     if r.extra:
@@ -2369,15 +2376,17 @@ async def create_video(req: VideoRequest, _=Depends(api_auth), request: Request 
     existing = _replayed_media_task(store.tasks.values(), "video", "muse", owner, submission)
     if existing:
         return _task_receipt(existing)
+    if req.duration is not None and req.duration <= 0:
+        raise HTTPException(400, {"code": "UNSUPPORTED_MEDIA_OPTIONS",
+                                  "message": "Thời lượng video phải là số nguyên dương (giây)."})
     if owner:
         ratio = (req.aspect_ratio or "").strip().lower()
         resolution = (req.resolution or "").strip().lower()
-        if ((req.duration is not None and req.duration <= 0)
-                or (ratio and not re.fullmatch(r"[1-9]\d*[:/][1-9]\d*|portrait|landscape|auto", ratio))
+        if ((ratio and not re.fullmatch(r"[1-9]\d*[:/][1-9]\d*|portrait|landscape|auto", ratio))
                 or (resolution and not re.fullmatch(
                     r"[1-9]\d{2,3}p?|[1-9]\d?k|[1-9]\d{2,4}x[1-9]\d{2,4}|auto|default", resolution))):
             raise HTTPException(400, {"code": "UNSUPPORTED_MEDIA_OPTIONS",
-                                      "message": "Thời lượng, tỷ lệ hoặc độ phân giải video không được hỗ trợ."})
+                                      "message": "Tỷ lệ hoặc độ phân giải video không được hỗ trợ."})
     _check_media_admission(store.tasks.values(), "video", owner)
     ref_images = await asyncio.to_thread(
         _prepare_reference_images, _video_references(req), **({"public_only": True} if owner else {}))

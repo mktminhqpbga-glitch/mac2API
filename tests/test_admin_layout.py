@@ -38,6 +38,7 @@ class Handler(BaseHTTPRequestHandler):
    data={'tasks':[{'id':'fixture-task','kind':'video','prompt':'fixture task','status':'failed','error':'参考素材上传未确认（0/1），已停止生成','created_at':now-7,'account':'fixture00000','queue_elapsed':2.0,'elapsed':5.0,'total_elapsed':7.0,'attempt':1,
                    'error_code':'MUSE_REFERENCE_UPLOAD_UNCONFIRMED','error_stage':'before_send',
                    'reference_count':1,'confirmed_reference_count':0}]};kind='application/json'
+  elif path=='/v1/videos/fixture-video':data={'status':'failed','error':'fixture only'};kind='application/json'
   elif path.endswith('/thumbnail'):data=thumbnail_bytes;kind='image/jpeg'
   elif path.endswith('.mp4'):data=video_bytes;kind='video/mp4'
   else:data={'browser_running':True,'media_count':2,'status':'ok','generation_queue':{'queue_timeout':3600},'config':{'image_timeout':240,'video_timeout':600}};kind='application/json'
@@ -49,6 +50,8 @@ class Handler(BaseHTTPRequestHandler):
   events.append({'method':'POST','path':path,'body':body})
   if path=='/admin/web-providers/connect-profile':
    reply={'configured':True,'profile_connected':True,'ready':[],'local_setup':True}
+  elif path=='/v1/videos':
+   reply={'id':'fixture-video','status':'queued'}
   else:
    reply={'ok':True,'proxy_reachable':True,'session_ok':True,'exit_ip':'198.51.100.7','workspace_status':'assigned','tested_saved_proxy':False}
   data=json.dumps(reply).encode()
@@ -92,6 +95,12 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
   wait("$('tab-openai').querySelector('[data-provider-status]').textContent.includes('Đã kết nối Chrome')")
   assert any(item['path']=='/admin/web-providers/connect-profile' for item in events)
   assert page.js("$('tab-openai').querySelector('[data-provider-test]').disabled")
+  page.js("goTab('play');$('vidDur').value='125';$('vidBtn').click()")
+  wait("$('vidRes').textContent.includes('fixture only') && !$('vidBtn').disabled")
+  assert events[-1]['path']=='/v1/videos' and events[-1]['body']['duration']==125
+  page.js("$('vidDur').value='0';$('vidBtn').click()")
+  assert page.js("!$('vidBtn').disabled && $('vidDur').validity.rangeUnderflow")
+  assert sum(item['path']=='/v1/videos' for item in events)==1
   page.js("document.querySelector('[data-t=pool]').click()")
   events.clear()
   measure="""(()=>{const m=document.querySelector('main'),w=document.querySelector('#poolBody').closest('.tblwrap'),n=document.querySelector('#poolBody td.ellip');return {viewport:innerWidth,mainWidth:m.getBoundingClientRect().width,bodyWidth:document.documentElement.scrollWidth,tableWidth:w.clientWidth,tableScroll:w.scrollWidth,noteDisplay:getComputedStyle(n).display,noteWhiteSpace:getComputedStyle(n).whiteSpace,buttons:document.querySelectorAll('#poolBody tr:first-child button').length}})()"""
