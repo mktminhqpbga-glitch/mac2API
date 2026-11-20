@@ -1,5 +1,7 @@
 # Nhật ký và bàn giao mac2API
 
+- Lời đề nghị tạo ảnh thay thế của Muse được báo là chờ duyệt với mã `MUSE_CONFIRMATION_REQUIRED`. Chỉ dẫn tạo ảnh và video cho phép chọn mặc định ở các chi tiết phụ còn thiếu.
+
 ## Hợp đồng API v1 cho MacFlow
 
 - Thêm danh mục khả năng theo quyền nhà cung cấp, tra cứu bằng UUID và hủy tác vụ đang chờ. Tác vụ gián đoạn giữ biên nhận để đối chiếu.

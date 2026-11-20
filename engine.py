@@ -251,6 +251,10 @@ class MusePageUnavailable(MuseGenerationError):
 class MuseModelRefusalError(MuseGenerationError):
     """Muse completed the turn with text instead of the requested media."""
 
+    def __init__(self, message: str, *, code: str | None = None):
+        super().__init__(message)
+        self.code = code
+
 
 class RefImageSafetyError(MuseGenerationError):
     """A reference image source is forbidden by the configured input policy."""
@@ -1511,15 +1515,20 @@ class MuseEngine:
 
     @classmethod
     def _media_text_error(cls, text: str) -> MuseModelRefusalError:
+        reply = cls._clean_model_text(text)
         if re.search(
             r"\b(?:bạn duyệt giúp|bạn xác nhận phương án|(?:please|kindly) approve)\b|"
             r"\b(?:please|kindly) confirm (?:the|this) (?:plan|proposal|prompt)\b|"
-            r"请(?:先|您)?确认[^。！？\n]{0,24}(?:方案|后再生成)", text, re.I
+            r"请(?:先|您)?确认[^。！？\n]{0,24}(?:方案|后再生成)|"
+            r"^\s*(?:em|mình|tôi)\s+(?:(?:có thể|sẽ)\s+)?(?:tạo|vẽ|làm)\s+"
+            r"[^.!?？\n]{0,120}\b(?:ảnh|hình|video|clip)\b[^.!?？\n]{0,120}\bnhé\s*[?？]",
+            text, re.I
         ):
-            reason = "Muse đã gửi phương án chờ duyệt và chưa trả tệp kết quả."
-        else:
-            reason = "Muse chỉ trả văn bản và chưa gửi tệp kết quả."
-        return MuseModelRefusalError(f"{reason} Phản hồi của Muse: {cls._clean_model_text(text)}")
+            return MuseModelRefusalError(
+                f"Muse đã gửi phương án chờ duyệt và chưa trả tệp kết quả. Phản hồi của Muse: {reply}",
+                code="MUSE_CONFIRMATION_REQUIRED",
+            )
+        return MuseModelRefusalError(f"Muse chỉ trả văn bản và chưa gửi tệp kết quả. Phản hồi của Muse: {reply}")
 
     @staticmethod
     def _media_status_pending(text: str) -> bool:

@@ -18,11 +18,10 @@ def load_waiter(path):
     engine = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "MuseEngine")
     names = {"_wait_attachment", "_clean_model_text", "_media_refusal_text", "_media_status_pending", "_media_text_error"}
     methods = [n for n in engine.body if isinstance(n, ast.FunctionDef) and n.name in names]
+    errors = [n for n in tree.body if isinstance(n, ast.ClassDef)
+              and n.name in {"MuseGenerationError", "MuseModelRefusalError"}]
     module = ast.Module(body=[
-        ast.ClassDef(name="MuseGenerationError", bases=[ast.Name(id="RuntimeError", ctx=ast.Load())],
-                     keywords=[], body=[ast.Pass()], decorator_list=[]),
-        ast.ClassDef(name="MuseModelRefusalError", bases=[ast.Name(id="MuseGenerationError", ctx=ast.Load())],
-                     keywords=[], body=[ast.Pass()], decorator_list=[]),
+        *errors,
         ast.ClassDef(name="Waiter", bases=[], keywords=[], body=methods, decorator_list=[]),
     ], type_ignores=[])
     scope = {"re": re, "json": json}
@@ -45,6 +44,9 @@ def scenario(source, text, ready_at=25, timeout=90, later_text=None, stop_until=
     waiter._scroll_bottom = lambda: None
     def attachments():
         if ready_at is not None and clock.now >= ready_at:
+            if expect == "image":
+                return [{"tid": "hatch-chat-attachment-presentation-image", "src": "blob:result",
+                         "w": 1024, "h": 1024}]
             return [{"tid": "hatch-chat-attachment-presentation-video", "src": "blob:result",
                      "vSrc": "blob:result", "hasVideo": True, "w": 720, "h": 1280}]
         if cover:
@@ -54,10 +56,13 @@ def scenario(source, text, ready_at=25, timeout=90, later_text=None, stop_until=
     waiter.attachments = attachments
     try:
         result = waiter._wait_attachment("", timeout, expect)
-        outcome = "video" if result and result.get("vSrc") else "timeout"
+        outcome = "timeout"
+        if result and (expect == "image" or result.get("vSrc")):
+            outcome = expect
         return {"outcome": outcome, "elapsed": round(clock.now, 1)}
     except scope["MuseGenerationError"] as exc:
-        return {"outcome": type(exc).__name__, "elapsed": round(clock.now, 1), "error": str(exc)}
+        return {"outcome": type(exc).__name__, "elapsed": round(clock.now, 1), "error": str(exc),
+                "code": getattr(exc, "code", None)}
 
 
 def cases(source):
@@ -80,6 +85,9 @@ def cases(source):
         source, "Phương án tạo ảnh, bạn duyệt giúp mình nhé: 1 ảnh con mèo", ready_at=None, expect="image")
     result["image_account_check_reply"] = scenario(
         source, "Please confirm your account region.", ready_at=None, expect="image")
+    offer = "Em tạo 1 ảnh meme mèo 1:1 thay thế nhé?\nTạo ảnh meme mèo 1:1 thay thế"
+    result["image_alternative_offer"] = scenario(source, offer, ready_at=None, expect="image")
+    result["image_arrives_during_offer"] = scenario(source, offer, ready_at=20, stop_until=22, expect="image")
     for label, text in (
         ("negated_cn", "视频没有生成成功，请重新尝试。"),
         ("negated_en", "The video has not been generated successfully. Please try again."),
@@ -108,12 +116,17 @@ def main():
             assert item["outcome"] == "timeout" and 45 <= item["elapsed"] < 46, (name, item)
         elif name == "stop_lifecycle":
             assert item["outcome"] == "video" and item["elapsed"] >= 30, (name, item)
+        elif name == "image_arrives_during_offer":
+            assert item["outcome"] == "image" and item["elapsed"] >= 20, (name, item)
         else:
             assert item["outcome"] == "MuseModelRefusalError", (name, item)
             assert item["elapsed"] < 25, (name, item)
             if name == "image_approval_reply":
                 assert "Muse đã gửi phương án chờ duyệt" in item["error"], item
                 assert "1 ảnh con mèo" in item["error"], item
+            if name == "image_alternative_offer":
+                assert item["code"] == "MUSE_CONFIRMATION_REQUIRED", item
+                assert "phương án chờ duyệt" in item["error"] and "ảnh meme mèo 1:1" in item["error"], item
             if name == "image_account_check_reply":
                 assert "Muse chỉ trả văn bản" in item["error"], item
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))

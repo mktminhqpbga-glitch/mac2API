@@ -168,6 +168,30 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(accounts.busy_accounts)
             self.assertEqual(app.store.get_task(task_id)["status"], "completed")
 
+    async def test_muse_confirmation_reply_stops_after_one_send(self):
+        for label in ("first", "second"):
+            app.store.add_account({"hatch_sess": label}, label)
+        reply = "Em tạo 1 ảnh meme mèo 1:1 thay thế nhé?\nTạo ảnh meme mèo 1:1 thay thế"
+        with patch.object(app, "_renew_and_persist", return_value=None), \
+             patch.object(app.engine, "start"), patch.object(app.engine, "reset_thread"), \
+             patch.object(app.engine, "close_current_page"), \
+             patch.object(app.engine, "generate", side_effect=app.engine._media_text_error(reply)) as generate:
+            response = await self.http.post("/v1/images/tasks", headers=self.a,
+                                            json={"model": "muse/image", "prompt": "Ảnh meme con mèo"})
+            self.assertEqual(response.status_code, 202)
+            endpoint = "/v1/images/tasks/" + response.json()["task_id"]
+            for _ in range(60):
+                task = (await self.http.get(endpoint, headers=self.a)).json()
+                if task["status"] == "failed":
+                    break
+                await asyncio.sleep(0.02)
+            self.assertEqual(task["status"], "failed")
+            self.assertEqual(task["error_code"], "MUSE_CONFIRMATION_REQUIRED")
+            self.assertIn("phương án chờ duyệt", task["error"])
+            self.assertIn("meme mèo 1:1 thay thế", task["error"])
+            self.assertIsNone(task["result"])
+            generate.assert_called_once()
+
     async def test_backpressure_and_restart(self):
         owner = self.alice["id"]
         req = app.ImageRequest(prompt="fixture", model="muse/image")

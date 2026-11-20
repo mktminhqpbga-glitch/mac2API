@@ -1054,12 +1054,15 @@ _MUSE_PROMPT_LABELS = {
 _MUSE_MEDIA_DELIVERY = {
     "vi": "Dùng chức năng tạo {kind} của Muse ngay trong lượt này và đính kèm tệp {kind} kết quả. "
           "Khi mô tả đủ để thực hiện, hãy tạo trực tiếp, đừng trình phương án hoặc xin duyệt. "
+          "Tự chọn mặc định hợp lý cho chi tiết phụ còn thiếu. Nếu yêu cầu gốc cần phương án thay thế, hãy nêu rõ trở ngại. "
           "Nếu có chú thích hoặc cần báo lý do chưa thể tạo, dùng tiếng Việt.",
     "en": "Use Muse's {kind} generation in this turn and attach the resulting {kind} file. "
           "When the description is sufficient, generate it now without a proposal or approval step. "
+          "Use reasonable defaults for incidental details. If the original request needs an alternative, explain what prevents it. "
           "Use English for any caption or explanation if generation is unavailable.",
     "zh": "请在本轮使用 Muse 的生成能力直接生成并附上{kind}成品。"
-          "描述充分时直接生成，无需提交方案或请求确认。若无法生成，请说明原因。",
+          "描述充分时直接生成，无需提交方案或请求确认。未指定的次要细节使用合理默认值。"
+          "若无法生成或原请求需要替代方案，请说明原因。",
 }
 
 
@@ -2040,7 +2043,9 @@ def _fail_media_task(timing, exc):
     uncertain = isinstance(exc, MusePostSendError) or isinstance(getattr(exc, "__cause__", None), WebPostSendError)
     changes = {"status": "interrupted" if uncertain else "failed", "needs_reconcile": uncertain,
                "error": _redact_task_error(error), **timing.finish()}
-    if isinstance(detail, dict) and detail.get("code"):
+    if isinstance(exc, MuseModelRefusalError) and exc.code:
+        changes["error_code"] = exc.code
+    elif isinstance(detail, dict) and detail.get("code"):
         changes["error_code"] = detail["code"]
     try:
         store.transition_task(timing.task_id, expected, **changes)
