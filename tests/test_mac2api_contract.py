@@ -168,6 +168,39 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(accounts.busy_accounts)
             self.assertEqual(app.store.get_task(task_id)["status"], "completed")
 
+    async def test_missing_references_are_rejected_before_browser_admission(self):
+        with patch.object(app, "_start_media_worker", side_effect=AssertionError("invalid input started a worker")):
+            for endpoint, prompt in (
+                ("/v1/images/tasks", "将输入图像中人物的服装替换为参考图像中的服装"),
+                ("/v1/images/generations", '{"task":"reference_image_guided_photo"}'),
+                ("/v1/images/edits", "Đổi trang phục theo [图1]"),
+                ("/v1/videos", "Mở đầu theo [图1]"),
+            ):
+                response = await self.http.post(endpoint, headers=self.a, json={"prompt": prompt})
+                self.assertEqual(response.status_code, 400, response.text)
+                self.assertEqual(response.json()["error"]["code"], "MUSE_REFERENCES_MISSING")
+        self.assertFalse(app.store.tasks)
+
+    async def test_legacy_task_errors_get_diagnostics_without_mutating_history(self):
+        for reply, code, stage in (
+            ("Hết thời gian tải Muse.ai vì ô chat chưa xuất hiện.", "MUSE_PAGE_NOT_READY", "before_send"),
+            ("Muse chỉ trả văn bản và chưa gửi tệp kết quả. Phản hồi của Muse: Lượt này không có ảnh nào đính kèm.",
+             "MUSE_REFERENCES_NOT_SEEN", "muse_reply"),
+            ("Muse chỉ trả văn bản và chưa gửi tệp kết quả. Phản hồi của Muse: "
+             "Tính năng tạo video không khả dụng cho tài khoản này ở quốc gia/khu vực hiện tại.",
+             "MUSE_VIDEO_UNAVAILABLE", "muse_reply"),
+        ):
+            kind = "video" if code == "MUSE_VIDEO_UNAVAILABLE" else "image"
+            task = app.store.create_task(kind, "fixture", owner=self.alice["id"])
+            app.store.update_task(task["id"], status="failed", error=reply)
+            prefix = "/v1/videos/" if kind == "video" else "/v1/images/tasks/"
+            result = (await self.http.get(prefix + task["id"], headers=self.a)).json()
+            self.assertEqual(result["error_code"], code)
+            self.assertEqual(result["error_stage"], stage)
+            raw = app.store.get_task(task["id"])
+            self.assertNotIn("error_code", raw)
+            self.assertEqual(raw["error"], reply)
+
     async def test_muse_confirmation_reply_stops_after_one_send(self):
         for label in ("first", "second"):
             app.store.add_account({"hatch_sess": label}, label)
@@ -187,6 +220,8 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.sleep(0.02)
             self.assertEqual(task["status"], "failed")
             self.assertEqual(task["error_code"], "MUSE_CONFIRMATION_REQUIRED")
+            self.assertEqual(task["error_stage"], "muse_reply")
+            self.assertEqual(task["reference_count"], 0)
             self.assertIn("phương án chờ duyệt", task["error"])
             self.assertIn("meme mèo 1:1 thay thế", task["error"])
             self.assertIsNone(task["result"])

@@ -128,6 +128,20 @@ for (const [name, model] of Object.entries(adapters)) {
     });
 }
 
+test("Muse exposes the pre-send missing-reference error and stops", async () => {
+    const { default: adapter } = await import("../adapters/2.0.7/mac2ApiMuse.ts");
+    const model = "muse/image";
+    const f = fixture(path => {
+        if (path === "/capabilities") return discovery(model);
+        return Response.json({ error: { code: "MUSE_REFERENCES_MISSING",
+            message: "Hãy kiểm tra thứ tự và đính kèm đủ tệp." } }, { status: 400 });
+    });
+    await assert.rejects(adapter.generateImage.call(f.context, imageRequest(model)),
+                         error => error.status === 400 && error.code === "MUSE_REFERENCES_MISSING"
+                             && error.message.includes("đính kèm đủ tệp"));
+    assert.deepEqual(f.traffic, [["GET", "/capabilities"], ["POST", "/images/tasks"]]);
+});
+
 test("Muse keeps structured 9:16 and 1080p in the same video request", async () => {
     const { default: adapter } = await import("../adapters/2.0.7/mac2ApiMuse.ts");
     const f = fixture((path, init) => {

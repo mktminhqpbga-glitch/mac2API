@@ -58,7 +58,7 @@ from engine import (ESSENTIAL_COOKIES, MAX_REFERENCE_IMAGE_BYTES,
                     MAX_REFERENCE_IMAGES, MAX_REFERENCE_TOTAL_BYTES,
                     REFERENCE_MIME_EXT, MuseAuthError, MuseEngine, MuseGenerationError,
                     MuseModelRefusalError, MusePostSendError, RefImageSafetyError, reference_kind)
-from engine import MusePageUnavailable, MuseProxyError, MuseSessionUnavailable
+from engine import MusePageUnavailable, MuseProxyError, MuseReferenceUploadError, MuseSessionUnavailable
 from store import Store, account_expiry, min_expiry
 from generation_timing import QueuePolicy, QueueSettings, TaskNotQueued, TaskTiming
 from proxy import normalize_server, request_proxy_context, split_proxy_url
@@ -627,10 +627,23 @@ def _check_media_admission(tasks, kind, owner):
 
 def _public_task(task, client):
     data = dict(task)
+    error = data.get("error")
+    if (isinstance(error, str) and not data.get("error_code") and data.get("status") == "failed"
+            and (data.get("provider") or "muse") == "muse"):
+        text_only = re.match(r"^(?:Muse chỉ trả văn bản và chưa gửi tệp kết quả\. Phản hồi của Muse:|"
+                             r"模型未生成媒体[，,]\s*仅返回文本\s*[:：])\s*", error)
+        if text_only:
+            diagnosis = MuseEngine._media_text_error(error[text_only.end():], data.get("kind"))
+            if diagnosis.code:
+                data.update(error=_redact_task_error(str(diagnosis)), error_code=diagnosis.code,
+                            error_stage="muse_reply")
+        elif error.startswith(("Hết thời gian tải Muse.ai vì ô chat", "muse.ai 页面加载超时")):
+            data.update(error_code="MUSE_PAGE_NOT_READY", error_stage="before_send")
     if _client_id(client):
         allowed = {"id", "object", "kind", "provider", "prompt", "status", "progress", "created_at",
                    "updated_at", "error", "last_error", "elapsed", "queue_elapsed", "total_elapsed",
-                   "result", "size", "response_format", "url", "video", "needs_reconcile", "error_code"}
+                   "result", "size", "response_format", "url", "video", "needs_reconcile", "error_code",
+                   "error_stage", "reference_count", "confirmed_reference_count"}
         data = {key: value for key, value in data.items() if key in allowed}
     result = data.get("result")
     if isinstance(result, dict) and result.get("filename"):
@@ -1156,7 +1169,26 @@ def _describe_kinds(kinds: list[str]) -> str:
 # 工作台提示词用 [图N] / [视频N] / [音频N] 指代素材，按同类顺序编号（与上传顺序一致）。
 # muse 不认识这些标记，所以把「标记 -> 第几个附件」写进提示词。
 _KIND_TOKENS = {"image": "图", "video": "视频", "audio": "音频", "document": "文档"}
-_REFERENCE_TOKEN = re.compile(r"\[(?:图|视频|音频|文档)\d+\]")
+_REFERENCE_TOKEN = re.compile(r"\[(图|视频|音频|文档)(\d+)\]")
+
+
+def _validate_muse_references(prompt: str, kinds: list[str]):
+    counts = collections.Counter(kinds)
+    media_kinds = {"图": "image", "视频": "video", "音频": "audio", "文档": "document"}
+    for kind, index in _REFERENCE_TOKEN.findall(prompt):
+        if len(index) > 2 or not 1 <= int(index) <= counts[media_kinds[kind]]:
+            raise HTTPException(400, {"code": "MUSE_REFERENCES_MISSING",
+                                      "message": "Mô tả trỏ đến tệp tham chiếu không có trong yêu cầu. "
+                                                 "Hãy kiểm tra thứ tự và đính kèm đủ tệp."})
+    if not counts["image"] and re.search(
+        r"(?:输入图像|输入图片|源图|原图)[^。！？\n]{0,100}(?:替换|更换|换成)"
+        r"[^。！？\n]{0,48}(?:参考图像|参考图片|参考图)|"
+        r'^\s*\{\s*"task"\s*:\s*"reference_image_guided(?:[-_][a-z0-9_-]+)?"',
+        prompt, re.I,
+    ):
+        raise HTTPException(400, {"code": "MUSE_REFERENCES_MISSING",
+                                  "message": "Mô tả yêu cầu chỉnh sửa theo ảnh, nhưng API chưa nhận được "
+                                             "ảnh tham chiếu. Hãy đính kèm ảnh đầu vào và ảnh tham chiếu."})
 
 
 def _reference_legend(kinds: list[str]) -> str:
@@ -1741,6 +1773,12 @@ def _run_generation_locked(prompt: str, kind: str, timeout: int,
             except MusePageUnavailable as exc:
                 last_exc = exc
                 store.touch_keepalive(cur_acc["id"], None, f"Lỗi tác vụ: {exc}")
+            except MuseReferenceUploadError:
+                raise
+            except MuseModelRefusalError as exc:
+                _generation_callback(store.mark, cur_acc["id"], True, f"Lỗi tác vụ: {_redact_task_error(str(exc))[:200]}")
+                _generation_callback(on_error, str(exc))
+                raise
             except MuseGenerationError as exc:
                 last_exc = exc
                 store.mark(cur_acc["id"], True, f"任务异常: {str(exc)[:200]}")
@@ -2043,8 +2081,17 @@ def _fail_media_task(timing, exc):
     uncertain = isinstance(exc, MusePostSendError) or isinstance(getattr(exc, "__cause__", None), WebPostSendError)
     changes = {"status": "interrupted" if uncertain else "failed", "needs_reconcile": uncertain,
                "error": _redact_task_error(error), **timing.finish()}
-    if isinstance(exc, MuseModelRefusalError) and exc.code:
-        changes["error_code"] = exc.code
+    if isinstance(exc, MuseModelRefusalError):
+        changes.update(error_code=exc.code or "MUSE_TEXT_ONLY", error_stage="muse_reply")
+    elif isinstance(exc, MusePageUnavailable):
+        changes.update(error_code="MUSE_PAGE_NOT_READY", error_stage="before_send")
+    elif isinstance(exc, MuseProxyError):
+        changes.update(error_code="MUSE_PROXY_UNAVAILABLE", error_stage="before_send")
+    elif isinstance(exc, MuseReferenceUploadError):
+        changes.update(error_code="MUSE_REFERENCE_UPLOAD_UNCONFIRMED", error_stage="before_send",
+                       confirmed_reference_count=exc.confirmed)
+    elif uncertain:
+        changes["error_stage"] = "delivery_unknown"
     elif isinstance(detail, dict) and detail.get("code"):
         changes["error_code"] = detail["code"]
     try:
@@ -2067,6 +2114,7 @@ def _queue_image(req: ImageRequest, prompt: str, reference_images: list[str], *,
         task = _create_media_task(
             "image", req.prompt, api_prompt=prompt, size=req.size, provider=provider, owner=owner,
             response_format=req.response_format, progress=0, queue_elapsed=0.0,
+            reference_count=len(reference_images),
             **(submission or {}))
         tid = task["id"]
 
@@ -2122,7 +2170,9 @@ def create_image_task(req: ImageRequest,
     if provider:
         return _queue_image(req, _web_image_prompt(req), [], **options)
     refs = _prepare_reference_images(_image_references(req), **({"public_only": True} if owner else {}))
-    prompt = build_image_prompt(req, _reference_kinds(refs), language=store.muse_prompt_language())
+    kinds = _reference_kinds(refs)
+    _validate_muse_references(req.prompt, kinds)
+    prompt = build_image_prompt(req, kinds, language=store.muse_prompt_language())
     return _queue_image(req, prompt, refs, **options)
 
 
@@ -2164,7 +2214,9 @@ async def images_generations(req: ImageRequest, _=Depends(api_auth), request: Re
     ref_images = await asyncio.to_thread(
         _prepare_reference_images, _image_references(req), **({"public_only": True} if owner else {}))
 
-    prompt = build_image_prompt(req, _reference_kinds(ref_images), language=store.muse_prompt_language())
+    kinds = _reference_kinds(ref_images)
+    _validate_muse_references(req.prompt, kinds)
+    prompt = build_image_prompt(req, kinds, language=store.muse_prompt_language())
     timeout = req.timeout or CFG.image_timeout
     if req.async_:
         return _queue_image(req, prompt, ref_images, **options)
@@ -2267,7 +2319,9 @@ async def images_edits(request: Request, _=Depends(api_auth)):
         raise HTTPException(400, "Mô-đun web chưa hỗ trợ chỉnh sửa ảnh.")
     ref_image_data = await asyncio.to_thread(
         _prepare_reference_images, ref_image_data, **({"public_only": True} if owner else {}))
-    full_prompt = build_image_prompt(req_obj, _reference_kinds(ref_image_data), language=store.muse_prompt_language())
+    kinds = _reference_kinds(ref_image_data)
+    _validate_muse_references(req_obj.prompt, kinds)
+    full_prompt = build_image_prompt(req_obj, kinds, language=store.muse_prompt_language())
     gen_timeout = timeout or CFG.image_timeout
     if req_obj.async_:
         return _queue_image(req_obj, full_prompt, ref_image_data, **({"owner": owner} if owner else {}))
@@ -2311,7 +2365,9 @@ async def create_video(req: VideoRequest, _=Depends(api_auth), request: Request 
     ref_images = await asyncio.to_thread(
         _prepare_reference_images, _video_references(req), **({"public_only": True} if owner else {}))
 
-    prompt = build_video_prompt(req, _reference_kinds(ref_images), language=store.muse_prompt_language())
+    kinds = _reference_kinds(ref_images)
+    _validate_muse_references(req.prompt, kinds)
+    prompt = build_video_prompt(req, kinds, language=store.muse_prompt_language())
     timeout = req.timeout or CFG.video_timeout
     with MEDIA_ADMISSION_LOCK:
         tasks = store.tasks.values()
@@ -2320,7 +2376,8 @@ async def create_video(req: VideoRequest, _=Depends(api_auth), request: Request 
             return _task_receipt(existing)
         _check_media_admission(tasks, "video", owner)
         task = _create_media_task("video", req.prompt, owner=owner, provider="muse",
-                                  api_prompt=prompt, queue_elapsed=0.0, progress=10, **submission)
+                                  api_prompt=prompt, queue_elapsed=0.0, progress=10,
+                                  reference_count=len(ref_images), **submission)
 
     def worker():
         timing = TaskTiming(store, task["id"])

@@ -1,7 +1,7 @@
 export default {
     id: "mac2ApiMuse",
     label: "mac2API · Muse",
-    version: "2.0.8",
+    version: "2.0.9",
     readme: "Tạo ảnh và video qua tài khoản Muse đã cấu hình trong mac2API. Độ phân giải, tỷ lệ và thời lượng là thông số yêu cầu gửi tới Muse. Kết quả thực tế phụ thuộc vào Muse. Nhập Base URL đang dùng và khóa người dùng mac2API (m2c_…).",
     rules: [
         {
@@ -227,6 +227,14 @@ async function request(context, endpoint, signal, body, requestKey) {
     });
     if (!response.ok) {
         const status = response.status;
+        if (status === 400) {
+            const detail = (await response.json().catch(() => null))?.error;
+            if (detail?.code === "MUSE_REFERENCES_MISSING") {
+                const reason = taskErrorDetail(context, detail.message);
+                throw Object.assign(new Error(reason || "Hãy đính kèm đủ tệp tham chiếu trong yêu cầu."),
+                                    { status, code: detail.code });
+            }
+        }
         const retryAfter = response.headers.get("Retry-After");
         const messages = {
             401: "API Key mac2API không hợp lệ.",

@@ -78,8 +78,21 @@ Khi máy chủ từ chối trước khi nhận tác vụ, HTTP 429 có `Retry-Af
 | Kho media | URL ký tối đa 7 ngày và có thể hết hạn sớm nếu tệp được dọn, khóa chủ bị thu hồi hoặc khóa ký thay đổi. Lấy URL mới từ GET tác vụ nếu còn dữ liệu. Tải bytes vào workspace MacFlow trước khi báo đầu ra sẵn sàng. Khi ghi media, kho 5 GB dọn tệp cũ theo ngưỡng 70%. |
 | URL quản trị cũ chưa ký | Dùng Bearer quản trị để tải hoặc lấy URL mới từ bảng quản trị. Biến `MUSE2API_ALLOW_LEGACY_PUBLIC_MEDIA=1` giữ URL quản trị chưa ký trong thời gian chuyển đổi có chủ đích. URL client vẫn được kiểm tra quyền. |
 | Client tích hợp sẵn | Gọi capabilities, lookup và cancel bằng khóa `m2c_…`. Các tuyến cũ vẫn nhận khóa quản trị để bảng điều khiển và tích hợp hiện có tiếp tục hoạt động. API task cũ tiếp tục chấp nhận khóa idempotency không theo UUID theo phạm vi loại tác vụ và nhà cung cấp. |
-| Adapter độc lập | Ba tệp dưới `adapters/2.0.7/` có phiên bản nội bộ 2.0.8. Chúng dùng hợp đồng v1 và chuyển sang `/models` khi capabilities trả 404. Host phải hỗ trợ lưu trạng thái tác vụ trước POST. Adapter lưu UUID cho GET tra cứu và dừng nếu kết quả chưa rõ. |
+| Adapter độc lập | Tệp Muse trong `adapters/2.0.7/` có phiên bản 2.0.9. Tệp ChatGPT và Gemini có phiên bản 2.0.8. Cả ba dùng hợp đồng v1 và chuyển sang `/models` khi capabilities trả 404. Host phải hỗ trợ lưu trạng thái tác vụ trước POST. Adapter lưu UUID cho GET tra cứu và dừng nếu kết quả chưa rõ. |
 | Máy chủ tự triển khai | Chạy một tiến trình mac2API cho mỗi thư mục dữ liệu. Qua proxy ngược, cấu hình HTTPS và chuyển đúng scheme từ proxy tin cậy. Thêm origin trình duyệt được phép bằng `MUSE2API_CORS_ORIGINS`. Giữ chế độ AIChrome của MacFlow độc lập với phiên do mac2API điều khiển. |
+
+## Chẩn đoán tác vụ Muse
+
+Các tác vụ mới có `reference_count` là số tệp hợp lệ API nhận. Khi lỗi xảy ra trong ô nhập, `confirmed_reference_count` cho biết số tệp mà trình duyệt quan sát được. `error_stage` có thể là `before_send`, `muse_reply` hoặc `delivery_unknown`.
+
+| Mã | Ý nghĩa |
+|---|---|
+| `MUSE_REFERENCES_MISSING` | HTTP 400 trước khi tạo tác vụ nếu mô tả có yêu cầu tham chiếu rõ ràng nhưng payload thiếu tệp. |
+| `MUSE_PAGE_NOT_READY` | Ô chat Muse chưa sẵn sàng. Trang đã tải nhưng thiếu ô chat có thể được tải lại một lần trong cùng phiên và tuyến proxy, trong thời gian chờ. Nếu vẫn lỗi, dừng lần thử trước khi gửi. |
+| `MUSE_REFERENCE_UPLOAD_UNCONFIRMED` | Số tệp trong ô nhập khác với số tệp cần gửi. |
+| `MUSE_REFERENCES_NOT_SEEN` | Sau khi nhận prompt, Muse phản hồi rằng không thấy tham chiếu. So sánh với số tệp API đã nhận. |
+| `MUSE_VIDEO_UNAVAILABLE` | Muse thông báo tài khoản hiện tại không có tính năng tạo video ở khu vực hiện tại. |
+| `MUSE_CONFIRMATION_REQUIRED` | Muse đề nghị duyệt hoặc đổi phương án. |
 
 ## Cách chạy kiểm thử
 

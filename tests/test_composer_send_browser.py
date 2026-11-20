@@ -108,5 +108,18 @@ with tempfile.TemporaryDirectory(prefix='muse-send-test-', dir=Path.home()) as h
             assert engine._click_send() == expected
             assert page.js('window.wrongClicks===0 && window.accepted.length===0')
         print('PASS: missing, disabled and aria-disabled send controls never fall back to an outside button')
+
+        fixture(attachment=True)
+        page.js("document.querySelector('textarea').value='Đổi trang phục'")
+        assert engine._click_media_send(1, "Sai nội dung") == "draft-not-ready"
+        assert engine._click_media_send(2, "Đổi trang phục") == 1
+        assert engine._click_media_send(0, "Đổi trang phục") == 1
+        page.js("document.querySelector('[aria-label=\"Remove attachment\"]').setAttribute('aria-busy', 'true')")
+        assert engine._click_media_send(1, "Đổi trang phục") == 0
+        assert page.js('window.accepted.length === 0 && window.wrongClicks === 0')
+        page.js("document.querySelector('[aria-label=\"Remove attachment\"]').removeAttribute('aria-busy')")
+        assert engine._click_media_send(1, "Đổi trang phục") == 'clicked'
+        assert_accepted("Đổi trang phục")
+        print('PASS: media send verifies exact text and settled composer references before clicking')
     finally:
         engine.stop()

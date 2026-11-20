@@ -58,12 +58,53 @@ with tempfile.TemporaryDirectory() as profile:
     try:
         engine._wait_attachment("", 60, "video")
     except engine_module.MuseGenerationError as exc:
-        assert "未成功送达" in str(exc)
+        assert "chưa xác nhận đã nhận yêu cầu" in str(exc)
         assert clock[0] < 32, clock[0]
     else:
         raise AssertionError("undelivered video request waited for the full timeout")
 
 print("PASS: composer readiness and undelivered video fast-fail")
+
+for body, second_ready, expected_load, error_type in (
+    ("", True, True, None),
+    ("", False, True, engine_module.MusePageUnavailable),
+    ("Đang kết nối…", True, False, None),
+    ("Connecting...", False, False, engine_module.MusePageUnavailable),
+    ("Proxy authentication required", False, False, engine_module.MuseProxyError),
+):
+    clock = SimpleNamespace(now=0.0)
+    engine = engine_module.MuseEngine(SimpleNamespace(profile_dir=tempfile.gettempdir()))
+    proxy = {"server": "http://fixture-proxy.test"}
+    page = Mock()
+    page.js.return_value = {"hostname": "muse.ai", "path": "/thread/new",
+                            "readyState": "interactive", "body": body}
+    page.send.return_value = {"result": {"frameId": "fixture"}}
+    budgets = []
+
+    def wait_ready(page, *, timeout):
+        budgets.append(timeout)
+        if len(budgets) == 2 and second_ready:
+            return True
+        clock.now += timeout
+        return False
+
+    with patch.object(engine_module, "time", SimpleNamespace(monotonic=lambda: clock.now)), \
+         patch.object(engine, "_wait_ws_ready", side_effect=wait_ready):
+        try:
+            engine._wait_muse_composer(page, 60, proxy)
+        except engine_module.MuseGenerationError as exc:
+            assert error_type is type(exc), (body, exc)
+            if expected_load:
+                assert "Đã tải lại trang một lần trong cùng phiên" in str(exc)
+        else:
+            assert error_type is None, body
+    assert budgets[0] == 40 and sum(budgets) <= 60, budgets
+    assert page.send.call_count == int(expected_load), (body, page.send.call_args_list)
+    if expected_load:
+        assert page.send.call_args.args == ("Page.navigate", {"url": "https://muse.ai/thread/new"})
+        assert 0 < page.send.call_args.kwargs["timeout"] <= 20
+
+print("PASS: bounded composer reload on the same page and no reload for workspace/proxy failures")
 
 
 class FakeClock:

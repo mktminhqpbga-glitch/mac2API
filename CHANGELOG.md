@@ -1,5 +1,12 @@
 # Nhật ký và bàn giao mac2API
 
+## Chẩn đoán lỗi tạo ảnh và video Muse
+
+- Kiểm tra tệp tham chiếu từ khi nhận yêu cầu. Trình duyệt kiểm tra lại prompt và số tệp hiện có ngay lúc bấm Gửi.
+- Khi trang Muse tải nhưng thiếu ô chat, thử tải lại một lần trong cùng phiên và tuyến proxy, sử dụng phần thời gian còn lại. Nếu trang vẫn kết nối workspace, đợi trên trang hiện tại.
+- Chi tiết tác vụ hiển thị giai đoạn lỗi, số tệp đã nhận và mã lỗi. Đọc lại lỗi cũ để nhận diện trường hợp Muse báo thiếu tệp, giới hạn video theo khu vực hoặc đề nghị phương án thay thế.
+- Sau khi bấm Gửi, mac2API đợi phản hồi và giữ trạng thái cần đối chiếu khi mất xác nhận. Adapter Muse 2.0.9 hiển thị lỗi thiếu tham chiếu khi API từ chối yêu cầu.
+
 - Lời đề nghị tạo ảnh thay thế của Muse được báo là chờ duyệt với mã `MUSE_CONFIRMATION_REQUIRED`. Chỉ dẫn tạo ảnh và video cho phép chọn mặc định ở các chi tiết phụ còn thiếu.
 
 ## Hợp đồng API v1 cho MacFlow

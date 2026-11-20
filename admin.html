@@ -2811,6 +2811,14 @@ async function delAcc(id, label){
 /* ================= 任务记录 ================= */
 async function loadTasks(){
   const translateTaskText = t;
+  const errorLabels = {
+    vi: {before_send: 'Dừng trước khi gửi', muse_reply: 'Muse đã phản hồi', delivery_unknown: 'Cần đối chiếu việc gửi',
+         references: 'Tệp tham chiếu API đã nhận', confirmed: 'Tệp thấy trong ô nhập'},
+    en: {before_send: 'Stopped before sending', muse_reply: 'Muse replied', delivery_unknown: 'Confirm original submission',
+         references: 'References received by the API', confirmed: 'Files seen in the composer'},
+    zh: {before_send: '发送前停止', muse_reply: 'Muse 已回复', delivery_unknown: '需要核对发送状态',
+         references: 'API 收到的参考素材', confirmed: '输入框中已看到的素材'},
+  }[LANG];
   const states = {
     vi: {queued: 'Đang chờ', processing: 'Đang xử lý', completed: 'Hoàn tất', succeeded: 'Hoàn tất', failed: 'Thất bại', cancelled: 'Đã hủy', interrupted: 'Cần đối chiếu'},
     en: {queued: 'Queued', processing: 'Processing', completed: 'Completed', succeeded: 'Completed', failed: 'Failed', cancelled: 'Cancelled', interrupted: 'Needs reconciliation'},
@@ -2835,8 +2843,13 @@ async function loadTasks(){
         const previous = t.last_error && translateTaskText(t.last_error);
         const detailLabel = LANG === 'vi' ? 'Chi tiết lỗi' : LANG === 'en' ? 'Error details' : '错误详情';
         const previousLabel = LANG === 'vi' ? 'Lỗi ở lần thử gần nhất' : LANG === 'en' ? 'Most recent attempt error' : '最近一次尝试的错误';
+        const stage = errorLabels[t.error_stage];
         out = `<details data-task-error="${esc(t.id)}"${openErrors.has(t.id) ? ' open' : ''}><summary style="color:var(--bad)">${esc(detailLabel)}</summary>
+          ${stage ? `<div><strong>${esc(stage)}</strong></div>` : ''}
           <div style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(message)}</div>
+          ${Number.isInteger(t.reference_count) ? `<div class="muted">${esc(errorLabels.references)} ${t.reference_count}</div>` : ''}
+          ${Number.isInteger(t.confirmed_reference_count) ? `<div class="muted">${esc(errorLabels.confirmed)} ${t.confirmed_reference_count}</div>` : ''}
+          ${t.error_code ? `<div class="mono muted">${esc(t.error_code)}</div>` : ''}
           ${previous && previous !== message ? `<div style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(previousLabel)}: ${esc(previous)}</div>` : ''}
         </details>`;
       }

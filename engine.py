@@ -247,6 +247,19 @@ class MuseSessionUnavailable(MuseGenerationError):
 class MusePageUnavailable(MuseGenerationError):
     """Muse's composer did not become ready before any prompt was sent."""
 
+    def __init__(self, message: str, *, retry_reload: bool = False):
+        super().__init__(message)
+        self.retry_reload = retry_reload
+
+
+class MuseReferenceUploadError(MuseGenerationError):
+    """The current composer did not confirm the expected references before sending."""
+
+    def __init__(self, expected: int, confirmed: int):
+        super().__init__(f"Muse chưa xác nhận đúng số tệp tham chiếu ({confirmed}/{expected}). "
+                         "Đã dừng trước khi gửi yêu cầu tạo nội dung.")
+        self.confirmed = confirmed
+
 
 class MuseModelRefusalError(MuseGenerationError):
     """Muse completed the turn with text instead of the requested media."""
@@ -741,16 +754,17 @@ class MuseEngine:
         deadline = time.monotonic() + timeout
         while (remaining := deadline - time.monotonic()) > 0:
             try:
-                st = page.js("""(function(){
+                st = page.js(r"""(function(){
                     if (document.readyState === 'loading') return 'loading';
                     if (location.hostname !== 'muse.ai' && location.hostname !== 'www.muse.ai') return 'wrong-site';
-                    if (!document.querySelector('textarea')) return 'no-ta';
+                    var field = document.querySelector('textarea');
+                    if (!field) return 'no-ta';
                     var h = document.querySelector('[data-hatch-shell-hydration-state]');
                     if (h && h.getAttribute('data-hatch-shell-hydration-state') !== 'hydrated') return 'hydrating';
                     var b = document.body ? (document.body.innerText || '') : '';
-                    if (b.indexOf('Connecting...') !== -1) return 'connecting';
+                    if (/^\s*(?:Connecting(?:\.\.\.|…)|Đang kết nối(?:\.\.\.|…)|正在连接(?:\.\.\.|…))\s*$/im.test(b)) return 'connecting';
                     // Empty composers may not render Send until text has been entered.
-                    if (document.querySelector('textarea').disabled) return 'input-disabled';
+                    if (field.disabled || field.readOnly || (field.getClientRects && !field.getClientRects().length)) return 'input-disabled';
                     return 'ready';
                 })()""", timeout=min(remaining, 2.0))
                 if st == "ready":
@@ -763,7 +777,7 @@ class MuseEngine:
     @staticmethod
     def _check_muse_page(page: CDP, timeout: float, proxy: dict | None):
         """Open the composer with a bounded retry for transient navigation errors."""
-        deadline = time.monotonic() + max(1, timeout)
+        deadline = time.monotonic() + (timeout if timeout > 0 else 1)
         for attempt in range(2):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -790,13 +804,15 @@ class MuseEngine:
         raise MusePageUnavailable("Hết thời gian mở Muse.ai. Tác vụ dừng trước khi gửi yêu cầu.")
 
     @staticmethod
-    def _muse_page_not_ready(page: CDP, proxy: dict | None):
+    def _muse_page_not_ready(page: CDP, proxy: dict | None, timeout: float = 2):
         try:
             state = page.js("""(() => ({
                 hostname: location.hostname, path: location.pathname,
+                readyState: document.readyState,
+                hasComposer: Boolean(document.querySelector('textarea')),
                 loginForm: Boolean(document.querySelector('input[type="password"]')),
                 body: document.body ? document.body.innerText.slice(0,1200) : ''
-            }))()""", timeout=2)
+            }))()""", timeout=timeout)
         except (CDPError, OSError, WebSocketException):
             state = None
         state = state if isinstance(state, dict) else {}
@@ -809,12 +825,38 @@ class MuseEngine:
             or state.get("loginForm")
         ):
             raise MuseAuthError("Muse.ai đã mở trang đăng nhập. Hãy đăng nhập lại và nhập lại cookie của tài khoản.")
-        if re.search(r"connecting(?:\.\.\.|…)\s*", body, re.I):
+        if re.search(r"^\s*(?:Connecting|Đang kết nối|正在连接)(?:\.\.\.|…)\s*$", body, re.I | re.M):
             raise MusePageUnavailable("Muse.ai vẫn đang kết nối với không gian làm việc. Tác vụ dừng trước khi gửi yêu cầu.")
+        if state.get("hasComposer"):
+            raise MusePageUnavailable("Ô chat Muse.ai đã xuất hiện nhưng chưa cho phép nhập. Tác vụ dừng trước khi gửi yêu cầu.")
         raise MusePageUnavailable(
             "Hết thời gian tải Muse.ai vì ô chat chưa xuất hiện. Tác vụ dừng trước khi gửi yêu cầu. "
-            "Hãy kiểm tra mạng hoặc proxy của máy chạy mac2API. Chưa xác định phiên đăng nhập hết hiệu lực."
+            "Hãy kiểm tra mạng hoặc proxy của máy chạy mac2API. Chưa xác định phiên đăng nhập hết hiệu lực.",
+            retry_reload=(state.get("hostname") in {"muse.ai", "www.muse.ai"}
+                          and state.get("readyState") in {"interactive", "complete"}),
         )
+
+    def _wait_muse_composer(self, page: CDP, remaining: float, proxy: dict | None):
+        deadline = time.monotonic() + remaining
+        reserve = min(20, remaining / 3) if remaining >= 9 else 0
+        if self._wait_ws_ready(page, timeout=remaining - reserve):
+            return
+        reloaded = False
+        if reserve and (left := deadline - time.monotonic()) > 0:
+            try:
+                self._muse_page_not_ready(page, proxy, timeout=min(2, left))
+            except MusePageUnavailable as exc:
+                if exc.retry_reload and (left := deadline - time.monotonic()) > 0:
+                    self._check_muse_page(page, left, proxy)
+                    reloaded = True
+            if (left := deadline - time.monotonic()) > 0 and self._wait_ws_ready(page, timeout=left):
+                return
+        try:
+            self._muse_page_not_ready(page, proxy)
+        except MusePageUnavailable as exc:
+            if reloaded:
+                raise MusePageUnavailable(f"{exc} Đã tải lại trang một lần trong cùng phiên.") from exc
+            raise
 
     def reset_thread(self, for_chat: bool = False):
         """关闭残留弹窗并确保处于干净会话且 WebSocket 已就绪。
@@ -924,14 +966,13 @@ class MuseEngine:
             self._apply_cookies(page, cookies, expires)
             remaining = self._check_muse_page(page, self.cfg.login_wait, proxy)
             try:
-                if self._wait_ws_ready(page, timeout=remaining):
-                    self.current_acc_id = account_id
-                    return page
+                self._wait_muse_composer(page, remaining, proxy)
             except (CDPError, OSError, WebSocketException) as exc:
                 raise MusePageUnavailable(
                     "Chrome mất kết nối với trang Muse.ai trước khi ô chat sẵn sàng. Tác vụ dừng trước khi gửi yêu cầu."
                 ) from exc
-            self._muse_page_not_ready(page, proxy)
+            self.current_acc_id = account_id
+            return page
         except Exception:
             self._close_page()
             raise
@@ -1224,7 +1265,7 @@ class MuseEngine:
         "b.click();return 'clicked';})()"
     )
 
-    def _send(self, prompt: str):
+    def _send(self, prompt: str, *, expected_references: int | None = None):
         # 1. 确保 textarea 滚动到视口中央并获得真实焦点
         try:
             self.page.js("""(function(){
@@ -1270,15 +1311,24 @@ class MuseEngine:
 
         # 等待发送按钮就绪并点击
         clicked = "no-button"
+        confirmed = None
         t_deadline = time.time() + 3.0
         while time.time() < t_deadline:
-            res = self._click_send()
+            if expected_references is None:
+                res = self._click_send()
+            else:
+                res = self._click_media_send(expected_references, prompt)
+                confirmed = res if type(res) is int else None
             if res == "clicked":
                 clicked = "clicked"
                 break
             time.sleep(0.08)
 
         if clicked != "clicked":
+            if expected_references is not None:
+                if confirmed is not None:
+                    raise MuseReferenceUploadError(expected_references, confirmed)
+                raise MusePageUnavailable("Ô nhập hoặc nút gửi của Muse chưa sẵn sàng. Tác vụ dừng trước khi gửi yêu cầu.")
             # 兜底：Ctrl+Enter 或普通 Enter
             for combo in ({"modifiers": 1}, {}):
                 for t in ("keyDown", "char", "keyUp"):
@@ -1299,26 +1349,24 @@ class MuseEngine:
         time.sleep(0.3)
         return clicked
 
-    def _composer_unsent(self) -> str:
-        """输入框里还留着什么（没发出去的附件 / 文字）；空串 = 输入框是空的。读不到时按空处理（不误判）。"""
-        try:
-            n = int(self.page.js(self._ATTACHED_COUNT_JS) or 0)
-            t = int(self.page.js("(document.querySelector('textarea')||{value:''}).value.length") or 0)
-        except Exception:  # noqa: BLE001
-            return ""
-        parts = []
-        if n:
-            parts.append("%d 个附件" % n)
-        if t:
-            parts.append("%d 字提示词" % t)
-        return "、".join(parts)
-
     def _click_send(self) -> str:
         """只点当前输入框的发送按钮（不重新填字），不把点击等同于上游送达。"""
         try:
             return str(self.page.js(self._CLICK_SEND_JS))
         except Exception:  # noqa: BLE001
             return "error"
+
+    def _click_media_send(self, expected: int, prompt: str) -> str | int:
+        # Check the actual composer and click in the same browser evaluation.
+        draft = json.dumps(prompt.replace("\r\n", "\n").replace("\r", "\n"))
+        result = self.page.js(
+            "(function(){var field=document.querySelector('textarea');"
+            f"if(!field||field.value!=={draft})return 'draft-not-ready';var n="
+            + self._ATTACHED_COUNT_JS + ";"
+            f"if(n!=={expected})return n;return " + self._CLICK_SEND_JS + ";})()", timeout=3)
+        if type(result) is int or result in ("draft-not-ready", "no-button", "disabled", "clicked"):
+            return result
+        raise MusePostSendError("Chưa xác nhận được thao tác gửi trên Muse. Hãy đối chiếu tác vụ gốc.")
 
     # ---------------- 等待生成 ----------------
     def _last_attachment(self) -> dict | None:
@@ -1357,7 +1405,6 @@ class MuseEngine:
         previous_state = None
         last_activity = t_start
         progress_sent = 0
-        resent = False
         while time.time() < deadline:
             if stop_event is not None and stop_event.is_set():
                 raise MuseGenerationError("客户端已断开连接，终止生成任务")
@@ -1450,24 +1497,13 @@ class MuseEngine:
                     except Exception:
                         pass
 
-            # COOL AI 2026-11-08：发出 25 秒后模型毫无回复、输入框里还留着附件 / 文字 = 这条消息没发出去。
-            # 补点一次发送；60 秒仍没发出就报错，交给外层换号重试（以前要干等到总超时 10 分钟）。
-            if elapsed > 25.0 and cur_cnt == base_agent_cnt:
-                unsent = self._composer_unsent()
-                if unsent and not resent:
-                    resent = True
-                    log.warning("提示词发出 %.0f 秒后仍在输入框（%s），补点一次发送", elapsed, unsent)
-                    self._click_send()
-                elif unsent and elapsed > 60.0:
-                    raise MuseGenerationError("提示词没有发出去（%s 仍在输入框里），终止等待并换号重试" % unsent)
-
             if re.search(r"额度不足|积分不足|out of credits|达到上限|token limit", tail, re.I):
                 raise MuseGenerationError("账号额度不足")
             # A Stop button is also shown for messages never acknowledged by the gateway.
             if elapsed > 30.0 and cur_cnt == base_agent_cnt and re.search(
                     r"Still sending|Delivery not confirmed|正在发送|未确认送达", tail, re.I):
                 raise MuseGenerationError(
-                    "提示词未成功送达后端（Still sending / Delivery not confirmed），终止等待并重试")
+                    "Muse chưa xác nhận đã nhận yêu cầu. Hãy đối chiếu tác vụ gốc trước khi gửi lại.")
 
             refusal_source = cur_txt if cur_cnt > base_agent_cnt else (
                 tail if seen_stop and not has_stop and elapsed > 20.0 else "")
@@ -1478,7 +1514,7 @@ class MuseEngine:
                 else:
                     refusal_last, refusal_stable = refusal, 0
                 if refusal_stable >= 4 and elapsed > 8.0:
-                    raise self._media_text_error(refusal)
+                    raise self._media_text_error(refusal, expect)
             else:
                 refusal_last, refusal_stable = "", 0
 
@@ -1491,7 +1527,7 @@ class MuseEngine:
                     else:
                         last_txt, txt_stable = cur_txt, 0
                     if txt_stable >= 15 and elapsed > 8.0:
-                        raise self._media_text_error(cur_txt)
+                        raise self._media_text_error(cur_txt, expect)
                 else:
                     txt_stable = 0
             else:
@@ -1513,22 +1549,49 @@ class MuseEngine:
         clean = re.sub(r"\s+", " ", text or "").strip()
         return clean[:limit]
 
-    @classmethod
-    def _media_text_error(cls, text: str) -> MuseModelRefusalError:
-        reply = cls._clean_model_text(text)
+    @staticmethod
+    def _media_reply_code(text: str, expect: str | None = None) -> str | None:
+        if expect in (None, "video") and re.search(
+            r"tính năng tạo video\s+không (?:khả dụng|được hỗ trợ)"
+            r"[^.!?。\n]{0,120}(?:quốc gia|khu vực)|"
+            r"\bvideo (?:generation|creation) (?:is )?(?:not available|not supported|unavailable)"
+            r"[^.!?。\n]{0,120}\b(?:country|region)\b|"
+            r"(?:国家|地区)[^。！？\n]{0,80}(?:不支持|不可用|无法)[^。！？\n]{0,40}(?:视频|影片)",
+            text, re.I,
+        ):
+            return "MUSE_VIDEO_UNAVAILABLE"
+        if re.search(
+            r"\bkhông (?:có|thấy|nhận được)\s+(?:bất kỳ\s+)?(?:ảnh|hình|tệp)"
+            r"(?:\s+(?:nào|được)){0,2}\s+(?:đính kèm|tham chiếu)\b|"
+            r"\b(?:no (?:source |reference )?(?:images?|files?) (?:was |were )?attached|"
+            r"(?:can't|cannot|could not|don't) (?:see|find|receive) (?:any |the )?(?:attached |reference )"
+            r"(?:images?|files?))\b|"
+            r"(?:未收到|未看到|没有)[^。！？\n]{0,14}(?:参考图像|参考图片|图片附件)",
+            text, re.I,
+        ):
+            return "MUSE_REFERENCES_NOT_SEEN"
         if re.search(
             r"\b(?:bạn duyệt giúp|bạn xác nhận phương án|(?:please|kindly) approve)\b|"
             r"\b(?:please|kindly) confirm (?:the|this) (?:plan|proposal|prompt)\b|"
             r"请(?:先|您)?确认[^。！？\n]{0,24}(?:方案|后再生成)|"
             r"^\s*(?:em|mình|tôi)\s+(?:(?:có thể|sẽ)\s+)?(?:tạo|vẽ|làm)\s+"
-            r"[^.!?？\n]{0,120}\b(?:ảnh|hình|video|clip)\b[^.!?？\n]{0,120}\bnhé\s*[?？]",
+            r"[^.!?？\n]{0,120}\b(?:ảnh|hình|video|clip)\b[^.!?？\n]{0,120}\bnhé\s*[?？]|"
+            r"^\s*(?:em|mình|tôi)\s+có thể (?:làm|tạo|vẽ) lại theo hướng khác\b",
             text, re.I
         ):
-            return MuseModelRefusalError(
-                f"Muse đã gửi phương án chờ duyệt và chưa trả tệp kết quả. Phản hồi của Muse: {reply}",
-                code="MUSE_CONFIRMATION_REQUIRED",
-            )
-        return MuseModelRefusalError(f"Muse chỉ trả văn bản và chưa gửi tệp kết quả. Phản hồi của Muse: {reply}")
+            return "MUSE_CONFIRMATION_REQUIRED"
+        return None
+
+    @classmethod
+    def _media_text_error(cls, text: str, expect: str | None = None) -> MuseModelRefusalError:
+        code = cls._media_reply_code(text, expect)
+        reasons = {
+            "MUSE_VIDEO_UNAVAILABLE": "Muse báo tính năng tạo video không khả dụng cho tài khoản ở khu vực hiện tại.",
+            "MUSE_REFERENCES_NOT_SEEN": "Muse báo không thấy tệp tham chiếu trong lượt tạo này.",
+            "MUSE_CONFIRMATION_REQUIRED": "Muse đã gửi phương án chờ duyệt và chưa trả tệp kết quả.",
+        }
+        reason = reasons.get(code, "Muse chỉ trả văn bản và chưa gửi tệp kết quả.")
+        return MuseModelRefusalError(f"{reason} Phản hồi của Muse: {cls._clean_model_text(text)}", code=code)
 
     @staticmethod
     def _media_status_pending(text: str) -> bool:
@@ -1556,7 +1619,9 @@ class MuseEngine:
             r"\b(?:video|clip|image|picture|animation)\b[^.\n]{0,60}"
             r"\b(?:generated|created|rendered|completed|ready)\b|"
             r"\b(?:generated|created|rendered|completed)\b[^.\n]{0,32}"
-            r"\b(?:video|clip|image|picture|animation)\b", text, re.I))
+            r"\b(?:video|clip|image|picture|animation)\b|"
+            r"^\s*(?:(?:em|mình|tôi)\s+)?đã\s+tạo\b[^.!?\n]{0,48}\b(?:ảnh|video)\b|"
+            r"^\s*(?:ảnh|video)\b[^.!?\n]{0,32}\bđã (?:được tạo|tạo xong|sẵn sàng)\b", text, re.I))
 
     @classmethod
     def _media_refusal_text(cls, text: str, expect: str) -> str:
@@ -1574,7 +1639,8 @@ class MuseEngine:
         ]
         for line in reversed((text or "").splitlines()):
             clean = cls._clean_model_text(line)
-            if clean and any(re.search(pattern, clean, re.I) for pattern in patterns):
+            if clean and (cls._media_reply_code(clean, expect) == "MUSE_VIDEO_UNAVAILABLE"
+                          or any(re.search(pattern, clean, re.I) for pattern in patterns)):
                 return clean
         return ""
 
@@ -1981,7 +2047,9 @@ class MuseEngine:
     """
 
     _ATTACHED_COUNT_JS = ("(() => {" + _COMPOSER_ATTACHMENTS_JS
-                          + "return Math.max(currentAttachments().length, attachmentPreviews());})()")
+                          + """const settled = currentAttachments().filter(button =>
+                               !button.closest('[aria-busy="true"],[data-uploading="true"]'));
+                               return Math.max(settled.length, attachmentPreviews());})()""")
 
     _CLEAR_COMPOSER_JS = "(() => {" + _COMPOSER_ATTACHMENTS_JS + """
         const textarea = document.querySelector('textarea');
@@ -2082,10 +2150,7 @@ class MuseEngine:
                     log.warning(
                         "Muse chưa xác nhận tệp tham chiếu: %s/%s; lần tải tệp số %s.",
                         confirmed, len(files), expected)
-                    raise MuseGenerationError(
-                        f"Muse chưa xác nhận tệp tham chiếu ({confirmed}/{len(files)}) "
-                        f"khi đính kèm tệp số {expected}. Trình duyệt không thấy bản xem trước "
-                        "hoặc nút gỡ tệp trong ô nhập. Yêu cầu tạo nội dung chưa được gửi.")
+                    raise MuseReferenceUploadError(len(files), confirmed)
             time.sleep(0.5)
             return {"dir": upload_dir, "hashes": hashes}
         except Exception:
@@ -2105,18 +2170,26 @@ class MuseEngine:
         self.ensure_page(cookies, expires, account_id=account_id)
         self.reset_thread(for_chat=False)
         self._ensure_clean_composer(cookies, expires, account_id)
+        remaining = deadline - time.monotonic()
+        try:
+            composer_ready = remaining > 0 and self._wait_ws_ready(self.page, timeout=min(8, remaining))
+        except (CDPError, OSError, WebSocketException) as exc:
+            raise MusePageUnavailable("Chrome mất kết nối trước khi gửi yêu cầu trên Muse.") from exc
+        if not composer_ready:
+            self._muse_page_not_ready(self.page, getattr(self._ensure_local(), "proxy_config", None))
         self._scroll_bottom()
         refs = list(reference_images or ([] if not reference_image else [reference_image]))
         upload = self._attach_images(refs) if refs else None
         try:
             return self._generate_attached(prompt, expect, deadline, on_progress,
-                                           stop_event, (upload or {}).get("hashes") or set())
+                                           stop_event, (upload or {}).get("hashes") or set(),
+                                           expected_references=len(refs))
         finally:
             if upload:
                 shutil.rmtree(upload["dir"], ignore_errors=True)
 
     def _generate_attached(self, prompt: str, expect: str, deadline: float,
-                           on_progress, stop_event, upload_hashes: set) -> dict:
+                           on_progress, stop_event, upload_hashes: set, *, expected_references=None) -> dict:
         atts_before = self.attachments()
         baseline_sources = {a.get(k) for a in atts_before for k in ("src", "vSrc", "iSrc") if a.get(k)}
         base = atts_before[-1] if atts_before else {}
@@ -2125,12 +2198,13 @@ class MuseEngine:
         if time.monotonic() >= deadline:
             raise MuseGenerationError("任务准备超时，已停止发送")
         try:
-            if self._send(prompt) not in ("clicked", "enter-sent"):
+            send_options = {"expected_references": expected_references} if expected_references is not None else {}
+            if self._send(prompt, **send_options) not in ("clicked", "enter-sent"):
                 raise MusePostSendError("Chưa xác nhận gửi prompt. Yêu cầu không được gửi lại tự động.")
             return self._collect_generated_media(expect, deadline, on_progress, stop_event,
                                                  upload_hashes, baseline_sources, baseline_src,
                                                  base_agent_cnt, len(atts_before))
-        except (MuseModelRefusalError, MusePostSendError):
+        except (MuseModelRefusalError, MusePostSendError, MusePageUnavailable, MuseReferenceUploadError):
             raise
         except Exception as exc:
             raise MusePostSendError(str(exc)) from exc

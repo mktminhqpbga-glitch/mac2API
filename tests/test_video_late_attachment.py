@@ -16,7 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 def load_waiter(path):
     tree = ast.parse(Path(path).read_text(encoding="utf-8"))
     engine = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "MuseEngine")
-    names = {"_wait_attachment", "_clean_model_text", "_media_refusal_text", "_media_status_pending", "_media_text_error"}
+    names = {"_wait_attachment", "_clean_model_text", "_media_refusal_text", "_media_status_pending",
+             "_media_text_error", "_media_reply_code"}
     methods = [n for n in engine.body if isinstance(n, ast.FunctionDef) and n.name in names]
     errors = [n for n in tree.body if isinstance(n, ast.ClassDef)
               and n.name in {"MuseGenerationError", "MuseModelRefusalError"}]
@@ -88,6 +89,14 @@ def cases(source):
     offer = "Em tạo 1 ảnh meme mèo 1:1 thay thế nhé?\nTạo ảnh meme mèo 1:1 thay thế"
     result["image_alternative_offer"] = scenario(source, offer, ready_at=None, expect="image")
     result["image_arrives_during_offer"] = scenario(source, offer, ready_at=20, stop_until=22, expect="image")
+    result["vi_claim_then_attachment"] = scenario(
+        source, "Ảnh đã tạo xong, tệp đang tải.", ready_at=20, expect="image")
+    result["image_refs_not_seen"] = scenario(
+        source, "Muse chưa thể tạo vì lượt này không có ảnh nào đính kèm.", ready_at=None, expect="image")
+    result["vi_video_unavailable"] = scenario(
+        source, "Tính năng tạo video không khả dụng cho tài khoản này ở quốc gia/khu vực hiện tại.")
+    result["image_offer_other_direction"] = scenario(
+        source, "Em có thể làm lại theo hướng khác mà vẫn giữ được ý chính.", ready_at=None, expect="image")
     for label, text in (
         ("negated_cn", "视频没有生成成功，请重新尝试。"),
         ("negated_en", "The video has not been generated successfully. Please try again."),
@@ -116,7 +125,7 @@ def main():
             assert item["outcome"] == "timeout" and 45 <= item["elapsed"] < 46, (name, item)
         elif name == "stop_lifecycle":
             assert item["outcome"] == "video" and item["elapsed"] >= 30, (name, item)
-        elif name == "image_arrives_during_offer":
+        elif name in ("image_arrives_during_offer", "vi_claim_then_attachment"):
             assert item["outcome"] == "image" and item["elapsed"] >= 20, (name, item)
         else:
             assert item["outcome"] == "MuseModelRefusalError", (name, item)
@@ -129,6 +138,12 @@ def main():
                 assert "phương án chờ duyệt" in item["error"] and "ảnh meme mèo 1:1" in item["error"], item
             if name == "image_account_check_reply":
                 assert "Muse chỉ trả văn bản" in item["error"], item
+            if name == "image_refs_not_seen":
+                assert item["code"] == "MUSE_REFERENCES_NOT_SEEN", item
+            if name == "vi_video_unavailable":
+                assert item["code"] == "MUSE_VIDEO_UNAVAILABLE", item
+            if name == "image_offer_other_direction":
+                assert item["code"] == "MUSE_CONFIRMATION_REQUIRED", item
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     print(f"PASS: {len(result)} late-video, deadline, cover and refusal cases")
 

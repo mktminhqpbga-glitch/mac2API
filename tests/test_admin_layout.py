@@ -35,7 +35,9 @@ class Handler(BaseHTTPRequestHandler):
   elif path=='/admin/media':
    data={'count':2,'media':[{'name':name,'kind':'video','url':'/v1/media/'+name,'thumbnail_url':'/v1/media/'+name+'/thumbnail','bytes':4000,'mtime':now}for name in ['clip-one.mp4','clip-two.mp4']]};kind='application/json'
   elif path=='/admin/tasks':
-   data={'tasks':[{'id':'fixture-task','kind':'video','prompt':'fixture task','status':'failed','error':'参考素材上传未确认（0/1），已停止生成','created_at':now-7,'account':'fixture00000','queue_elapsed':2.0,'elapsed':5.0,'total_elapsed':7.0,'attempt':1}]};kind='application/json'
+   data={'tasks':[{'id':'fixture-task','kind':'video','prompt':'fixture task','status':'failed','error':'参考素材上传未确认（0/1），已停止生成','created_at':now-7,'account':'fixture00000','queue_elapsed':2.0,'elapsed':5.0,'total_elapsed':7.0,'attempt':1,
+                   'error_code':'MUSE_REFERENCE_UPLOAD_UNCONFIRMED','error_stage':'before_send',
+                   'reference_count':1,'confirmed_reference_count':0}]};kind='application/json'
   elif path.endswith('/thumbnail'):data=thumbnail_bytes;kind='image/jpeg'
   elif path.endswith('.mp4'):data=video_bytes;kind='video/mp4'
   else:data={'browser_running':True,'media_count':2,'status':'ok','generation_queue':{'queue_timeout':3600},'config':{'image_timeout':240,'video_timeout':600}};kind='application/json'
@@ -135,6 +137,11 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
               'en': 'Muse did not confirm the reference files (0/1)',
               'zh': '参考素材上传未确认（0/1）'}[lang]
    wait(f"document.querySelector('#taskBody details[open]').innerText.includes({json.dumps(message)})")
+   diagnostic=page.js("document.querySelector('#taskBody details[open]').innerText")
+   check('MUSE_REFERENCE_UPLOAD_UNCONFIRMED' in diagnostic, lang+': task code is missing')
+   if lang=='vi':
+    check(all(label in diagnostic for label in ('Dừng trước khi gửi','Tệp tham chiếu API đã nhận 1','Tệp thấy trong ô nhập 0')),
+          'vi: task stage or reference counts are missing')
    page.js("loadTasks()",await_promise=True)
    check(page.js("Boolean(document.querySelector('#taskBody details[open]'))"),lang+': error details collapsed on refresh')
    for word in {'en': ['Queue','Generate','Total'], 'vi': ['Chờ','Tạo','Tổng'], 'zh': ['排队','生成','总计']}[lang]:check(word in text,lang+': task duration missing '+word)
