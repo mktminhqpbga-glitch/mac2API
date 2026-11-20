@@ -1,8 +1,8 @@
 export default {
     id: "mac2ApiMuse",
     label: "mac2API · Muse",
-    version: "2.0.10",
-    readme: "Tạo ảnh và video qua tài khoản Muse đã cấu hình trong mac2API. Trong cài đặt video, ô Thời lượng tùy chỉnh (giây) ghi đè thời lượng chọn nhanh khi có giá trị. Độ phân giải, tỷ lệ và thời lượng là thông số yêu cầu gửi tới Muse. Kết quả thực tế phụ thuộc vào Muse. Nhập Base URL đang dùng và khóa người dùng mac2API (m2c_…).",
+    version: "2.0.11",
+    readme: "Tạo ảnh với tối đa 20 ảnh tham chiếu trên bản mac2API hỗ trợ. Trong cài đặt video, ô Thời lượng tùy chỉnh (giây) ghi đè thời lượng chọn nhanh khi có giá trị. Kết quả thực tế phụ thuộc vào Muse. Nhập Base URL và khóa người dùng mac2API (m2c_…).",
     rules: [
         {
             type: "input",
@@ -145,6 +145,9 @@ export default {
         }
         if (input.mask || input.n != null && input.n !== 1 || input.outputFormat) {
             throw new Error("Mô-đun chỉ trả một ảnh và chưa hỗ trợ mặt nạ hoặc định dạng đầu ra tùy chọn.");
+        }
+        if (input.images?.length > 20) {
+            throw Object.assign(new Error("Chọn tối đa 20 ảnh tham chiếu cho một tác vụ tạo ảnh."), { code: "MEDIA_TASK_FAILED" });
         }
         return submit(this, "image", {
             model: input.model,
@@ -352,7 +355,7 @@ function validRequestKey(value) {
     return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
-async function discover(context, model, signal) {
+async function discover(context, model, signal, referenceCount) {
     let capability;
     try {
         capability = await request(context, "/capabilities", signal);
@@ -370,6 +373,10 @@ async function discover(context, model, signal) {
     }
     const selected = capability.models.find(item => item?.id === model);
     if (!selected) throw new Error("Khóa API hoặc Base URL chưa có quyền dùng mô-đun đã chọn.");
+    if (Number.isInteger(selected.maxReferences) && referenceCount > selected.maxReferences) {
+        throw Object.assign(new Error(`Máy chủ mac2API cho phép tối đa ${selected.maxReferences} ảnh tham chiếu. Tác vụ chưa được gửi.`),
+                            { code: "MEDIA_TASK_FAILED" });
+    }
     if (selected.ready !== true) {
         const provider = capability.providers?.find(item => item?.id === selected.provider);
         const reason = {
@@ -427,7 +434,7 @@ async function submit(context, kind, body) {
     const signal = taskSignal(context);
     signal.throwIfAborted();
     const { base } = connection(context);
-    const canCancel = await discover(context, body.model, signal);
+    const canCancel = await discover(context, body.model, signal, body.images?.length ?? (body.image ? 1 : 0));
     if (typeof context.saveTaskData !== "function") {
         throw new Error("MacFlow cần hỗ trợ lưu trạng thái tác vụ trước khi gửi yêu cầu mac2API.");
     }

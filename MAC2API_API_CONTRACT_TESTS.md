@@ -64,7 +64,7 @@ Dùng `POST /v1/images/tasks/{task_id}/cancel` hoặc `POST /v1/videos/{task_id}
 
 Hợp đồng dành HTTP 202 với `status: "cancel_requested"` cho máy chủ có khả năng dừng bất đồng bộ an toàn. Bản này hỗ trợ hủy khi chờ. Nếu host chặn HTTP sau khi người dùng hủy chạy adapter, client cần gửi yêu cầu hủy từ ngữ cảnh HTTP độc lập.
 
-Khi máy chủ từ chối trước khi nhận tác vụ, HTTP 429 có `Retry-After` theo giây và `error.code`. Các mã gồm `CLIENT_RATE_LIMIT`, `CLIENT_PENDING_LIMIT` và `QUEUE_FULL`. Giới hạn giữ ở 20 POST/phút và 2 POST đồng thời mỗi khóa, 2 tác vụ media đang chờ hoặc chạy mỗi khóa, 8 tác vụ đang chờ hoặc chạy mỗi loại ảnh hoặc video. `Retry-After` là thời gian tối thiểu nên đợi trước khi gửi một ý định đã bị từ chối xác định. Trạng thái lỗi sau biên nhận thuộc tác vụ đã nhận.
+Khi máy chủ từ chối trước khi nhận tác vụ, HTTP 429 có `Retry-After` theo giây và `error.code`. Các mã gồm `CLIENT_RATE_LIMIT`, `CLIENT_PENDING_LIMIT` và `QUEUE_FULL`. Hai trường `perClientImagePending` và `perImagePending` lần lượt công bố 4 tác vụ ảnh mỗi khóa và 20 tác vụ ảnh toàn máy chủ. `perClientPending` và `perKindPending` lần lượt công bố 2 tác vụ media mỗi khóa khi nhận video và 8 tác vụ video toàn máy chủ. Các trạng thái chờ và đang chạy đều tính vào giới hạn. Khóa vẫn có 20 POST/phút và 2 POST đồng thời. `Retry-After` là thời gian tối thiểu nên đợi sau khi yêu cầu bị từ chối xác định. Trạng thái lỗi sau biên nhận thuộc tác vụ đã nhận.
 
 ## Media, quyền và tương thích
 
@@ -78,7 +78,7 @@ Khi máy chủ từ chối trước khi nhận tác vụ, HTTP 429 có `Retry-Af
 | Kho media | URL ký tối đa 7 ngày và có thể hết hạn sớm nếu tệp được dọn, khóa chủ bị thu hồi hoặc khóa ký thay đổi. Lấy URL mới từ GET tác vụ nếu còn dữ liệu. Tải bytes vào workspace MacFlow trước khi báo đầu ra sẵn sàng. Khi ghi media, kho 5 GB dọn tệp cũ theo ngưỡng 70%. |
 | URL quản trị cũ chưa ký | Dùng Bearer quản trị để tải hoặc lấy URL mới từ bảng quản trị. Biến `MUSE2API_ALLOW_LEGACY_PUBLIC_MEDIA=1` giữ URL quản trị chưa ký trong thời gian chuyển đổi có chủ đích. URL client vẫn được kiểm tra quyền. |
 | Client tích hợp sẵn | Gọi capabilities, lookup và cancel bằng khóa `m2c_…`. Các tuyến cũ vẫn nhận khóa quản trị để bảng điều khiển và tích hợp hiện có tiếp tục hoạt động. API task cũ tiếp tục chấp nhận khóa idempotency không theo UUID theo phạm vi loại tác vụ và nhà cung cấp. |
-| Adapter độc lập | Tệp Muse trong `adapters/2.0.7/` có phiên bản 2.0.10. Tệp ChatGPT và Gemini có phiên bản 2.0.8. Cả ba dùng hợp đồng v1 và chuyển sang `/models` khi capabilities trả 404. Host phải hỗ trợ lưu trạng thái tác vụ trước POST. Adapter lưu UUID cho GET tra cứu và dừng nếu kết quả chưa rõ. |
+| Adapter độc lập | Tệp Muse trong `adapters/2.0.7/` có phiên bản 2.0.11 và kiểm tra giới hạn ảnh của máy chủ trước POST. Tệp ChatGPT và Gemini có phiên bản 2.0.8. Cả ba dùng hợp đồng v1 và chuyển sang `/models` khi capabilities trả 404. Host phải hỗ trợ lưu trạng thái tác vụ trước POST. Adapter lưu UUID cho GET tra cứu và dừng nếu kết quả chưa rõ. |
 | Máy chủ tự triển khai | Chạy một tiến trình mac2API cho mỗi thư mục dữ liệu. Qua proxy ngược, cấu hình HTTPS và chuyển đúng scheme từ proxy tin cậy. Thêm origin trình duyệt được phép bằng `MUSE2API_CORS_ORIGINS`. Giữ chế độ AIChrome của MacFlow độc lập với phiên do mac2API điều khiển. |
 
 ## Chẩn đoán tác vụ Muse

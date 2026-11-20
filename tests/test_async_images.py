@@ -271,7 +271,7 @@ async def check(source, home):
                                  headers={"Authorization": "Bearer wrong"})).status_code == 401
         print("failure_terminal=PASS authentication=PASS missing_task=PASS")
 
-        for _ in range(8):
+        for _ in range(module.IMAGE_PENDING_LIMIT):
             module.store.create_task("image", "queued fixture")
         full = await client.post("/v1/images/tasks", json={"prompt": "queue full"})
         assert full.status_code == 429

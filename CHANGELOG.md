@@ -1,5 +1,10 @@
 # Nhật ký và bàn giao mac2API
 
+## Ảnh tham chiếu và hàng đợi tạo ảnh
+
+- Tác vụ tạo ảnh Muse nhận tối đa 20 ảnh tham chiếu. mac2API kiểm tra thứ tự và số tệp đã xác nhận ngay trước khi gửi.
+- Hàng đợi tạo ảnh chứa tối đa 20 tác vụ đang chờ hoặc chạy, với tối đa 4 tác vụ ảnh mỗi khóa. `/capabilities` công bố hai giới hạn này và giới hạn ảnh tham chiếu.
+
 ## Thời lượng video Muse
 
 - Adapter Muse 2.0.10 giữ các mốc chọn nhanh và thêm ô nhập số giây tùy chỉnh. Mục Thử API cũng nhận số giây dương ngoài các mốc có sẵn.

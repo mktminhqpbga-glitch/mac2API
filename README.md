@@ -161,7 +161,7 @@ Khóa người dùng chỉ xem được tác vụ của chính khóa đó. Tải
 
 Dùng HTTPS khi gửi Bearer từ xa. Với proxy ngược, chuyển scheme qua proxy tin cậy để ứng dụng nhận biết HTTPS. Thêm từng origin được phép vào `MUSE2API_CORS_ORIGINS`, cách nhau bằng dấu phẩy. Bảng quản trị giữ khóa trong phiên của tab hiện tại.
 
-Mỗi khóa có tối đa 20 yêu cầu `POST` mỗi phút, 2 yêu cầu `POST` đồng thời và 2 tác vụ media đang chờ hoặc đang chạy. Việc đọc trạng thái tác vụ dùng `GET`. Các khóa cùng chia sẻ tài khoản nhà cung cấp, hạn mức upstream, kho media và khe Chromium của tiến trình. Cấu hình này hỗ trợ nhiều người dùng trên một tiến trình mac2API với thư mục `data/` bền vững.
+Mỗi khóa có tối đa 20 yêu cầu `POST` mỗi phút và 2 yêu cầu `POST` đồng thời. Hàng đợi tạo ảnh chứa tối đa 20 tác vụ đang chờ hoặc chạy trên máy chủ, tối đa 4 tác vụ ảnh mỗi khóa. Hàng đợi video chứa tối đa 8 tác vụ, với ngưỡng 2 tác vụ media mỗi khóa khi nhận video. Việc đọc trạng thái dùng `GET`. Các khóa cùng chia sẻ tài khoản nhà cung cấp, hạn mức upstream, kho media và khe Chromium của tiến trình.
 
 ## ChatGPT Web và Gemini Web
 
@@ -204,7 +204,7 @@ Thư viện hiển thị tệp mới nhất trước. Kho kết quả tối đa 
 
 ## Tệp tham chiếu
 
-Gửi ảnh, video, âm thanh hoặc tài liệu tham chiếu qua các luồng hỗ trợ từng loại tệp. Tối đa 10 tệp, 40 MiB mỗi tệp và 100 MiB tổng cộng. URL công khai, Data URL và Base64 hợp lệ được hỗ trợ. Tránh trộn mảng `images` với các trường một ảnh cũ như `image` hoặc `reference_image`. Mặc định, đường dẫn tệp trên máy chủ và URL mạng riêng hoặc localhost bị từ chối.
+Muse nhận tối đa 20 tệp tham chiếu cho tác vụ ảnh và 10 tệp cho tác vụ video gọi qua API cũ. Các adapter video có thể có giới hạn thấp hơn. Mỗi tệp tối đa 40 MiB, tổng 100 MiB mỗi yêu cầu. URL công khai, Data URL và Base64 hợp lệ được hỗ trợ. Tránh trộn mảng `images` với các trường một ảnh cũ như `image` hoặc `reference_image`. Mặc định, đường dẫn tệp trên máy chủ và URL mạng riêng hoặc localhost bị từ chối.
 
 Tệp được tải lên theo thứ tự các trường `images`, `videos`, `audios`, `files`. Mỗi phần tử có thể là chuỗi URL, Data URL, Base64 hoặc đối tượng như `{"url":"https://example.com/ref.png"}`. Với multipart, có thể lặp các trường `image`, `video`, `audio` và `file`.
 

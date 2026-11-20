@@ -55,7 +55,7 @@ from pydantic import model_validator, BaseModel, Field, SecretStr, field_validat
 from chat_providers import ChatProviders, ProviderName, ProviderSettings
 from config import CFG
 from engine import (ESSENTIAL_COOKIES, MAX_REFERENCE_IMAGE_BYTES,
-                    MAX_REFERENCE_IMAGES, MAX_REFERENCE_TOTAL_BYTES,
+                    MAX_REFERENCE_IMAGES, MAX_REFERENCE_TOTAL_BYTES, MAX_VIDEO_REFERENCES,
                     REFERENCE_MIME_EXT, MuseAuthError, MuseEngine, MuseGenerationError,
                     MuseModelRefusalError, MusePostSendError, RefImageSafetyError, reference_kind)
 from engine import MusePageUnavailable, MuseProxyError, MuseReferenceUploadError, MuseSessionUnavailable
@@ -536,6 +536,8 @@ CLIENT_REQUESTS_PER_MINUTE = 20
 CLIENT_ACTIVE_POST_LIMIT = 2
 CLIENT_PENDING_MEDIA_LIMIT = 2
 KIND_PENDING_MEDIA_LIMIT = 8
+CLIENT_PENDING_IMAGE_LIMIT = 4
+IMAGE_PENDING_LIMIT = 20
 MEDIA_ADMISSION_LOCK = threading.Lock()
 CLIENT_MEDIA_PATTERN = re.compile(r"^client-([0-9a-f]{16})--")
 NO_STORE = {"Cache-Control": "no-store"}
@@ -619,10 +621,16 @@ def _require_task_owner(task, client):
 
 def _check_media_admission(tasks, kind, owner):
     active = [task for task in tasks if task.get("status") in ("queued", "processing")]
-    if sum(task.get("kind") == kind for task in active) >= KIND_PENDING_MEDIA_LIMIT:
+    same_kind = [task for task in active if task.get("kind") == kind]
+    image = kind == "image"
+    if len(same_kind) >= (IMAGE_PENDING_LIMIT if image else KIND_PENDING_MEDIA_LIMIT):
         raise _backpressure("QUEUE_FULL", "Hàng đợi tạo nội dung đã đầy.", 2)
-    if owner and sum(task.get("owner") == owner for task in active) >= CLIENT_PENDING_MEDIA_LIMIT:
-        raise _backpressure("CLIENT_PENDING_LIMIT", "Khóa API đang có tối đa 2 tác vụ media chờ hoặc đang chạy.", 2)
+    client_tasks = same_kind if image else active
+    client_limit = CLIENT_PENDING_IMAGE_LIMIT if image else CLIENT_PENDING_MEDIA_LIMIT
+    if owner and sum(task.get("owner") == owner for task in client_tasks) >= client_limit:
+        label = "tạo ảnh" if image else "media"
+        raise _backpressure("CLIENT_PENDING_LIMIT",
+                            f"Khóa API đang có tối đa {client_limit} tác vụ {label} chờ hoặc đang chạy.", 2)
 
 
 def _public_task(task, client):
@@ -1000,7 +1008,7 @@ def _image_value(value: Any) -> str | None:
 
 
 def _reference_list(images: list | None, legacy: list[Any], field: str,
-                    extra: dict[str, list | None] | None = None) -> list[str]:
+                    extra: dict[str, list | None] | None = None, *, limit: int = MAX_REFERENCE_IMAGES) -> list[str]:
     """Validate ordered references and make legacy precedence explicit.
 
     顺序：images（或旧版单图字段）在前，其后依次是 videos / audios / files。
@@ -1020,8 +1028,8 @@ def _reference_list(images: list | None, legacy: list[Any], field: str,
                 raise HTTPException(400, f"{name} 必须是数组")
             groups.append((name, values))
     total = sum(len(values) for _, values in groups)
-    if total > MAX_REFERENCE_IMAGES:
-        raise HTTPException(400, f"参考素材最多 {MAX_REFERENCE_IMAGES} 个（当前 {total} 个）")
+    if total > limit:
+        raise HTTPException(400, f"参考素材最多 {limit} 个（当前 {total} 个）")
     refs = []
     for name, values in groups:
         for index, value in enumerate(values):
@@ -1044,7 +1052,7 @@ def _image_references(req: ImageRequest) -> list[str]:
 def _video_references(req: VideoRequest) -> list[str]:
     return _reference_list(
         req.images, [req.reference_image, req.image_url, req.image], "images",
-        _extra_media(req))
+        _extra_media(req), limit=MAX_VIDEO_REFERENCES)
 
 
 def _reference_kinds(prepared: list[str]) -> list[str]:
@@ -1929,7 +1937,8 @@ def capabilities(request: Request, client=Depends(contract_auth)):
         "serverVersion": _read_local_version()["version"],
         "providers": [{"id": provider, **state} for provider, state in states.items()],
         "models": models,
-        "limits": {"perClientPending": CLIENT_PENDING_MEDIA_LIMIT, "perKindPending": KIND_PENDING_MEDIA_LIMIT},
+        "limits": {"perClientPending": CLIENT_PENDING_MEDIA_LIMIT, "perKindPending": KIND_PENDING_MEDIA_LIMIT,
+                   "perClientImagePending": CLIENT_PENDING_IMAGE_LIMIT, "perImagePending": IMAGE_PENDING_LIMIT},
         "features": {"idempotency": True, "lookupByRequestKey": True, "cancel": True},
     }, headers=NO_STORE)
 

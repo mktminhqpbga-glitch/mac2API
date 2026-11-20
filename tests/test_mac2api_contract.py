@@ -1,5 +1,6 @@
 """Offline contract fixtures. Run directly with Python; no AI upstream calls."""
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -52,10 +53,12 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(data), {"contractVersion", "serverVersion", "providers", "models", "limits", "features"})
         self.assertEqual(data["serverVersion"], app._read_local_version()["version"])
         self.assertEqual(data["contractVersion"], 1)
-        self.assertEqual(data["limits"], {"perClientPending": 2, "perKindPending": 8})
+        self.assertEqual(data["limits"], {"perClientPending": 2, "perKindPending": 8,
+                                         "perClientImagePending": 4, "perImagePending": 20})
         self.assertEqual({item["id"] for item in data["providers"]}, {"muse", "chatgpt", "gemini-web"})
         self.assertTrue(all(not item["ready"] for item in data["providers"]))
         self.assertFalse(any(item["type"] == "video" and item["provider"] != "muse" for item in data["models"]))
+        self.assertEqual(next(item for item in data["models"] if item["id"] == "muse/image")["maxReferences"], 20)
         self.assertEqual((await self.http.get("/chatgpt/v1/capabilities", headers=self.a)).status_code, 403)
         account = app.store.add_account({"hatch_sess": "fixture"}, "fixture")
         app.store.update_account(account["id"], ok=True)
@@ -312,13 +315,27 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
         app.store.transition_task(first["id"], "queued", status="processing")
         second = app.store.create_task("video", "fixture", owner=owner)
         endpoint = "/v1/images/tasks"
-        rejected = await self.http.post(endpoint, headers=self.a, json={"prompt": "test", "model": "muse/image"})
+        body = {"prompt": "test", "model": "muse/image"}
+        with patch.object(app, "_start_media_worker", side_effect=lambda task, *_: task):
+            for _ in range(3):
+                result = await self.http.post(endpoint, headers=self.a, json=body)
+                self.assertEqual(result.status_code, 202, result.text)
+        rejected = await self.http.post(endpoint, headers=self.a, json=body)
         self.assertEqual((rejected.status_code, rejected.json()["error"]["code"]), (429, "CLIENT_PENDING_LIMIT"))
-        for _ in range(7):
+        self.assertEqual((await self.http.post("/v1/videos", headers=self.a, json={"prompt": "test"})).status_code, 429)
+        for _ in range(15):
             app.store.create_task("image", "fixture", owner=uuid4().hex[:16])
-        rejected = await self.http.post(endpoint, headers=self.b, json={"prompt": "test", "model": "muse/image"})
+        with patch.object(app, "_start_media_worker", side_effect=lambda task, *_: task):
+            result = await self.http.post(endpoint, headers=self.b, json=body)
+        self.assertEqual(result.status_code, 202, result.text)
+        rejected = await self.http.post(endpoint, headers=self.b, json=body)
         self.assertEqual((rejected.status_code, rejected.json()["error"]["code"]), (429, "QUEUE_FULL"))
         self.assertTrue(rejected.headers["Retry-After"].isdigit())
+        tid = result.json()["task_id"]
+        self.assertEqual((await self.http.post(f"{endpoint}/{tid}/cancel", headers=self.b)).status_code, 200)
+        with patch.object(app, "_start_media_worker", side_effect=lambda task, *_: task):
+            result = await self.http.post(endpoint, headers=self.b, json=body)
+        self.assertEqual(result.status_code, 202, result.text)
         with patch.object(app, "store", app.Store(app.CFG)), \
              patch.object(app, "_start_media_worker", side_effect=AssertionError("startup replayed")) as worker:
             await app._startup()
@@ -332,6 +349,22 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(receipt.json()["status"], "interrupted")
             finally:
                 await app._shutdown()
+
+    async def test_twenty_image_references_are_accepted_in_order(self):
+        prefix = b"\x89PNG\r\n\x1a\n"
+        refs = ["data:image/png;base64," + base64.b64encode(prefix + bytes([index])).decode()
+                for index in range(20)]
+        with patch.object(app, "_start_media_worker", side_effect=lambda task, *_: task) as worker, \
+             patch.object(app, "_queue_image", wraps=app._queue_image) as submit:
+            endpoint = "/muse/v1/images/tasks"
+            accepted = await self.http.post(endpoint, headers=self.a, json={"prompt": "Dùng [图20]", "images": refs})
+            self.assertEqual(accepted.status_code, 202, accepted.text)
+            self.assertEqual(submit.call_args.args[2], refs)
+            saved = app.store.get_task(accepted.json()["task_id"])
+            self.assertEqual(saved["reference_count"], 20)
+            excess = await self.http.post(endpoint, headers=self.a, json={"prompt": "fixture", "images": refs + refs[:1]})
+            self.assertEqual(excess.status_code, 400, excess.text)
+            worker.assert_called_once()
 
     async def test_signed_admin_media_and_scope(self):
         name = "fixture-admin.png"

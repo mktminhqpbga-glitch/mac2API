@@ -142,6 +142,35 @@ test("Muse exposes the pre-send missing-reference error and stops", async () => 
     assert.deepEqual(f.traffic, [["GET", "/capabilities"], ["POST", "/images/tasks"]]);
 });
 
+test("Muse submits all twenty references when advertised and rejects excess before POST", async () => {
+    const { default: adapter } = await import("../adapters/2.0.7/mac2ApiMuse.ts");
+    const model = "muse/image";
+    const images = Array.from({ length: 20 }, (_, index) => ({
+        type: "url", url: `https://example.invalid/reference-${index}.png`
+    }));
+    for (const maxReferences of [10, 20]) {
+        const f = fixture((path, init) => {
+            if (path === "/capabilities") return Response.json({ contractVersion: 1,
+                features: { idempotency: true, lookupByRequestKey: true },
+                models: [{ id: model, ready: true, maxReferences }] });
+            if (path === "/images/tasks") {
+                assert.deepEqual(JSON.parse(init.body).images, images.map(image => image.url));
+                return Response.json(receipt);
+            }
+            return result();
+        });
+        const request = { ...imageRequest(model), images };
+        if (maxReferences === 10) {
+            await assert.rejects(adapter.generateImage.call(f.context, request), /tối đa 10 ảnh/);
+            assert.deepEqual(f.traffic, [["GET", "/capabilities"]]);
+            assert.equal(f.saved.length, 0);
+        } else {
+            assert.equal((await adapter.generateImage.call(f.context, request)).length, 1);
+            assert.equal(f.traffic.filter(([method]) => method === "POST").length, 1);
+        }
+    }
+});
+
 test("Muse forwards preset and unrestricted durations with the selected ratio and resolution", async () => {
     const { default: adapter } = await import("../adapters/2.0.7/mac2ApiMuse.ts");
     const request = { model: "muse/video", prompt: "Video thử", mode: "text", ratio: "9:16", resolution: "1080" };

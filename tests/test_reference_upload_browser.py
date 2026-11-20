@@ -118,8 +118,10 @@ with tempfile.TemporaryDirectory(prefix="muse-upload-check-", dir=Path.home()) a
             assert page.js(engine._COMPOSER_EMPTY_JS) is True
             # Muse may render a preview without a localized remove button.
             fixture(history_only=True)
-            page.js("""document.querySelector('#uploader').addEventListener('change', function() {
+            page.js("""window.uploadedFiles = [];
+            document.querySelector('#uploader').addEventListener('change', function() {
                 const file = this.files[0];
+                window.uploadedFiles.push(file.name);
                 setTimeout(() => {
                     const card = document.createElement('div');
                     card.setAttribute('data-testid', 'hatch-composer-attachment');
@@ -135,15 +137,16 @@ with tempfile.TemporaryDirectory(prefix="muse-upload-check-", dir=Path.home()) a
             original_extensions = module.REFERENCE_MIME_EXT.copy()
             module.REFERENCE_MIME_EXT["image/svg+xml"] = ".svg"
             try:
-                attached = engine._attach_images(["first", "second"])
-                assert len(attached["hashes"]) == 1  # Both fixtures contain the same bytes.
-                assert page.js(count_script) == 2
+                attached = engine._attach_images(["reference"] * 20)
+                assert len(attached["hashes"]) == 1  # The fixtures contain the same bytes.
+                assert page.js(count_script) == 20
+                assert page.js("window.uploadedFiles") == [f"reference_{index}.svg" for index in range(1, 21)]
                 assert page.js("document.querySelectorAll('section button').length") == 0
                 shutil.rmtree(attached["dir"])
             finally:
                 module.REFERENCE_MIME_EXT.clear()
                 module.REFERENCE_MIME_EXT.update(original_extensions)
-            print("PASS: old/new layouts, history exclusion, hidden input cleanup, stuck audio card fallback and actual file bytes", flush=True)
+            print("PASS: old/new layouts, stale media cleanup and 20 actual files uploaded in order", flush=True)
     finally:
         if page:
             try:

@@ -42,9 +42,9 @@ from proxy import HTTPProxyRelay, request_proxy_context
 log = logging.getLogger("muse2api")
 
 ATT_SEL = '[data-testid^="hatch-chat-attachment-presentation-"]'
-# 参考素材上限对齐 muse.ai 网页端（maxFilesPerUpload=10 / maxFileSize=40 MiB /
-# maxVideoDurationSeconds=120）。常量名沿用 *_IMAGES，但统计的是全部素材。
-MAX_REFERENCE_IMAGES = 10
+# Attach one file per picker operation and verify the entire composer before sending.
+MAX_REFERENCE_IMAGES = 20
+MAX_VIDEO_REFERENCES = 10
 MAX_REFERENCE_IMAGE_BYTES = 40 * 1024 * 1024
 MAX_REFERENCE_TOTAL_BYTES = 100 * 1024 * 1024
 MAX_REFERENCE_VIDEO_SECONDS = 120
@@ -2136,7 +2136,7 @@ class MuseEngine:
         self.page.send("DOM.setFileInputFiles",
                        {"files": paths, "objectId": object_id}, timeout=60)
 
-    def _attach_images(self, image_data: list[str]) -> dict | None:
+    def _attach_images(self, image_data: list[str], *, task_deadline: float = float("inf")) -> dict | None:
         """逐个附加参考素材（图片/视频/音频/文档），并确认全部进入输入框。
 
         返回 {"dir": 临时目录, "hashes": 素材 sha256 集合}；调用方在生成结束后
@@ -2171,8 +2171,11 @@ class MuseEngine:
         upload_dir = tempfile.mkdtemp(prefix="muse2api-refs-", dir=self.cfg.profile_dir)
         hashes = set()
         try:
-            deadline = time.monotonic() + 30.0
+            upload_budget = 30 + 5 * max(0, len(files) - MAX_VIDEO_REFERENCES)
+            deadline = min(task_deadline, time.monotonic() + upload_budget)
             for expected, (index, data, mime) in enumerate(files, 1):
+                if time.monotonic() >= deadline:
+                    raise MuseReferenceUploadError(len(files), expected - 1)
                 path = os.path.join(
                     upload_dir, f"reference_{index}{REFERENCE_MIME_EXT.get(mime, '.bin')}")
                 with open(path, "wb") as f:
@@ -2227,7 +2230,7 @@ class MuseEngine:
             self._muse_page_not_ready(self.page, getattr(self._ensure_local(), "proxy_config", None))
         self._scroll_bottom()
         refs = list(reference_images or ([] if not reference_image else [reference_image]))
-        upload = self._attach_images(refs) if refs else None
+        upload = self._attach_images(refs, task_deadline=deadline) if refs else None
         try:
             return self._generate_attached(prompt, expect, deadline, on_progress,
                                            stop_event, (upload or {}).get("hashes") or set(),

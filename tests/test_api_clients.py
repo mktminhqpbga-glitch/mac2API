@@ -90,7 +90,7 @@ async def run():
                 assert replay.status_code == 200 and replay.json()["id"] == video_task
                 different = await http.post(video_path, headers=video_headers, json={"prompt": "Another video"})
                 assert different.status_code == 409
-                assert (await http.post(endpoint, headers=al, json=body)).status_code == 429
+                assert (await http.post(video_path, headers=al, json=video_body)).status_code == 429
                 assert (await http.get(endpoint + "/" + alice_task, headers=bo)).status_code == 404
                 assert (await http.get("/v1/videos/" + video_task, headers=bo)).status_code == 404
                 assert (await http.delete("/admin/tasks/" + alice_task, headers=admin)).status_code == 409
