@@ -10,6 +10,7 @@ import shutil
 import socket
 import sys
 import tempfile
+import time
 from types import SimpleNamespace
 
 parser = argparse.ArgumentParser()
@@ -61,7 +62,7 @@ with tempfile.TemporaryDirectory(prefix='muse-send-test-', dir=Path.home()) as h
                 window.wrongClicks=0; window.accepted=[];
                 document.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
                     if(b.id!=='actual'){window.wrongClicks++;return;}
-                    const ta=document.querySelector('textarea');
+                    const ta=document.querySelector('#composer textarea');
                     window.accepted.push(ta.value);ta.value='';
                     document.querySelectorAll('#composer [aria-label="Remove attachment"]').forEach(e=>e.remove());
                 }));
@@ -69,7 +70,7 @@ with tempfile.TemporaryDirectory(prefix='muse-send-test-', dir=Path.home()) as h
             })()''')
 
         def assert_accepted(prompt):
-            state = page.js('({wrong:window.wrongClicks,accepted:window.accepted,text:document.querySelector("textarea").value})')
+            state = page.js('({wrong:window.wrongClicks,accepted:window.accepted,text:document.querySelector("#composer textarea").value})')
             assert state['wrong'] == 0, f'clicked a history/feedback button: {state}'
             assert state['accepted'] == [prompt] and state['text'] == '', state
 
@@ -91,12 +92,12 @@ with tempfile.TemporaryDirectory(prefix='muse-send-test-', dir=Path.home()) as h
 
         for label, text, test_id in (
             ('发送', '', ''), ('傳送', '', ''), ('', 'Send', ''),
-            ('', '', 'hatch-composer-send-button'), ('Send message', '', '')):
+            ('', '', 'hatch-composer-send-button'), ('Send message', '', ''), ('Gửi tin nhắn', '', '')):
             fixture(label=label, text=text, test_id=test_id)
             page.js("document.querySelector('textarea').value='localized prompt'")
             assert engine._click_send() == 'clicked'
             assert_accepted('localized prompt')
-        print('PASS: English/Chinese labels, exact text and composer test IDs')
+        print('PASS: English/Chinese/Vietnamese labels, exact text and composer test IDs')
 
         for options, expected in (({'disabled': True}, 'disabled'),
                                   ({'aria_disabled': True}, 'disabled'),
@@ -121,5 +122,41 @@ with tempfile.TemporaryDirectory(prefix='muse-send-test-', dir=Path.home()) as h
         assert engine._click_media_send(1, "Đổi trang phục") == 'clicked'
         assert_accepted("Đổi trang phục")
         print('PASS: media send verifies exact text and settled composer references before clicking')
+
+        fixture(attachment=True, disabled=True)
+        page.js('''(() => {
+            document.body.insertAdjacentHTML('afterbegin', '<textarea hidden>hidden draft</textarea>');
+            setTimeout(() => { document.getElementById('actual').disabled = false; }, 3300);
+        })()''')
+        assert engine._send('New draft', expected_references=1) == 'clicked'
+        assert_accepted('New draft')
+        assert page.js('document.querySelector("textarea[hidden]").value') == 'hidden draft'
+        print('PASS: media waits for the real send button past three seconds and ignores hidden drafts')
+
+        fixture(attachment=True)
+        page.js("document.querySelector('#composer textarea').addEventListener('change', e => { e.target.value=''; }, {once:true})")
+        assert engine._send('Recreated draft', expected_references=1) == 'clicked'
+        assert_accepted('Recreated draft')
+        print('PASS: a dropped prompt is filled once more before the only click')
+
+        for options, discard_draft, code, confirmed in (
+            ({'disabled': True}, False, 'MUSE_SEND_BUTTON_DISABLED', 1),
+            ({'missing': True}, False, 'MUSE_SEND_BUTTON_MISSING', 1),
+            ({}, True, 'MUSE_DRAFT_NOT_READY', None),
+        ):
+            fixture(attachment=True, **options)
+            if discard_draft:
+                page.js("window.draftWrites=0; document.querySelector('#composer textarea')"
+                        ".addEventListener('change', e => { window.draftWrites++; e.target.value=''; })")
+            try:
+                engine._send('Unsent draft', expected_references=1, deadline=time.monotonic() + 0.6)
+            except module.MusePageUnavailable as exc:
+                assert (exc.code, exc.confirmed) == (code, confirmed), (exc.code, exc.confirmed)
+            else:
+                raise AssertionError(f'Send unexpectedly succeeded for {code}')
+            assert page.js('window.accepted.length === 0 && window.wrongClicks === 0')
+            if discard_draft:
+                assert page.js('window.draftWrites') == 2
+        print('PASS: task deadline limits the wait, with specific readiness errors and zero clicks')
     finally:
         engine.stop()

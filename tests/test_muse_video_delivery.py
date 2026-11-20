@@ -1,5 +1,4 @@
 """Offline regressions for MUSE page readiness and video delivery waits."""
-import ast
 import importlib.util
 import json
 import subprocess
@@ -15,10 +14,7 @@ spec = importlib.util.spec_from_file_location("muse_engine_candidate", ROOT / "e
 engine_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(engine_module)
 
-tree = ast.parse((ROOT / "engine.py").read_text(encoding="utf-8"))
-method = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_wait_ws_ready")
-expression = next(n.args[0].value for n in ast.walk(method)
-                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "js")
+expression = engine_module.MuseEngine._COMPOSER_READY_JS
 
 for name, state, host, connecting, hydrated, disabled, expected in (
         ("empty_connected", "complete", "muse.ai", False, True, False, "ready"),
@@ -28,7 +24,12 @@ for name, state, host, connecting, hydrated, disabled, expected in (
         ("connecting", "complete", "muse.ai", True, True, False, "connecting"),
         ("hydrating", "complete", "muse.ai", False, False, False, "hydrating"),
         ("disabled_input", "complete", "muse.ai", False, True, True, "input-disabled")):
-    script = """const c=%s;const ta={disabled:c.disabled};const location={hostname:c.host};const document={readyState:c.state,body:{innerText:c.connecting?'Connecting...':''},querySelector:s=>s==='textarea'?ta:s==='[data-hatch-shell-hydration-state]'?{getAttribute:()=>c.hydrated?'hydrated':'server'}:null};console.log(%s);""" % (
+    script = """const c=%s;
+const ta={matches:s=>s==='textarea'||(s===':disabled'&&c.disabled),getClientRects:()=>[{}],closest:()=>null};
+const location={hostname:c.host};const getComputedStyle=()=>({visibility:'visible'});
+const document={readyState:c.state,body:{innerText:c.connecting?'Connecting...':''},querySelectorAll:()=>[ta],
+    querySelector:s=>s==='textarea'?ta:s==='[data-hatch-shell-hydration-state]'?{getAttribute:()=>c.hydrated?'hydrated':'server'}:null};
+console.log(%s);""" % (
         json.dumps(dict(state=state, host=host, connecting=connecting, hydrated=hydrated, disabled=disabled)), expression)
     result = subprocess.check_output(["node", "-e", script], text=True).strip()
     assert result == expected, (name, result, expected)

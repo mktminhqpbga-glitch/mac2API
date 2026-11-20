@@ -181,11 +181,41 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.json()["error"]["code"], "MUSE_REFERENCES_MISSING")
         self.assertFalse(app.store.tasks)
 
+    async def test_clothing_transfer_needs_both_images_but_single_image_prompts_still_work(self):
+        endpoint = "/muse/v1/images/tasks"
+        png = "data:image/png;base64,iVBORw0KGgo="
+        transfers = (
+            "将输入图像中人物的服装替换为参考图像中的服装",
+            "Replace the outfit in the source image with the outfit from the reference image.",
+            "Thay trang phục trong ảnh gốc bằng trang phục từ ảnh tham chiếu.",
+        )
+        with patch.object(app, "_start_media_worker", side_effect=lambda task, *_: task) as start:
+            for prompt in transfers:
+                response = await self.http.post(endpoint, headers=self.a, json={"prompt": prompt, "images": [png]})
+                self.assertEqual(response.status_code, 400, response.text)
+                error = response.json()["error"]
+                self.assertEqual(error["code"], "MUSE_REFERENCES_MISSING")
+                self.assertIn("1/2 ảnh", error["message"])
+            start.assert_not_called()
+            self.assertFalse(app.store.tasks)
+            for prompt, images in (
+                (transfers[0], [png, png]), ("Photograph the scene in reference image", [png]),
+                ("Đổi trang phục trong ảnh gốc thành áo khoác xanh", [png]),
+            ):
+                response = await self.http.post(endpoint, headers=self.a, json={"prompt": prompt, "images": images})
+                self.assertEqual(response.status_code, 202, response.text)
+                task_id = response.json()["task_id"]
+                self.assertEqual(app.store.get_task(task_id)["reference_count"], len(images))
+                cleaned = await self.http.post(f"{endpoint}/{task_id}/cancel", headers=self.a)
+                self.assertEqual(cleaned.status_code, 200, cleaned.text)
+
     async def test_legacy_task_errors_get_diagnostics_without_mutating_history(self):
         for reply, code, stage in (
             ("Hết thời gian tải Muse.ai vì ô chat chưa xuất hiện.", "MUSE_PAGE_NOT_READY", "before_send"),
             ("Muse chỉ trả văn bản và chưa gửi tệp kết quả. Phản hồi của Muse: Lượt này không có ảnh nào đính kèm.",
              "MUSE_REFERENCES_NOT_SEEN", "muse_reply"),
+            ("Muse chỉ trả văn bản và chưa gửi tệp kết quả. Phản hồi của Muse: Chưa có ảnh thứ 2 chứa trang phục mục tiêu.",
+             "MUSE_REFERENCE_INCOMPLETE", "muse_reply"),
             ("Muse chỉ trả văn bản và chưa gửi tệp kết quả. Phản hồi của Muse: "
              "Tính năng tạo video không khả dụng cho tài khoản này ở quốc gia/khu vực hiện tại.",
              "MUSE_VIDEO_UNAVAILABLE", "muse_reply"),
@@ -226,6 +256,27 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("meme mèo 1:1 thay thế", task["error"])
             self.assertIsNone(task["result"])
             generate.assert_called_once()
+
+    async def test_uncertain_media_send_is_not_reset_or_repeated(self):
+        for label in ("first", "second"):
+            app.store.add_account({"hatch_sess": label}, label)
+        with patch.object(app, "_renew_and_persist", return_value=None), \
+             patch.object(app.engine, "start"), patch.object(app.engine, "reset_thread") as reset, \
+             patch.object(app.engine, "close_current_page"), \
+             patch.object(app.engine, "generate", side_effect=app.MusePostSendError("Chưa xác nhận gửi.")) as generate:
+            response = await self.http.post("/v1/images/tasks", headers=self.a, json={"prompt": "fixture"})
+            self.assertEqual(response.status_code, 202)
+            endpoint = "/v1/images/tasks/" + response.json()["task_id"]
+            for _ in range(60):
+                task = (await self.http.get(endpoint, headers=self.a)).json()
+                if task["status"] == "interrupted":
+                    break
+                await asyncio.sleep(0.02)
+            self.assertEqual(task["status"], "interrupted")
+            self.assertEqual(task["error_stage"], "delivery_unknown")
+            self.assertTrue(task["needs_reconcile"])
+            generate.assert_called_once()
+            reset.assert_not_called()
 
     async def test_backpressure_and_restart(self):
         owner = self.alice["id"]

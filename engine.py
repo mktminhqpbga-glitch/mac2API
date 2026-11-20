@@ -247,9 +247,12 @@ class MuseSessionUnavailable(MuseGenerationError):
 class MusePageUnavailable(MuseGenerationError):
     """Muse's composer did not become ready before any prompt was sent."""
 
-    def __init__(self, message: str, *, retry_reload: bool = False):
+    def __init__(self, message: str, *, retry_reload: bool = False,
+                 code: str = "MUSE_PAGE_NOT_READY", confirmed: int | None = None):
         super().__init__(message)
         self.retry_reload = retry_reload
+        self.code = code
+        self.confirmed = confirmed
 
 
 class MuseReferenceUploadError(MuseGenerationError):
@@ -749,24 +752,34 @@ class MuseEngine:
             out[name] = {"value": c.get("value", ""), "expires": exp}
         return out
 
+    _COMPOSER_FIELD_JS = """(() => {
+        function usable(field) {
+            return field?.matches('textarea') && !field.matches(':disabled') && !field.readOnly
+                && field.getClientRects().length > 0 && getComputedStyle(field).visibility === 'visible'
+                && !field.closest('[inert],aside,nav,[role="navigation"],div[class*="chat-user-bubble"],'
+                    + 'div[class*="group/msg"],div[class*="hatch-chat-groupable-bubble"]');
+        }
+        const active = document.activeElement;
+        return usable(active) ? active : Array.from(document.querySelectorAll('textarea')).find(usable);
+    })()"""
+
+    _COMPOSER_READY_JS = r"""(function(){
+        if (document.readyState === 'loading') return 'loading';
+        if (location.hostname !== 'muse.ai' && location.hostname !== 'www.muse.ai') return 'wrong-site';
+        var h = document.querySelector('[data-hatch-shell-hydration-state]');
+        if (h && h.getAttribute('data-hatch-shell-hydration-state') !== 'hydrated') return 'hydrating';
+        var b = document.body ? (document.body.innerText || '') : '';
+        if (/^\s*(?:Connecting(?:\.\.\.|…)|Đang kết nối(?:\.\.\.|…)|正在连接(?:\.\.\.|…))\s*$/im.test(b)) return 'connecting';
+        if (""" + _COMPOSER_FIELD_JS + """) return 'ready';
+        return document.querySelector('textarea') ? 'input-disabled' : 'no-ta';
+    })()"""
+
     def _wait_ws_ready(self, page: CDP, timeout: float = 15.0) -> bool:
         """等待 muse.ai 页面完成 React hydration 且不再处于 Connecting... 状态。"""
         deadline = time.monotonic() + timeout
         while (remaining := deadline - time.monotonic()) > 0:
             try:
-                st = page.js(r"""(function(){
-                    if (document.readyState === 'loading') return 'loading';
-                    if (location.hostname !== 'muse.ai' && location.hostname !== 'www.muse.ai') return 'wrong-site';
-                    var field = document.querySelector('textarea');
-                    if (!field) return 'no-ta';
-                    var h = document.querySelector('[data-hatch-shell-hydration-state]');
-                    if (h && h.getAttribute('data-hatch-shell-hydration-state') !== 'hydrated') return 'hydrating';
-                    var b = document.body ? (document.body.innerText || '') : '';
-                    if (/^\s*(?:Connecting(?:\.\.\.|…)|Đang kết nối(?:\.\.\.|…)|正在连接(?:\.\.\.|…))\s*$/im.test(b)) return 'connecting';
-                    // Empty composers may not render Send until text has been entered.
-                    if (field.disabled || field.readOnly || (field.getClientRects && !field.getClientRects().length)) return 'input-disabled';
-                    return 'ready';
-                })()""", timeout=min(remaining, 2.0))
+                st = page.js(self._COMPOSER_READY_JS, timeout=min(remaining, 2.0))
                 if st == "ready":
                     return True
             except TimeoutError:
@@ -1222,12 +1235,9 @@ class MuseEngine:
             return e.getClientRects().length > 0
                 && getComputedStyle(e).visibility !== 'hidden';
         }
-        var ta = document.activeElement;
-        if (!ta || !ta.matches('textarea') || !visible(ta)) {
-            ta = Array.from(document.querySelectorAll('textarea')).find(visible);
-        }
+        var ta = """ + _COMPOSER_FIELD_JS + r""";
         if (!ta) return null;
-        var label = /^(?:send(?:\s+message)?|发送(?:消息)?|發送(?:訊息)?|傳送(?:訊息)?|送出)$/i;
+        var label = /^(?:send(?:\s+message)?|发送(?:消息)?|發送(?:訊息)?|傳送(?:訊息)?|送出|gửi(?:\s+tin nhắn)?)$/iu;
         var testId = /^(?:hatch-composer-send-button|composer-send-button|send-button)$/i;
         function isSend(b){
             // The Send button itself uses the bg-chat-user-bubble color class.
@@ -1253,7 +1263,7 @@ class MuseEngine:
         " || b.getAttribute('aria-disabled') === 'true' || b.closest('[inert]')"
     )
     _SEND_STATE_JS = (
-        "(function(){var ta=document.querySelector('textarea');"
+        "(function(){var ta=" + _COMPOSER_FIELD_JS + ";"
         "var b=" + _SEND_BUTTON_JS + ";"
         "return JSON.stringify({v:ta?ta.value:'',btn:b?("
         + _SEND_DISABLED_JS + "?2:1):0});})()"
@@ -1265,11 +1275,25 @@ class MuseEngine:
         "b.click();return 'clicked';})()"
     )
 
-    def _send(self, prompt: str, *, expected_references: int | None = None):
+    _SET_COMPOSER_DRAFT_JS = (
+        "(function(t){var ta=" + _COMPOSER_FIELD_JS + ";"
+        "if(!ta) return null;"
+        "ta.focus();"
+        "var s=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set;"
+        "s.call(ta,t);"
+        "ta.dispatchEvent(new Event('input',{bubbles:true}));"
+        "ta.dispatchEvent(new Event('change',{bubbles:true}));"
+        "return (ta.value||'').length;})(%s)"
+    )
+
+    def _send(self, prompt: str, *, expected_references: int | None = None, deadline: float | None = None):
+        if expected_references is not None:
+            return self._send_media_draft(prompt, expected_references, deadline if deadline is not None else float('inf'))
+
         # 1. 确保 textarea 滚动到视口中央并获得真实焦点
         try:
             self.page.js("""(function(){
-                var ta = document.querySelector('textarea');
+                var ta = """ + self._COMPOSER_FIELD_JS + """;
                 if (ta) {
                     ta.scrollIntoView({block: 'center', inline: 'nearest'});
                     ta.focus();
@@ -1280,7 +1304,7 @@ class MuseEngine:
         time.sleep(0.1)
 
         rect = self.page.js(
-            "(function(){var t=document.querySelector('textarea');if(!t)return null;"
+            "(function(){var t=" + self._COMPOSER_FIELD_JS + ";if(!t)return null;"
             "var r=t.getBoundingClientRect();"
             "return JSON.stringify({x:Math.round(r.left+r.width/2),"
             "y:Math.round(r.top+r.height/2)});})()")
@@ -1295,40 +1319,22 @@ class MuseEngine:
 
         # 触发 React 18 原型 setter 以及 input/change 事件以同步发送按钮状态
         # （对于 DeepSeek/Codex 等 100KB+ 超长上下文，直接走原型 setter 仅需 <1s，避免 Input.insertText 逐字注入卡死）
-        _SETTER_JS = (
-            "(function(t){var ta=document.querySelector('textarea');"
-            "if(!ta) return 0;"
-            "ta.focus();"
-            "var s=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set;"
-            "s.call(ta,t);"
-            "ta.dispatchEvent(new Event('input',{bubbles:true}));"
-            "ta.dispatchEvent(new Event('change',{bubbles:true}));"
-            "return (ta.value||'').length;})(%s)")
-        val_len = self.page.js(_SETTER_JS % json.dumps(prompt)) or 0
+        setter = self._SET_COMPOSER_DRAFT_JS % json.dumps(prompt)
+        val_len = self.page.js(setter) or 0
         if not val_len and len(prompt) < 500:
             self.page.send("Input.insertText", {"text": prompt})
-            self.page.js(_SETTER_JS % json.dumps(prompt))
+            self.page.js(setter)
 
         # 等待发送按钮就绪并点击
         clicked = "no-button"
-        confirmed = None
         t_deadline = time.time() + 3.0
         while time.time() < t_deadline:
-            if expected_references is None:
-                res = self._click_send()
-            else:
-                res = self._click_media_send(expected_references, prompt)
-                confirmed = res if type(res) is int else None
-            if res == "clicked":
+            if self._click_send() == "clicked":
                 clicked = "clicked"
                 break
             time.sleep(0.08)
 
         if clicked != "clicked":
-            if expected_references is not None:
-                if confirmed is not None:
-                    raise MuseReferenceUploadError(expected_references, confirmed)
-                raise MusePageUnavailable("Ô nhập hoặc nút gửi của Muse chưa sẵn sàng. Tác vụ dừng trước khi gửi yêu cầu.")
             # 兜底：Ctrl+Enter 或普通 Enter
             for combo in ({"modifiers": 1}, {}):
                 for t in ("keyDown", "char", "keyUp"):
@@ -1341,13 +1347,47 @@ class MuseEngine:
                     self.page.send("Input.dispatchKeyEvent", params)
                 time.sleep(1.0)
                 try:
-                    if self.page.js("!(document.querySelector('textarea')||{value:''}).value"):
+                    if self.page.js("!(" + self._COMPOSER_FIELD_JS + "||{value:''}).value"):
                         clicked = "enter-sent"
                         break
                 except Exception:
                     pass
         time.sleep(0.3)
         return clicked
+
+    def _send_media_draft(self, prompt: str, expected: int, deadline: float) -> str:
+        # Recent uploads can keep Send disabled even after a preview is visible.
+        deadline = min(deadline, time.monotonic() + 10)
+        setter = self._SET_COMPOSER_DRAFT_JS % json.dumps(prompt)
+        result = "draft-not-ready"
+        writes_left = 2
+        while (remaining := deadline - time.monotonic()) > 0:
+            if result == "draft-not-ready" and writes_left:
+                try:
+                    written = self.page.js(setter, timeout=min(3, remaining))
+                except (CDPError, OSError, WebSocketException) as exc:
+                    raise MusePageUnavailable("Mất kết nối Chrome khi điền mô tả. Tác vụ dừng trước khi gửi.",
+                                              code="MUSE_DRAFT_NOT_READY") from exc
+                if type(written) is int:
+                    writes_left -= 1
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            result = self._click_media_send(expected, prompt, timeout=min(3, remaining))
+            if result == "clicked":
+                return result
+            time.sleep(min(0.15, max(0, deadline - time.monotonic())))
+
+        if type(result) is int:
+            raise MuseReferenceUploadError(expected, result)
+        if result == "disabled":
+            raise MusePageUnavailable("Nút Gửi của Muse vẫn bị khóa sau khi điền mô tả. Tác vụ dừng trước khi gửi.",
+                                      code="MUSE_SEND_BUTTON_DISABLED", confirmed=expected)
+        if result == "no-button":
+            raise MusePageUnavailable("Không tìm thấy nút Gửi trong ô nhập Muse sau khi điền mô tả. Tác vụ dừng trước khi gửi.",
+                                      code="MUSE_SEND_BUTTON_MISSING", confirmed=expected)
+        raise MusePageUnavailable("Ô nhập Muse chưa giữ được đầy đủ mô tả. Tác vụ dừng trước khi gửi.",
+                                  code="MUSE_DRAFT_NOT_READY")
 
     def _click_send(self) -> str:
         """只点当前输入框的发送按钮（不重新填字），不把点击等同于上游送达。"""
@@ -1356,14 +1396,14 @@ class MuseEngine:
         except Exception:  # noqa: BLE001
             return "error"
 
-    def _click_media_send(self, expected: int, prompt: str) -> str | int:
+    def _click_media_send(self, expected: int, prompt: str, *, timeout: float = 3) -> str | int:
         # Check the actual composer and click in the same browser evaluation.
         draft = json.dumps(prompt.replace("\r\n", "\n").replace("\r", "\n"))
         result = self.page.js(
-            "(function(){var field=document.querySelector('textarea');"
+            "(function(){var field=" + self._COMPOSER_FIELD_JS + ";"
             f"if(!field||field.value!=={draft})return 'draft-not-ready';var n="
             + self._ATTACHED_COUNT_JS + ";"
-            f"if(n!=={expected})return n;return " + self._CLICK_SEND_JS + ";})()", timeout=3)
+            f"if(n!=={expected})return n;return " + self._CLICK_SEND_JS + ";})()", timeout=timeout)
         if type(result) is int or result in ("draft-not-ready", "no-button", "disabled", "clicked"):
             return result
         raise MusePostSendError("Chưa xác nhận được thao tác gửi trên Muse. Hãy đối chiếu tác vụ gốc.")
@@ -1561,6 +1601,13 @@ class MuseEngine:
         ):
             return "MUSE_VIDEO_UNAVAILABLE"
         if re.search(
+            r"\b(?:chưa có|thiếu)\s+(?:ảnh|hình)(?:\s+tham chiếu)?\s+thứ\s+(?:2|hai)\b|"
+            r"\b(?:missing|don't have)\s+(?:the |a )?second (?:reference )?(?:image|photo)\b|"
+            r"(?:缺少|没有收到|未收到)第[二2]张(?:参考)?(?:图像|图片)",
+            text, re.I,
+        ):
+            return "MUSE_REFERENCE_INCOMPLETE"
+        if re.search(
             r"\bkhông (?:có|thấy|nhận được)\s+(?:bất kỳ\s+)?(?:ảnh|hình|tệp)"
             r"(?:\s+(?:nào|được)){0,2}\s+(?:đính kèm|tham chiếu)\b|"
             r"\b(?:no (?:source |reference )?(?:images?|files?) (?:was |were )?attached|"
@@ -1588,6 +1635,7 @@ class MuseEngine:
         reasons = {
             "MUSE_VIDEO_UNAVAILABLE": "Muse báo tính năng tạo video không khả dụng cho tài khoản ở khu vực hiện tại.",
             "MUSE_REFERENCES_NOT_SEEN": "Muse báo không thấy tệp tham chiếu trong lượt tạo này.",
+            "MUSE_REFERENCE_INCOMPLETE": "Muse báo thiếu ảnh tham chiếu thứ hai trong lượt tạo này.",
             "MUSE_CONFIRMATION_REQUIRED": "Muse đã gửi phương án chờ duyệt và chưa trả tệp kết quả.",
         }
         reason = reasons.get(code, "Muse chỉ trả văn bản và chưa gửi tệp kết quả.")
@@ -1991,11 +2039,11 @@ class MuseEngine:
     _COMPOSER_ROOTS_JS = """
         const bubble = '[class*=chat-user-bubble], [class*="group/msg"], [class*=hatch-chat-groupable-bubble]';
         function __composerRoots(){
-            var ov = document.querySelector('[data-testid="hatch-composer-placeholder-overlay"]');
-            var legacy = ov ? (ov.closest('form') || ov.parentElement.parentElement.parentElement) : null;
-            if (legacy) return [legacy];
-            var ta = document.querySelector('textarea');
+            var ta = """ + _COMPOSER_FIELD_JS + """;
             if (!ta) return [];
+            var ov = document.querySelector('[data-testid="hatch-composer-placeholder-overlay"]');
+            var legacy = ov ? (ov.closest('form') || ov.parentElement?.parentElement?.parentElement) : null;
+            if (legacy?.contains(ta)) return [legacy];
             var form = ta.closest('form');
             if (form) return [form];
             var out = [], el = ta.parentElement;
@@ -2052,7 +2100,7 @@ class MuseEngine:
                                return Math.max(settled.length, attachmentPreviews());})()""")
 
     _CLEAR_COMPOSER_JS = "(() => {" + _COMPOSER_ATTACHMENTS_JS + """
-        const textarea = document.querySelector('textarea');
+        const textarea = """ + _COMPOSER_FIELD_JS + """;
         if (!textarea) return;
         if (textarea.value) {
             const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
@@ -2069,7 +2117,7 @@ class MuseEngine:
     })()"""
 
     _COMPOSER_EMPTY_JS = "(() => {" + _COMPOSER_ATTACHMENTS_JS + """
-        const textarea = document.querySelector('textarea');
+        const textarea = """ + _COMPOSER_FIELD_JS + """;
         const roots = __composerRoots();
         return Boolean(textarea && !textarea.value && !currentAttachments().length && !attachmentPreviews(false)
             && !roots.some(root => [...root.querySelectorAll(
@@ -2198,7 +2246,8 @@ class MuseEngine:
         if time.monotonic() >= deadline:
             raise MuseGenerationError("任务准备超时，已停止发送")
         try:
-            send_options = {"expected_references": expected_references} if expected_references is not None else {}
+            send_options = ({"expected_references": expected_references, "deadline": deadline}
+                            if expected_references is not None else {})
             if self._send(prompt, **send_options) not in ("clicked", "enter-sent"):
                 raise MusePostSendError("Chưa xác nhận gửi prompt. Yêu cầu không được gửi lại tự động.")
             return self._collect_generated_media(expect, deadline, on_progress, stop_event,

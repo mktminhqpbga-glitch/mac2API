@@ -2,6 +2,8 @@
 
 ## Chẩn đoán lỗi tạo ảnh và video Muse
 
+- Dùng cùng ô nhập đang hiển thị để điền mô tả và kiểm tra tệp. Cho nút Gửi tối đa 10 giây trong thời hạn tác vụ. Chi tiết tác vụ phân biệt ô nhập làm mất mô tả, thiếu nút Gửi và nút Gửi bị khóa.
+- Yêu cầu chuyển trang phục giữa hai ảnh báo thiếu đầu vào ngay tại API nếu chỉ có một ảnh. Khi Muse phản hồi thiếu ảnh thứ hai, chi tiết tác vụ giữ nguyên phản hồi kèm mã chẩn đoán.
 - Kiểm tra tệp tham chiếu từ khi nhận yêu cầu. Trình duyệt kiểm tra lại prompt và số tệp hiện có ngay lúc bấm Gửi.
 - Khi trang Muse tải nhưng thiếu ô chat, thử tải lại một lần trong cùng phiên và tuyến proxy, sử dụng phần thời gian còn lại. Nếu trang vẫn kết nối workspace, đợi trên trang hiện tại.
 - Chi tiết tác vụ hiển thị giai đoạn lỗi, số tệp đã nhận và mã lỗi. Đọc lại lỗi cũ để nhận diện trường hợp Muse báo thiếu tệp, giới hạn video theo khu vực hoặc đề nghị phương án thay thế.

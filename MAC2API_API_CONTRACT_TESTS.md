@@ -89,8 +89,12 @@ Các tác vụ mới có `reference_count` là số tệp hợp lệ API nhận.
 |---|---|
 | `MUSE_REFERENCES_MISSING` | HTTP 400 trước khi tạo tác vụ nếu mô tả có yêu cầu tham chiếu rõ ràng nhưng payload thiếu tệp. |
 | `MUSE_PAGE_NOT_READY` | Ô chat Muse chưa sẵn sàng. Trang đã tải nhưng thiếu ô chat có thể được tải lại một lần trong cùng phiên và tuyến proxy, trong thời gian chờ. Nếu vẫn lỗi, dừng lần thử trước khi gửi. |
+| `MUSE_DRAFT_NOT_READY` | Không điền được hoặc ô nhập không giữ được toàn bộ mô tả trước khi gửi. |
+| `MUSE_SEND_BUTTON_MISSING` | Ô nhập đã giữ mô tả và đúng số tệp, nhưng không tìm thấy nút Gửi trong ô nhập. |
+| `MUSE_SEND_BUTTON_DISABLED` | Đã xác nhận mô tả và số tệp, nhưng nút Gửi vẫn bị khóa khi hết thời gian chờ. |
 | `MUSE_REFERENCE_UPLOAD_UNCONFIRMED` | Số tệp trong ô nhập khác với số tệp cần gửi. |
 | `MUSE_REFERENCES_NOT_SEEN` | Sau khi nhận prompt, Muse phản hồi rằng không thấy tham chiếu. So sánh với số tệp API đã nhận. |
+| `MUSE_REFERENCE_INCOMPLETE` | Muse báo thiếu ảnh tham chiếu thứ hai sau khi nhận prompt. |
 | `MUSE_VIDEO_UNAVAILABLE` | Muse thông báo tài khoản hiện tại không có tính năng tạo video ở khu vực hiện tại. |
 | `MUSE_CONFIRMATION_REQUIRED` | Muse đề nghị duyệt hoặc đổi phương án. |
 

@@ -1170,6 +1170,16 @@ def _describe_kinds(kinds: list[str]) -> str:
 # muse 不认识这些标记，所以把「标记 -> 第几个附件」写进提示词。
 _KIND_TOKENS = {"image": "图", "video": "视频", "audio": "音频", "document": "文档"}
 _REFERENCE_TOKEN = re.compile(r"\[(图|视频|音频|文档)(\d+)\]")
+_CLOTHING_TRANSFER = re.compile(
+    r"(?:输入图像|输入图片|源图|原图)[^。！？\n]{0,70}(?:服装|衣服)[^。！？\n]{0,30}(?:替换|更换|换成)"
+    r"[^。！？\n]{0,48}(?:参考图像|参考图片|参考图)[^。！？\n]{0,20}(?:服装|衣服)|"
+    r"\b(?:replace|change|swap)\b[^.!?\n]{0,80}\b(?:clothes|clothing|outfit)\b"
+    r"[^.!?\n]{0,55}\b(?:source|input) (?:image|photo)\b[^.!?\n]{0,35}\b(?:with|to|for)\b"
+    r"[^.!?\n]{0,28}\b(?:clothes|clothing|outfit)\b[^.!?\n]{0,35}\b(?:reference|target) (?:image|photo)\b|"
+    r"\b(?:đổi|thay) (?:bộ đồ|trang phục|quần áo)\b[^.!?\n]{0,70}\bảnh (?:đầu vào|gốc)\b"
+    r"[^.!?\n]{0,80}\b(?:bộ đồ|trang phục|quần áo)\b[^.!?\n]{0,38}\bảnh tham chiếu\b",
+    re.I,
+)
 
 
 def _validate_muse_references(prompt: str, kinds: list[str]):
@@ -1180,7 +1190,12 @@ def _validate_muse_references(prompt: str, kinds: list[str]):
             raise HTTPException(400, {"code": "MUSE_REFERENCES_MISSING",
                                       "message": "Mô tả trỏ đến tệp tham chiếu không có trong yêu cầu. "
                                                  "Hãy kiểm tra thứ tự và đính kèm đủ tệp."})
-    if not counts["image"] and re.search(
+    image_count = counts["image"]
+    if image_count < 2 and _CLOTHING_TRANSFER.search(prompt):
+        raise HTTPException(400, {"code": "MUSE_REFERENCES_MISSING",
+                                  "message": f"API nhận {image_count}/2 ảnh cho yêu cầu đổi trang phục. "
+                                             "Hãy đính kèm ảnh nhân vật và ảnh chứa trang phục muốn thay."})
+    if not image_count and re.search(
         r"(?:输入图像|输入图片|源图|原图)[^。！？\n]{0,100}(?:替换|更换|换成)"
         r"[^。！？\n]{0,48}(?:参考图像|参考图片|参考图)|"
         r'^\s*\{\s*"task"\s*:\s*"reference_image_guided(?:[-_][a-z0-9_-]+)?"',
@@ -1188,7 +1203,7 @@ def _validate_muse_references(prompt: str, kinds: list[str]):
     ):
         raise HTTPException(400, {"code": "MUSE_REFERENCES_MISSING",
                                   "message": "Mô tả yêu cầu chỉnh sửa theo ảnh, nhưng API chưa nhận được "
-                                             "ảnh tham chiếu. Hãy đính kèm ảnh đầu vào và ảnh tham chiếu."})
+                                             "ảnh nào. Hãy đính kèm ảnh được nhắc trong mô tả."})
 
 
 def _reference_legend(kinds: list[str]) -> str:
@@ -1773,7 +1788,7 @@ def _run_generation_locked(prompt: str, kind: str, timeout: int,
             except MusePageUnavailable as exc:
                 last_exc = exc
                 store.touch_keepalive(cur_acc["id"], None, f"Lỗi tác vụ: {exc}")
-            except MuseReferenceUploadError:
+            except (MuseReferenceUploadError, MusePostSendError):
                 raise
             except MuseModelRefusalError as exc:
                 _generation_callback(store.mark, cur_acc["id"], True, f"Lỗi tác vụ: {_redact_task_error(str(exc))[:200]}")
@@ -2084,7 +2099,9 @@ def _fail_media_task(timing, exc):
     if isinstance(exc, MuseModelRefusalError):
         changes.update(error_code=exc.code or "MUSE_TEXT_ONLY", error_stage="muse_reply")
     elif isinstance(exc, MusePageUnavailable):
-        changes.update(error_code="MUSE_PAGE_NOT_READY", error_stage="before_send")
+        changes.update(error_code=exc.code, error_stage="before_send")
+        if exc.confirmed is not None:
+            changes["confirmed_reference_count"] = exc.confirmed
     elif isinstance(exc, MuseProxyError):
         changes.update(error_code="MUSE_PROXY_UNAVAILABLE", error_stage="before_send")
     elif isinstance(exc, MuseReferenceUploadError):
