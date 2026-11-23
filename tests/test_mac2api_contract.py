@@ -399,13 +399,24 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(states["chatgpt"]["ready"])
             providers.linked_targets["chatgpt"] = "tab1"
             self.assertTrue(providers.capability_states()["chatgpt"]["ready"])
+            probes = session.call_count
+            cached = providers.capability_states(inspect=False)
+            self.assertTrue(cached["chatgpt"]["ready"])
+            self.assertFalse(cached["gemini-web"]["ready"])
+            self.assertEqual(session.call_count, probes)
             reply.json.return_value = [{**tabs[0], "url": "https://other.invalid/"}]
             self.assertFalse(providers.capability_states()["chatgpt"]["ready"])
+            self.assertFalse(providers.capability_states(inspect=False)["chatgpt"]["ready"])
+            reply.json.return_value = tabs
+            self.assertTrue(providers.capability_states()["chatgpt"]["ready"])
             reply.ok = False
             self.assertFalse(providers.capability_states()["chatgpt"]["connected"])
+            self.assertFalse(providers.capability_states(inspect=False)["chatgpt"]["connected"])
             reply.ok = True
             reply.json.return_value = tabs
             self.assertTrue(providers.capability_states()["chatgpt"]["ready"])
+            providers.close()
+            self.assertFalse(providers.capability_states(inspect=False)["chatgpt"]["ready"])
 
     def test_web_image_fetch_rejects_internal_urls(self):
         from unittest.mock import Mock

@@ -1905,9 +1905,9 @@ def capabilities(request: Request, client=Depends(contract_auth)):
         finally:
             if lease:
                 GEN_LOCK.release(touch_idle=False)
+        busy = not lease or GEN_LOCK.full()
         for provider, state in web_states.items():
             if provider in allowed:
-                busy = GEN_LOCK.full()
                 states[provider] = {**state, "busy": busy,
                                     "reason": "busy" if busy and state["ready"] else state["reason"]}
     model_routes = {**MODULES, "muse-spark": ("muse", "text"),

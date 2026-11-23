@@ -166,6 +166,7 @@ class WebProviders:
         self.linked_targets: dict[str, str] = {}
         self.profile_connection: ChromeProfileConnection | None = None
         self._connect_lock = threading.Lock()
+        self._capability_snapshot: tuple[ChromeProfileConnection | int | None, bool, dict[str, str]] = (None, False, {})
 
     def ready(self, provider_id: str):
         profile = self.profile_connection
@@ -175,40 +176,67 @@ class WebProviders:
 
     def capability_states(self, *, inspect=True):
         profile = self.profile_connection
-        configured = bool(self.profile_preferred or self.port)
+        port = self.port
+        profile_preferred = self.profile_preferred
+        configured = bool(profile_preferred or port)
+        connection = profile if profile else port if not profile_preferred else None
+        bindings = profile.profiles if profile else self.linked_targets
+        selected = bindings.copy()
         connected = False
-        tabs = []
-        try:
-            if inspect and profile and profile.browser.ws.connected:
-                result = profile.browser.send("Target.getTargets", timeout=1)["result"]
-                tabs = result["targetInfos"]
-                connected = isinstance(tabs, list)
-            elif inspect and self.port and not self.profile_preferred:
-                with requests.Session() as session:
-                    session.trust_env = False
-                    response = session.get(f"http://127.0.0.1:{self.port}/json/list",
-                                           timeout=1, allow_redirects=False)
-                    if response.ok:
-                        tabs = response.json()
-                        connected = isinstance(tabs, list)
-        except (*CHROME_ERRORS, requests.RequestException):
-            connected = False
+        verified = {}
+        if inspect:
+            try:
+                tabs = None
+                if profile and profile.browser.ws.connected:
+                    tabs = profile.browser.send("Target.getTargets", timeout=1)["result"]["targetInfos"]
+                elif port and not profile_preferred:
+                    with requests.Session() as session:
+                        session.trust_env = False
+                        response = session.get(f"http://127.0.0.1:{port}/json/list",
+                                               timeout=1, allow_redirects=False)
+                        if response.ok:
+                            tabs = response.json()
+                if isinstance(tabs, list):
+                    connected = True
+                    id_field = "browserContextId" if profile else "id"
+                    verified = {name: selected[name] for name, provider in PROVIDERS.items()
+                                if selected.get(name) and any(
+                                    isinstance(tab, dict) and tab.get("type") == "page"
+                                    and tab.get(id_field) == selected[name]
+                                    and _origin(str(tab.get("url", ""))) == _origin(provider.url)
+                                    for tab in tabs)}
+            except (*CHROME_ERRORS, requests.RequestException):
+                connected = False
+            if selected == bindings:
+                self._capability_snapshot = (connection, connected, verified)
+        else:
+            # A full generation queue prevents a fresh probe, not queue admission.
+            previous_connection, was_connected, last_verified = self._capability_snapshot
+            if (connection == previous_connection and was_connected
+                    and (not profile or profile.browser.ws.connected)):
+                connected, verified = True, last_verified
         states = {}
-        for provider_id, provider in PROVIDERS.items():
-            profile_id = profile.profiles.get(provider_id) if profile else None
-            target_id = self.linked_targets.get(provider_id)
-            ready = connected and any(
-                isinstance(tab, dict) and tab.get("type") == "page"
-                and _origin(str(tab.get("url", ""))) == _origin(provider.url)
-                and (bool(profile_id) and tab.get("browserContextId") == profile_id if profile
-                     else bool(target_id) and tab.get("id") == target_id)
-                for tab in tabs
-            )
+        for provider_id in PROVIDERS:
+            binding = bindings.get(provider_id)
+            ready = connected and bool(binding) and verified.get(provider_id) == binding
             reason = ("ready" if ready else "session_unverified" if connected else
                       "not_configured" if not configured else "busy" if not inspect else "browser_disconnected")
             states[provider_id] = {"configured": configured, "connected": connected,
                                    "ready": ready, "reason": reason}
         return states
+
+    def _record_link(self, provider_id, connection, bindings, target_id):
+        with self._connect_lock:
+            current = self.profile_connection or (self.port if not self.profile_preferred else None)
+            if connection != current:
+                raise WebProviderError("Kết nối Chrome đã đổi. Hãy xác minh lại tab đang đăng nhập.", 409)
+            bindings[provider_id] = target_id
+            old_connection, connected, verified = self._capability_snapshot
+            if connection != old_connection or not connected:
+                verified = {}
+            self._capability_snapshot = (connection, True, {**verified, provider_id: target_id})
+            checked = self.linked_at[provider_id] = int(time.time())
+            return checked
 
     def connect_profile(self, muse_port: int, persist):
         with self._connect_lock:
@@ -224,6 +252,7 @@ class WebProviders:
                 self.profile_connection.browser.close()
             self.linked_at.clear()
             self.linked_targets.clear()
+            self._capability_snapshot = (None, False, {})
             self.profile_preferred = True
             self.profile_connection = profile
 
@@ -242,6 +271,7 @@ class WebProviders:
             if self.profile_preferred or self.port != port:
                 self.linked_at.clear()
                 self.linked_targets.clear()
+                self._capability_snapshot = (None, False, {})
             self.port = port
             self.profile_preferred = False
 
@@ -252,6 +282,7 @@ class WebProviders:
                 self.profile_connection = None
             self.linked_at.clear()
             self.linked_targets.clear()
+            self._capability_snapshot = (None, False, {})
 
     @staticmethod
     def probe_port(port: int):
@@ -364,18 +395,17 @@ class WebProviders:
                     try:
                         with profile.attach(tab["targetId"]) as page:
                             if self._verify_marker(page, provider, origin, marker):
-                                profile.profiles[provider_id] = tab["browserContextId"]
-                                checked = self.linked_at[provider_id] = int(time.time())
-                                return checked
+                                return self._record_link(provider_id, profile, profile.profiles, tab["browserContextId"])
                     except CDPError:
                         continue  # A tab may have been closed since Target.getTargets.
             except CHROME_ERRORS as exc:
                 raise WebProviderError("Mất kết nối với Chrome. Hãy bấm Kết nối Chrome lại trong bảng quản trị.", 503) from exc
             raise WebProviderError("Hãy mở tiện ích ngay trong tab đã đăng nhập ở Chrome vừa cấp quyền.", 409)
 
-        if self.profile_preferred or not self.port:
+        port = self.port
+        if self.profile_preferred or not port:
             raise WebProviderError(WEB_SETUP_MESSAGE, 503)
-        base = f"http://127.0.0.1:{self.port}"
+        base = f"http://127.0.0.1:{port}"
         try:
             with requests.Session() as session:
                 session.trust_env = False
@@ -392,12 +422,10 @@ class WebProviders:
             if not isinstance(target, str) or not re.fullmatch(r"[a-zA-Z0-9_-]+", target):
                 continue
             try:
-                page = CDP(f"ws://127.0.0.1:{self.port}/devtools/page/{target}", timeout=3, suppress_origin=True)
+                page = CDP(f"ws://127.0.0.1:{port}/devtools/page/{target}", timeout=3, suppress_origin=True)
                 try:
                     if self._verify_marker(page, provider, origin, marker):
-                        self.linked_targets[provider_id] = target
-                        checked = self.linked_at[provider_id] = int(time.time())
-                        return checked
+                        return self._record_link(provider_id, port, self.linked_targets, target)
                 finally:
                     page.close()
             except CHROME_ERRORS:

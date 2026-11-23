@@ -1,5 +1,9 @@
 # Nhật ký và bàn giao mac2API
 
+## Hàng đợi ChatGPT Web và Gemini Web
+
+- Khi hết khe Chromium, `/capabilities` dùng lần xác minh gần nhất của kết nối hiện tại. Adapter ảnh có thể đưa tác vụ vào hàng đợi khi phiên hợp lệ và còn chỗ, giống luồng Muse.
+
 ## Ảnh tham chiếu và hàng đợi tạo ảnh
 
 - Tác vụ tạo ảnh Muse nhận tối đa 20 ảnh tham chiếu. mac2API kiểm tra thứ tự và số tệp đã xác nhận ngay trước khi gửi.

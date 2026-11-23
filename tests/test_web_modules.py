@@ -200,6 +200,31 @@ async def check_existing_profile(port_file):
             assert status["ready"] == ["chatgpt"]
             key = app.store.create_client("capability fixture", ["chatgpt", "gemini-web"])["api_key"]
             caps_headers = {"Authorization": f"Bearer {key}"}
+            slot = app.ConcurrencyLock(1)
+            assert slot.acquire(blocking=False)
+            with patch.object(app, "GEN_LOCK", slot):
+                try:
+                    browser = app.web_providers.profile_connection.browser
+                    with patch.object(browser, "send", side_effect=AssertionError("capabilities probed busy Chrome")):
+                        busy = (await client.get("/v1/capabilities", headers=caps_headers)).json()
+                    states = {provider["id"]: provider for provider in busy["providers"]}
+                    assert states["chatgpt"]["ready"] and states["chatgpt"]["busy"]
+                    assert states["chatgpt"]["reason"] == "busy" and not states["gemini-web"]["ready"]
+                    queued = await client.post("/chatgpt/v1/images/tasks", headers=caps_headers,
+                                               json={"prompt": "A green square", "timeout": 15})
+                    assert queued.status_code == 202 and queued.json()["status"] == "queued", queued.text
+                    task_path = f"/chatgpt/v1/images/tasks/{queued.json()['id']}"
+                    waiting = await client.get(task_path, headers=caps_headers)
+                    assert waiting.json()["status"] == "queued", waiting.text
+                finally:
+                    slot.release()
+                for _ in range(80):
+                    result = (await client.get(task_path, headers=caps_headers)).json()
+                    if result["status"] in ("completed", "failed"):
+                        break
+                    await asyncio.sleep(0.2)
+                assert result["status"] == "completed", result
+
             capabilities = (await client.get("/v1/capabilities", headers=caps_headers)).json()
             states = {provider["id"]: provider for provider in capabilities["providers"]}
             assert states["chatgpt"]["ready"] and states["chatgpt"]["connected"]

@@ -8,6 +8,8 @@ MacFlow dùng khóa người dùng `m2c_…` và HTTPS khi gọi qua mạng. HTT
 
 `contractVersion` là 1. `serverVersion` đọc từ `version.json`. `configured` phản ánh cấu hình đã có, `connected` phản ánh kết nối quan sát được, `ready` phản ánh điều kiện cần để nhận tác vụ và `busy` phản ánh khe hoạt động. Các mã `reason` gồm `not_configured`, `session_unverified`, `browser_unavailable`, `browser_idle`, `browser_disconnected`, `credentials_unverified`, `busy` và `ready`.
 
+Khi hết khe Chromium, máy chủ dùng lần xác minh gần nhất của kết nối ChatGPT Web và Gemini Web hiện tại. `ready: true` cùng `busy: true` cho phép gửi vào hàng đợi nếu còn chỗ. Worker kiểm tra tab khi đến lượt thực thi.
+
 Muse đã xác minh tài khoản và có Chromium khả dụng có thể báo `ready: true`, `connected: false`, `reason: "browser_idle"`. mac2API mở Chromium khi thực sự chạy tác vụ. ChatGPT Web và Gemini Web cần kết nối Chrome cục bộ và phiên đã được xác minh đúng nhà cung cấp. Khi hết khe, mac2API hoãn kiểm tra CDP. Kiểm tra khả năng chỉ đọc trạng thái. Quota và khả năng sinh đúng nội dung thực tế do nhà cung cấp quyết định.
 
 Mẫu dưới đây được ghi từ fixture ASGI với khóa chỉ có quyền Muse và một phiên Muse giả lập đã xác minh.
@@ -74,7 +76,7 @@ Khi máy chủ từ chối trước khi nhận tác vụ, HTTP 429 có `Retry-Af
 | ChatGPT Web và Gemini Web | `chatgpt/image` và `gemini-web/image` tạo ảnh từ văn bản. Các mô-đun chat dùng tuyến văn bản. Chrome phải chạy trên máy chủ đã xác minh hồ sơ hoặc tab. |
 | OpenAI và Gemini chính thức | Giữ tuyến văn bản hiện có. Khả năng báo cấu hình khóa, còn xác nhận tính hợp lệ cần thao tác riêng của quản trị viên. |
 | Tỷ lệ, độ phân giải và thời lượng | Giữ `aspect_ratio`, `resolution` và `duration` trong payload và chỉ dẫn Muse, kể cả 9:16 với độ phân giải cao. `duration` nhận số nguyên dương tùy chọn, kể cả ngoài các mốc chọn nhanh. Nếu bỏ trống, API để Muse dùng mô tả và thiết lập mặc định của nó. Kích thước và thời lượng đầu ra thực tế cần đọc từ tệp. |
-| Giới hạn tham chiếu Muse | 10 ảnh cho mô-đun ảnh, 40 MiB mỗi tệp và 100 MiB tổng dữ liệu. PNG, JPEG, WebP và GIF nằm trong danh sách MIME cho phép. Các tham chiếu gửi qua khóa client chỉ tải từ địa chỉ công khai hoặc dữ liệu đính kèm hợp lệ. |
+| Giới hạn tham chiếu Muse | 20 ảnh cho mô-đun ảnh, 40 MiB mỗi tệp và 100 MiB tổng dữ liệu. PNG, JPEG, WebP và GIF nằm trong danh sách MIME cho phép. Các tham chiếu gửi qua khóa client chỉ tải từ địa chỉ công khai hoặc dữ liệu đính kèm hợp lệ. |
 | Kho media | URL ký tối đa 7 ngày và có thể hết hạn sớm nếu tệp được dọn, khóa chủ bị thu hồi hoặc khóa ký thay đổi. Lấy URL mới từ GET tác vụ nếu còn dữ liệu. Tải bytes vào workspace MacFlow trước khi báo đầu ra sẵn sàng. Khi ghi media, kho 5 GB dọn tệp cũ theo ngưỡng 70%. |
 | URL quản trị cũ chưa ký | Dùng Bearer quản trị để tải hoặc lấy URL mới từ bảng quản trị. Biến `MUSE2API_ALLOW_LEGACY_PUBLIC_MEDIA=1` giữ URL quản trị chưa ký trong thời gian chuyển đổi có chủ đích. URL client vẫn được kiểm tra quyền. |
 | Client tích hợp sẵn | Gọi capabilities, lookup và cancel bằng khóa `m2c_…`. Các tuyến cũ vẫn nhận khóa quản trị để bảng điều khiển và tích hợp hiện có tiếp tục hoạt động. API task cũ tiếp tục chấp nhận khóa idempotency không theo UUID theo phạm vi loại tác vụ và nhà cung cấp. |
