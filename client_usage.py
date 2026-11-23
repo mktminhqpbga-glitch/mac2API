@@ -288,6 +288,11 @@ class ClientUsage:
             raise HTTPException(404, "Không tìm thấy lượt sử dụng API.")
         return self._view(row, admin=admin, detail=True)
 
+    def today_count(self):
+        start = _now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        with self._database() as db:
+            return db.execute("SELECT count(*) FROM usage WHERE created_at>=?", (start,)).fetchone()[0]
+
     def month(self):
         start = _now().replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp()
         with self._database() as db:

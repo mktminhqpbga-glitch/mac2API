@@ -3625,14 +3625,42 @@ def own_usage_detail(job_id: str, client=Depends(contract_auth)):
     return _usage_detail(job_id, False, client["id"])
 
 
+@app.get("/admin/overview")
+def admin_overview(_=Depends(auth)):
+    muse = _muse_capability_state()
+    providers = {"muse": "ready" if muse["ready"] else "needs_check" if muse["configured"] else "setup"}
+    for provider in WEB_PROVIDERS:
+        pool = managed_web.state(provider)
+        if pool:
+            providers[provider] = "ready" if pool["ready"] else "needs_check"
+        elif web_providers.ready(provider):
+            providers[provider] = "ready" if web_providers.profile_preferred else "needs_check"
+        else:
+            providers[provider] = "setup"
+    official = chat_providers.status()
+    providers.update((item["id"], "configured" if item["configured"] else "setup") for item in official)
+    models = {provider: [name for name, (owner, _) in MODULES.items() if owner == provider]
+              for provider in providers}
+    for item in official:
+        models[item["id"]] = [item["model_id"]]
+    try:
+        requests_today = client_usage.today_count()
+    except (OSError, sqlite3.Error):
+        requests_today = None
+    return JSONResponse({
+        "providers": [{"id": provider, "state": state, "models": models[provider]}
+                      for provider, state in providers.items()],
+        "active_keys": sum(not key.get("revoked_at") and key.get("enabled", True) for key in store.list_clients()),
+        "requests_today": requests_today,
+        "active_tasks": sum(task.get("status") in ("queued", "processing") for task in store.tasks.values()),
+    }, headers=NO_STORE)
+
+
 @app.get("/admin/status")
-def admin_status(_=Depends(auth)):
+def admin_status(_=Depends(auth), compact: bool = False):
     base = _public_base()
-    return {
-        "accounts": store.list_accounts(),
-        "stats": store.stats(),
+    result = {
         "generation_queue": QUEUE_POLICY.settings(),
-        "tasks": store.list_tasks(20),
         "media_count": len(media_entries(CFG.media_dir)) if os.path.isdir(CFG.media_dir) else 0,
         "muse_prompt_language": store.muse_prompt_language(),
         "browser_running": bool(engine.proc and engine.proc.poll() is None),
@@ -3644,6 +3672,9 @@ def admin_status(_=Depends(auth)):
                    "host": CFG.host, "port": CFG.port,
                    "public_base": base},
     }
+    if not compact:
+        result.update(accounts=store.list_accounts(), stats=store.stats(), tasks=store.list_tasks(20))
+    return result
 
 
 # ------------------------- 管理：账号池 -------------------------
@@ -4039,8 +4070,20 @@ def extension_files():
 
 # ------------------------- 管理：任务 / 媒体 -------------------------
 @app.get("/admin/tasks")
-def admin_tasks(limit: int = 50, _=Depends(auth)):
-    return {"tasks": [_public_task(task, None) for task in store.list_tasks(limit)]}
+def admin_tasks(limit: Annotated[int, Query(ge=1, le=200)] = 50, _=Depends(auth), *,
+                provider: str | None = None, status: str | None = None,
+                q: Annotated[str | None, Query(max_length=100)] = None,
+                offset: Annotated[int, Query(ge=0)] = 0):
+    status_aliases = {"succeeded": "completed", "success": "completed", "done": "completed"}
+    search = (q or "").strip().casefold()
+    matching = [task for task in store.tasks.values()
+                if not task.get("receipt_only")
+                and (not provider or (task.get("provider") or "muse") == provider)
+                and (not status or status_aliases.get(task["status"], task["status"]) == status)
+                and (not search or search in task["id"].casefold())]
+    matching.sort(key=lambda task: (task.get("created_at") or 0, task["id"]), reverse=True)
+    return {"tasks": [_public_task(task, None) for task in matching[offset:offset + limit]],
+            "total": len(matching), "has_more": offset + limit < len(matching)}
 
 
 @app.delete("/admin/tasks/{tid}")

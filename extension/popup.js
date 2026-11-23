@@ -33,7 +33,8 @@ const I18N_EN = {
   "已验证 {site} 标签页。请在控制台对应页签试聊。": "Verified the {site} tab. Try chat in its dashboard tab.",
   "连接失败 (HTTP {status})": "Connection failed (HTTP {status})",
   // popup.html 静态文案
-  'Muse2API Cookie 导入': 'Muse2API Cookie Import',
+  'mac2API 账号连接': 'Connect an AI account',
+  '管理密钥': 'Admin key',
   '把当前浏览器里 muse.ai 的登录态，一键同步到你的 muse2api 服务。':
     'Sync the muse.ai login session from this browser to your muse2api service in one click.',
   '服务地址（BASE URL）': 'Service URL (BASE URL)',
@@ -90,7 +91,8 @@ const I18N_VI = {
   "正在验证 {site} 标签页…": "Đang xác minh tab {site}…",
   "已验证 {site} 标签页。请在控制台对应页签试聊。": "Đã xác minh tab {site}. Hãy thử chat trong mục tương ứng của bảng quản trị.",
   "连接失败 (HTTP {status})": "Kết nối thất bại (HTTP {status})",
-  "Muse2API Cookie 导入": "Nhập cookie Muse2API",
+  "mac2API 账号连接": "Kết nối tài khoản AI",
+  "管理密钥": "Khóa quản trị",
   "把当前浏览器里 muse.ai 的登录态，一键同步到你的 muse2api 服务。": "Đồng bộ phiên đăng nhập Muse.ai từ trình duyệt này sang dịch vụ Muse2API của bạn.",
   "服务地址（BASE URL）": "Địa chỉ dịch vụ (BASE URL)",
   "账号标签（可留空）": "Nhãn tài khoản (tùy chọn)",
@@ -107,7 +109,7 @@ const I18N_VI = {
   "没读到 muse.ai 的 Cookie。\n请先在这个浏览器里打开并登录 https://muse.ai/ ，再回来点一次。": "Không tìm thấy cookie Muse.ai.\nHãy đăng nhập https://muse.ai/ trên trình duyệt này rồi thử lại.",
   "读到 {n} 条 Cookie，但缺核心项：{missing}\n未读到登录会话，请检查当前浏览器的登录状态和扩展权限。": "Đã đọc {n} cookie nhưng thiếu mục chính: {missing}\nHãy kiểm tra phiên đăng nhập và quyền của tiện ích.",
   "读到 {n} 条 Cookie，正在上传到 {base} …": "Đã đọc {n} cookie, đang gửi tới {base}…",
-  "API Key 不对（服务返回 401）。\n请到管理页「账号池」页顶部复制正确的 API Key。": "API Key không hợp lệ (HTTP 401).\nHãy sao chép khóa từ mục Quản lý tài khoản trong trang quản trị.",
+  "API Key 不对（服务返回 401）。\n请到管理页「账号池」页顶部复制正确的 API Key。": "API Key không hợp lệ (HTTP 401).\nHãy sao chép khóa từ mục Muse → Kết nối và khóa quản trị.",
   "导入失败：HTTP {status}\n{body}": "Nhập thất bại (HTTP {status})\n{body}",
   "(自动)": "(tự động)",
   "未知": "chưa rõ",

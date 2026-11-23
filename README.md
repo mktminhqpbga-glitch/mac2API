@@ -1,6 +1,6 @@
 # MUSE2API
 
-Bản tổng hợp mac2API 1.6.12 gồm mã máy chủ, bảng quản trị, tiện ích Chrome/Edge 1.0.5 và các adapter MacFlow/Toonflow. [Nhật ký phiên bản](CHANGELOG.md)
+Bản tổng hợp mac2API 1.6.12 gồm mã máy chủ, bảng quản trị, tiện ích Chrome/Edge 1.0.6 và các adapter MacFlow/Toonflow. [Nhật ký phiên bản](CHANGELOG.md)
 
 MUSE2API cung cấp API kiểu OpenAI để gọi các tính năng chat, tạo ảnh và tạo video của [Muse.ai](https://muse.ai/). Máy chủ Python chạy FastAPI và điều khiển Chromium qua Chrome DevTools Protocol (CDP). Muse.ai thực hiện việc tạo nội dung. Dịch vụ quản lý cookie, hàng đợi, tài khoản, proxy và kết quả tải về.
 
@@ -55,7 +55,7 @@ Nếu Chromium nằm ngoài PATH, đặt `MUSE2API_CHROMIUM` thành đường d�
 ## Nhập tài khoản Muse
 
 1. Tải tiện ích từ bảng quản trị hoặc nạp [thư mục tiện ích](extension/) dưới dạng tiện ích đã giải nén trong Chrome hoặc Edge.
-2. Đăng nhập Muse.ai và mở tiện ích **v1.0.5** trong chính cửa sổ đó. Với chế độ ẩn danh hoặc InPrivate, hãy cấp quyền chạy tiện ích trong chế độ tương ứng.
+2. Đăng nhập Muse.ai và mở tiện ích **v1.0.6** trong chính cửa sổ đó. Với chế độ ẩn danh hoặc InPrivate, hãy cấp quyền chạy tiện ích trong chế độ tương ứng.
 3. Điền địa chỉ dịch vụ và API Key, rồi bấm **Đọc và nhập**.
 4. Trong mục **Quản lý tài khoản**, bấm **Kiểm tra** để mở Muse bằng Chromium trên máy chủ và xác minh phiên.
 
@@ -139,6 +139,12 @@ Dùng `images` để gửi ảnh tham chiếu cho video. Ảnh đầu tiên là 
 ## Ngôn ngữ chỉ dẫn Muse
 
 Trong **Quản lý tài khoản**, chọn **Ngôn ngữ chỉ dẫn Muse** rồi bấm **Lưu ngôn ngữ chỉ dẫn**. Có ba lựa chọn là tiếng Việt (mặc định), tiếng Anh và tiếng Trung. Cài đặt lưu trong `data/muse-prompt.json`, áp dụng cho yêu cầu Muse mới và giữ nguyên prompt đầu vào. Phần chỉ dẫn tạo ảnh/video đề nghị Muse xác nhận bằng ngôn ngữ đã chọn. Muse tự quyết định lời đáp thực tế. Chat chỉ có một tin nhắn người dùng vẫn gửi trực tiếp. Khóa và tin nhắn gửi tới OpenAI hoặc Gemini sử dụng luồng riêng.
+
+## Bảng quản trị API
+
+Trang **Tổng quan** hiển thị trạng thái từng kết nối AI, số khóa đang bật, lượt API trong ngày và tác vụ đang chờ hoặc xử lý. **Khóa API** quản lý quyền của từng khách hàng. **Lịch sử API** đối chiếu kết quả và chi phí, còn **Tác vụ** lọc yêu cầu media theo nhà cung cấp, trạng thái hoặc mã.
+
+Chọn **API chính thức** để đặt model mặc định và lưu hoặc kiểm tra khóa OpenAI và Gemini. Khóa được cấp qua biến môi trường hiển thị nguồn cấu hình để quản trị viên biết cần đổi ở đâu. Trong **Thử API**, chọn **Khóa của người dùng**, nhập khóa của khách rồi bấm **Kiểm tra và tải mô hình** để kiểm tra đúng quyền trước khi gửi yêu cầu thử.
 
 ## Base URL dùng chung hoặc riêng theo nhà cung cấp
 

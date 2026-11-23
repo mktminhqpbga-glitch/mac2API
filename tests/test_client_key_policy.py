@@ -122,6 +122,18 @@ async def run():
             finally:
                 app.GEN_LOCK.release()
             item = await wait_for(tid)
+            overview = await http.get("/admin/overview", headers=admin)
+            stats = overview.json()
+            assert {provider["id"] for provider in stats["providers"]} == {
+                "muse", "chatgpt", "gemini-web", "openai", "gemini",
+            }
+            assert stats["active_keys"] == 2 and stats["requests_today"] == 1
+            assert (await http.get("/admin/overview", headers=b)).status_code == 401
+            compact = (await http.get("/admin/status", headers=admin, params={"compact": 1})).json()
+            assert "accounts" not in compact and "tasks" not in compact
+            tasks = await http.get("/admin/tasks", headers=admin,
+                                   params={"q": tid, "status": "completed", "provider": "muse", "limit": 1})
+            assert tasks.json()["total"] == 1 and tasks.json()["tasks"][0]["id"] == tid
             assert item["status"] == "completed", item
             assert seen == [second]
             assert item["account_attempts"][0]["id"] == second

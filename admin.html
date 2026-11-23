@@ -1,69 +1,98 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="vi">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>muse2api · 账号池控制台</title>
+<title>mac2API</title>
 <style>
-  :root{
-    --bg:#0a0e17; --bg2:#0e1421; --panel:#121a2b; --panel2:#0f1626;
-    --line:#20293d; --line2:#2b3550; --text:#e7eaf3; --muted:#8590a8;
-    --accent:#4f8cff; --accent2:#2563eb; --ok:#34d399; --bad:#f87171;
-    --warn:#fbbf24; --purple:#a78bfa; --radius:12px;
+  :root {
+    color-scheme: dark;
+    --bg:#0c1018; --bg2:#0d131e; --panel:#151c29; --panel2:#121925;
+    --line:#273243; --line2:#39475d; --text:#eef3fb; --muted:#a4b2c8;
+    --accent:#9cb9ff; --accent2:#3d67d8; --ok:#61d8aa; --bad:#ff9a9f;
+    --warn:#f2ca84; --purple:#b9a9ff; --radius:13px;
   }
   *{box-sizing:border-box}
-  body{
-    margin:0;background:radial-gradient(1200px 600px at 15% -10%,#152140 0%,var(--bg) 55%) no-repeat,var(--bg);
-    color:var(--text);font:14px/1.6 "Segoe UI",system-ui,-apple-system,"Microsoft YaHei",sans-serif;
-    min-height:100vh;
-  }
+  [hidden]{display:none!important}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 Inter,system-ui,-apple-system,"Segoe UI",sans-serif}
   a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
   code,kbd,pre{font-family:ui-monospace,SFMono-Regular,Consolas,"Cascadia Mono",monospace}
-
-  /* ---------- 顶栏 ---------- */
-  header{
-    position:sticky;top:0;z-index:20;backdrop-filter:blur(14px);
-    background:rgba(10,14,23,.82);border-bottom:1px solid var(--line);
+  button:focus-visible,a:focus-visible,summary:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{
+    outline:2px solid var(--accent);outline-offset:3px
   }
-  .hwrap{width:100%;max-width:none;margin:0;padding:14px clamp(12px,1.2vw,24px);display:flex;align-items:center;gap:16px;flex-wrap:wrap}
-  .logo{min-width:0;max-width:100%;flex-wrap:wrap;display:flex;align-items:center;gap:10px;font-weight:650;font-size:17px;letter-spacing:.2px}
-  .logo .dot{width:10px;height:10px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--purple));box-shadow:0 0 14px rgba(79,140,255,.8)}
-  .logo small{color:var(--muted);font-weight:400;font-size:12px;margin-left:2px}
-  .pills{min-width:0;max-width:100%;display:flex;gap:8px;flex-wrap:wrap;margin-left:auto;align-items:center}
-  .pill{
-    display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:5px 11px;border-radius:999px;
-    background:var(--panel);border:1px solid var(--line);color:var(--muted);white-space:nowrap
-  }
+  summary{cursor:pointer}
+  .site-header{background:#101622;border-bottom:1px solid var(--line)}
+  .hwrap{width:100%;margin:auto;padding:14px clamp(14px,2vw,32px);display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .logo{display:flex;align-items:center;gap:10px;font-weight:750;font-size:20px;letter-spacing:-.04em}
+  .brand-mark{width:30px;height:30px;display:grid;place-items:center;background:#23375e;border-radius:9px;flex:none}
+  .brand-mark::before{content:"";width:12px;height:12px;border:2px solid #c3d4ff;border-radius:3px;transform:rotate(45deg)}
+  .header-tools,.pills{display:flex;gap:8px;flex-wrap:wrap;align-items:center;min-width:0;max-width:100%}
+  .pills{margin-left:auto;flex:1;justify-content:flex-end}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:5px 10px;border-radius:999px;
+    background:var(--panel2);border:1px solid var(--line);color:var(--muted);white-space:nowrap}
   .pill b{color:var(--text);font-weight:600}
   .pill .led{width:7px;height:7px;border-radius:50%;background:var(--muted)}
-  .pill.on .led{background:var(--ok);box-shadow:0 0 8px var(--ok)}
-  .pill.off .led{background:var(--bad);box-shadow:0 0 8px var(--bad)}
-
-  .keybox{min-width:0;max-width:100%;display:flex;align-items:center;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:4px 6px 4px 11px}
-  .keybox input{min-width:0;flex:1 1 120px;background:transparent;border:0;color:var(--text);outline:none;width:210px;font-size:12.5px;font-family:ui-monospace,monospace}
+  .pill.on .led{background:var(--ok)}
+  .pill.off .led{background:var(--bad)}
+  .keybox{display:flex;align-items:center;gap:6px;background:var(--panel);border:1px solid var(--line);
+    border-radius:9px;padding:5px 6px 5px 9px;min-width:0;max-width:100%}
+  .keybox input{min-width:0;flex:1 1 145px;background:transparent;border:0;color:var(--text);
+    width:145px;font-size:12.5px;font-family:ui-monospace,monospace}
   .keybox button{padding:5px 10px;font-size:12px}
 
-  /* ---------- 布局 ---------- */
-  main{width:100%;max-width:none;margin:0;padding:clamp(12px,1.2vw,24px)}
-  nav.tabs{display:flex;gap:6px;margin-bottom:20px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:0}
-  nav.tabs button{
-    background:transparent;border:0;border-bottom:2px solid transparent;color:var(--muted);
-    padding:10px 16px;font-size:14px;cursor:pointer;border-radius:8px 8px 0 0;transition:.15s
-  }
-  nav.tabs button:hover{color:var(--text);background:rgba(255,255,255,.03)}
-  nav.tabs button.active{color:var(--text);border-bottom-color:var(--accent);font-weight:600}
+  main{width:100%;margin:0;padding:clamp(12px,1.6vw,26px);display:grid;grid-template-columns:190px minmax(0,1fr);
+    gap:clamp(16px,2vw,30px);align-items:start}
+  .workspace-nav{align-self:start;position:sticky;top:16px}
+  .mobile-nav{display:none}
+  nav.tabs{display:grid;gap:20px}
+  .nav-group{display:grid;gap:4px}
+  .nav-title{margin:0 0 3px;padding:0 11px;color:var(--muted);font-size:11px;font-weight:650}
+  nav.tabs button{background:transparent;border:1px solid transparent;color:var(--muted);
+    padding:8px 11px;text-align:left;font-size:13px;min-height:37px;border-radius:9px}
+  nav.tabs button:hover{color:var(--text);background:var(--panel2)}
+  nav.tabs button.active{color:#dce8ff;background:#243355;border-color:#354b76;font-weight:650}
+  .workspace-content{min-width:0}
+  .page-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:21px}
+  .page-heading h1:focus{outline:none}
+  .page-heading h1{font-size:clamp(25px,2.45vw,38px);line-height:1.14;letter-spacing:-.045em;margin:0;font-weight:735}
+  .page-heading .hint{margin:5px 0 0;font-size:13px}
   .tab{display:none}.tab.active{display:block;animation:fade .18s ease}
-  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  @keyframes fade{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+  @media(min-width:1200px) and (max-width:1599px){
+    #tab-pool :is(th,td){padding-inline:8px}
+  }
+  @media(max-width:1399px){
+    main{display:block}
+    .workspace-nav{position:static;margin-bottom:18px}
+    nav.tabs{display:flex;gap:17px;overflow-x:auto;padding:2px 2px 8px;scrollbar-width:thin;border-bottom:1px solid var(--line)}
+    .nav-group{display:flex;gap:3px;align-items:center;flex:none}
+    .nav-title{display:none}
+    nav.tabs button{white-space:nowrap}
+  }
+  @media(max-width:760px){
+    .hwrap{gap:10px}
+    .pills{flex:1 0 100%;margin:0;justify-content:flex-start}
+    .pills #pAcc,.pills #pBr,.pills #live,#repoHomeLink{display:none}
+    .keybox{order:2;flex:1 0 100%}
+    .page-heading{margin-bottom:16px}
+    .page-heading>div{flex:1 1 150px}
+    .workspace-nav>nav{display:none}
+    .mobile-nav{display:flex;align-items:center;gap:9px;margin:0}
+    .mobile-nav select{flex:1;min-width:0}
+    #toasts{right:10px;bottom:10px;max-width:calc(100vw - 20px);pointer-events:none}
+  }
 
   /* ---------- 卡片 ---------- */
-  .card{background:linear-gradient(180deg,var(--panel) 0%,var(--panel2) 100%);border:1px solid var(--line);border-radius:var(--radius);padding:18px;margin-bottom:16px}
-  .card>h3{margin:0 0 4px;font-size:14.5px;display:flex;align-items:center;gap:8px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:clamp(13px,1.45vw,22px);margin-bottom:16px;min-width:0}
+  .card>h3{margin:0 0 8px;font-size:16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .tab .empty{min-width:0}
   .card>h3 .tag{font-size:11px;font-weight:500;color:var(--muted);background:var(--bg2);border:1px solid var(--line);border-radius:6px;padding:1px 7px}
-  .hint{color:var(--muted);font-size:12.5px;margin:2px 0 12px}
+  .hint{color:var(--muted);font-size:12.5px;margin:2px 0 12px;overflow-wrap:anywhere}
   .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
-  .row>div{flex:1;min-width:170px}
+  .row>div{flex:1;min-width:min(100%,170px)}
   .copyline{display:flex;gap:7px;align-items:center}
-  .copyline input{flex:1;font-family:ui-monospace,monospace;font-size:12.5px}
+  .copyline input{min-width:0;flex:1;font-family:ui-monospace,monospace;font-size:12.5px}
 
   /* ---------- 分步引导 ---------- */
   .stepbox{display:flex;gap:13px;align-items:flex-start;padding:15px 0;border-bottom:1px solid rgba(32,41,61,.6)}
@@ -95,7 +124,7 @@
 
   /* ---------- 表单 ---------- */
   label{display:block;font-size:12.5px;color:var(--muted);margin-bottom:5px}
-  input[type=text],input[type=number],.proxy-dialog input[type=password],textarea,select{
+  input[type=text],input[type=search],input[type=date],input[type=number],input[type=url],.card input[type=password],.proxy-dialog input[type=password],textarea,select{
     width:100%;background:var(--bg2);color:var(--text);border:1px solid var(--line);border-radius:9px;
     padding:9px 12px;font-size:13px;outline:none;transition:.15s;font-family:inherit
   }
@@ -213,21 +242,80 @@
   .keybox.ok .lbl{color:var(--ok)}
   .keybox.miss .lbl{color:var(--warn)}
   .langsel{width:auto;flex:0 0 auto;background:var(--bg2);color:var(--text);border:1px solid var(--line2);border-radius:999px;padding:4px 10px;font-size:12px;cursor:pointer}
+  input[type=checkbox]{accent-color:#769cff}
+  .status-line{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+  .status-line h2,.status-line h3{margin:0;font-size:17px;letter-spacing:-.015em}
+  .status-line .hint{margin:3px 0 0}
+  .overview-entry{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(220px,1fr);gap:20px;align-items:center;
+    background:linear-gradient(114deg,#182844 0%,#151c29 68%);border-color:#32466c}
+  .overview-entry h2{font-size:clamp(19px,2.1vw,25px);line-height:1.24;letter-spacing:-.025em;margin:0 0 6px}
+  .overview-entry .acts{margin-top:14px}
+  .overview-entry .copyline{margin-top:5px}
+  .overview-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:17px}
+  .overview-stat{padding:15px 16px;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius)}
+  .overview-stat strong{display:block;margin-top:6px;font-size:27px;line-height:1.14;letter-spacing:-.05em}
+  .overview-stat span{color:var(--muted);font-size:12px}
+  .provider-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,245px),1fr));gap:12px;margin-top:14px}
+  .provider-tile{border:1px solid var(--line);background:var(--bg2);border-radius:11px;padding:14px;min-width:0}
+  .provider-tile h3{margin:0;font-size:15px;letter-spacing:-.01em}
+  .provider-tile .acts{margin:9px 0 11px}
+  .provider-tile .mono{display:block;margin-top:8px;overflow-wrap:anywhere}
+  .provider-tile .pill,.provider-tile .badge{white-space:normal}
+  .provider-tile .tile-footer{margin-top:13px}
+  .provider-row{padding:11px 0;border-top:1px solid var(--line);display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center}
+  .provider-row .hint{margin:3px 0 0}
+  .provider-row:last-child{padding-bottom:0}
+  [data-web-setup]{padding:13px 0;margin:12px 0 0;border-top:1px solid var(--line)}
+  [data-web-account-create]{display:flex;gap:9px;align-items:flex-end;flex-wrap:wrap;margin:12px 0}
+  [data-web-account-create] label{width:min(100%,280px);margin:0}
+  .section-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,370px),1fr));gap:14px;align-items:start}
+  .section-grid .card{margin-bottom:0}
+  .toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin:12px 0}
+  .toolbar label{margin:0}
+  .toolbar .search{flex:1 1 240px}
+  .pager{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px}
+  #clientKeyDialog{width:min(810px,calc(100% - 24px))}
+  #clientKeyNew{border:1px solid #446393;background:#202e49;border-radius:10px;padding:13px;margin-top:14px}
+  #clientKeyNew label{margin:0 0 6px}
+  #clientKeyForm .client-provider-group{padding:0;margin:13px 0;border:0}
+  .client-provider-group>h3{font-size:13px;margin:0 0 5px;color:var(--muted)}
+  .client-options label>input,.client-options label>select{margin-top:4px}
+  .status-text[data-error=true]{color:var(--bad)}
+  .official-form label{margin:13px 0 5px}
+  .official-form label input{margin-top:5px}
+  .disclosure-card summary{font-weight:650}
+  .disclosure-card[open]>summary{margin-bottom:13px}
+  .disclosure-card .row{margin-bottom:9px}
+  .table-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+  .table-heading h3{margin:0;font-size:16px}
+  .auth-help{margin:0}
+  #overviewNotice:not(:empty){margin-bottom:12px}
+  @media(max-width:760px){
+    .overview-entry{grid-template-columns:1fr;gap:14px}
+    .overview-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .provider-row{grid-template-columns:1fr}
+    .copyline{flex-wrap:wrap}
+    .copyline input{min-width:min(100%,165px)}
+    .card>h3 .tag{white-space:normal}
+    .banner{padding:13px}
+    .banner>div{min-width:0!important}
+  }
+  @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
   .updpill-alert{border-color:rgba(251,191,36,.8)!important;background:rgba(251,191,36,.15)!important;color:var(--warn)!important;animation:pulse 1.6s infinite}
 </style>
 </head>
 <body>
 
-<header>
+<header class="site-header">
   <div class="hwrap">
-    <div class="logo">
-      <span class="dot"></span>muse2api <small>Muse 网页额度 · 反代 API</small>
-      <a href="https://github.com/czg86389-hub/muse2api" target="_blank" id="repoHomeLink" class="pill" style="margin-left:10px;text-decoration:none;color:var(--text);border-color:var(--line2);cursor:pointer" title="打开 GitHub 开源仓库 (https://github.com/czg86389-hub/muse2api)">
+    <div class="logo"><span class="brand-mark" aria-hidden="true"></span>mac2API</div>
+    <div class="header-tools">
+      <a href="https://github.com/mktminhqpbga-glitch/mac2API" target="_blank" id="repoHomeLink" class="pill" rel="noopener noreferrer" title="GitHub · mac2API">
         <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" style="vertical-align:-2px"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
         <b>GitHub 仓库</b>
       </a>
       <button class="ghost mini" onclick="toggleRepoPanel()" id="btnRepoTop" style="display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:4px 11px;font-size:12px" title="查看官方仓库最新版本状态与更新通知">
-        📦 <span id="repoTopTxt">版本检测</span>
+        <span id="repoTopTxt">版本检测</span>
       </button>
     </div>
     <div class="pills">
@@ -237,7 +325,7 @@
       <span class="live" id="live"><span class="led"></span>自动刷新</span>
       <span class="keybox" id="keyBox">
         <span class="lbl" id="keyLbl">API Key</span>
-        <input id="key" type="password" placeholder="粘贴 m2a_ 开头的密钥" autocomplete="off">
+        <input id="key" type="password" aria-label="Khóa quản trị" placeholder="粘贴 m2a_ 开头的密钥" autocomplete="off">
         <button class="ghost mini" onclick="saveKey()">保存</button>
       </span>
       <select id="langSel" class="langsel" data-no-i18n onchange="setLang(this.value)" title="Ngôn ngữ / Language / 语言">
@@ -250,6 +338,34 @@
 </header>
 
 <main>
+  <aside class="workspace-nav">
+    <label class="mobile-nav"><span data-ui="navigate">Chuyển trang</span><select id="mobileNav"></select></label>
+    <nav class="tabs" aria-label="Điều hướng quản trị">
+      <div class="nav-group">
+        <p class="nav-title" data-ui="operations">Vận hành</p>
+        <button type="button" class="active" data-t="overview" data-ui="overview" aria-current="page">Tổng quan</button>
+        <button type="button" data-t="clients" data-ui="clients">Khóa API</button>
+        <button type="button" data-t="usage" data-ui="usage">Lịch sử API</button>
+        <button type="button" data-t="tasks" data-ui="tasks">Tác vụ</button>
+        <button type="button" data-t="media" data-ui="media">Thư viện media</button>
+      </div>
+      <div class="nav-group">
+        <p class="nav-title" data-ui="connections">Kết nối AI</p>
+        <button type="button" data-t="pool">Muse</button>
+        <button type="button" data-t="openai">ChatGPT Web</button>
+        <button type="button" data-t="gemini">Gemini Web</button>
+        <button type="button" data-t="official" data-ui="official">API chính thức</button>
+        <button type="button" data-t="cookie" data-ui="cookie">Tiện ích trình duyệt</button>
+      </div>
+      <div class="nav-group">
+        <p class="nav-title" data-ui="integration">Tích hợp</p>
+        <button type="button" data-t="play" data-ui="play">Thử API</button>
+        <button type="button" data-t="docs" data-ui="docs">Tài liệu API</button>
+      </div>
+    </nav>
+  </aside>
+  <div class="workspace-content">
+
   <!-- 实时新版本更新通知横幅（当官方仓库有新提交/新版本时自动向所有已部署用户弹出） -->
   <div class="banner" id="updateBanner" style="border-color:rgba(79,140,255,.65);background:linear-gradient(90deg,rgba(79,140,255,.16),rgba(167,139,250,.05));align-items:center;justify-content:space-between;flex-wrap:wrap">
     <div style="display:flex;gap:12px;align-items:flex-start;flex:1;min-width:260px">
@@ -272,7 +388,7 @@
     <h3>
       <svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
       仓库版本检测与更新
-      <a href="https://github.com/czg86389-hub/muse2api" target="_blank" id="repoPanelLink" class="tag" style="color:var(--accent)">czg86389-hub/muse2api ↗</a>
+      <a href="https://github.com/mktminhqpbga-glitch/mac2API" target="_blank" rel="noopener noreferrer" id="repoPanelLink" class="tag" style="color:var(--accent)">mktminhqpbga-glitch/mac2API ↗</a>
       <span id="repoBadge" class="badge info" style="margin-left:auto">检测中…</span>
     </h3>
     <div class="hint" id="repoStatusDesc" data-i18n="repo-status-desc">正在实时对比本地版本与 GitHub 官方仓库最新版本…（在线升级自动保留 <code>.env</code> 密钥与 <code>data/</code> 账号池及媒体数据）</div>
@@ -280,44 +396,84 @@
     <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <button onclick="upgradeNow()" id="btnRepoPull">⚡ 一键从 GitHub 在线更新并重启</button>
       <button class="ghost" onclick="loadRepoStatus(true)">🔍 立即重新检测更新</button>
-      <a id="repoCommitsLink" href="https://github.com/czg86389-hub/muse2api/commits/main" target="_blank" class="btnlike ghostlike" style="padding:7px 13px;font-size:12.5px">查看 GitHub 完整提交记录 ↗</a>
+      <a id="repoCommitsLink" href="https://github.com/mktminhqpbga-glitch/mac2API/commits/main" target="_blank" rel="noopener noreferrer" class="btnlike ghostlike" style="padding:7px 13px;font-size:12.5px">查看 GitHub 完整提交记录 ↗</a>
     </div>
   </div>
 
   <div class="banner" id="authBanner">
     <span class="ic">🔑</span>
-    <div data-i18n="auth-banner">
-      <b>需要先填入 API Key，页面才能读到数据</b><br>
-      <span style="color:var(--muted)">
-        API Key 是这个服务自己的「访问密码」，用来防止别人白用你的 Muse 账号额度。
-        它<b style="color:var(--text)">不是</b> Muse 的账号密码，是部署时自动生成的一串随机字符（以 <code>m2a_</code> 开头）。<br>
-        把它粘贴到右上角的输入框，点「保存」即可 —— 浏览器会记住，下次不用再输。
-      </span>
+    <div>
+      <b data-ui="loginTitle">Nhập khóa quản trị để mở bảng điều khiển</b>
+      <p class="auth-help hint" data-ui="loginHelp">Dán khóa quản trị ở phía trên và bấm Lưu. Khóa được giữ trong phiên của tab này.</p>
     </div>
   </div>
 
-  <nav class="tabs">
-    <button class="active" data-t="pool">账号池</button>
-    <button data-t="openai">ChatGPT Web</button>
-    <button data-t="gemini">Gemini Web</button>
-    <button data-t="clients">Khóa người dùng</button>
-    <button data-t="cookie">获取 Cookie</button>
-    <button data-t="tasks">任务记录</button>
-    <button data-t="media">媒体库</button>
-    <button data-t="play">接口测试</button>
-    <button data-t="docs">接入文档</button>
-  </nav>
+  <div class="page-heading">
+    <div><h1 id="pageTitle" tabindex="-1" data-ui="overview">Tổng quan</h1><p class="hint" id="pageContext"></p></div>
+    <button class="ghost" id="pageRefresh" type="button" data-ui="refresh">Làm mới</button>
+  </div>
+
+  <section class="tab active" id="tab-overview">
+    <div class="card overview-entry">
+      <div>
+        <h2 data-ui="access">Cấp quyền truy cập API</h2>
+        <p class="hint" data-ui="accessHelp">Cấp một khóa cho mỗi khách hàng hoặc ứng dụng. Bạn có thể giới hạn mô hình, tài khoản và số lượt sử dụng.</p>
+        <div class="acts">
+          <button type="button" onclick="goTab('clients')" data-ui="manageKeys">Quản lý khóa</button>
+          <button type="button" class="ghost" onclick="goTab('play')" data-ui="play">Thử API</button>
+        </div>
+      </div>
+      <div>
+        <label for="overviewBase" data-ui="sharedBase">Base URL dùng chung</label>
+        <div class="copyline">
+          <input type="text" id="overviewBase" readonly spellcheck="false">
+          <button type="button" class="ghost" onclick="copyEl('overviewBase')" data-ui="copy">Sao chép</button>
+        </div>
+      </div>
+    </div>
+    <div class="overview-stats">
+      <div class="overview-stat"><span data-ui="providersReady">Kết nối khả dụng</span><strong id="overviewReady">—</strong></div>
+      <div class="overview-stat"><span data-ui="activeKeys">Khóa đang bật</span><strong id="overviewKeys">—</strong></div>
+      <div class="overview-stat"><span data-ui="requestsToday">Lượt API hôm nay</span><strong id="overviewRequests">—</strong></div>
+      <div class="overview-stat"><span data-ui="activeTasks">Tác vụ chờ hoặc đang chạy</span><strong id="overviewTasks">—</strong></div>
+    </div>
+    <div class="card">
+      <div class="status-line"><h2 data-ui="providers">Nhà cung cấp AI</h2></div>
+      <p id="overviewNotice" role="status" class="hint"></p>
+      <div class="provider-grid" id="overviewProviders"></div>
+    </div>
+  </section>
 
   <section class="tab" id="tab-clients">
     <div class="card">
-      <h3>Khóa API người dùng</h3>
+      <div class="status-line">
+        <h2 data-ui="clientList">Danh sách khóa</h2>
+        <button type="button" id="newClientKey" data-ui="newKey">Tạo khóa API</button>
+      </div>
+      <div class="toolbar">
+        <label class="search"><span data-ui="searchKeys">Tìm tên khóa hoặc mô hình</span><input type="search" id="clientSearch" autocomplete="off"></label>
+        <label><span data-ui="status">Trạng thái</span><select id="clientState">
+          <option value="" data-ui="anyStatus">Tất cả</option>
+          <option value="enabled" data-ui="enabled">Đang bật</option>
+          <option value="paused" data-ui="paused">Tạm khóa</option>
+          <option value="revoked" data-ui="revoked">Đã thu hồi</option>
+        </select></label>
+      </div>
       <div class="tblwrap"><table>
-        <thead><tr><th>Tên khóa</th><th>Quyền sử dụng</th><th>Trạng thái</th><th>Sử dụng tháng này</th><th>Thao tác</th></tr></thead>
+        <thead><tr><th data-ui="keyName">Tên khóa</th><th data-ui="permissions">Quyền sử dụng</th><th data-ui="status">Trạng thái</th><th data-ui="thisMonth">Sử dụng tháng này</th><th data-ui="actions">Thao tác</th></tr></thead>
         <tbody id="clientKeyList"></tbody>
       </table></div>
-      <p id="clientKeyStatus" class="hint" role="status"></p>
+      <div class="pager">
+        <p id="clientKeyStatus" class="hint" role="status"></p>
+        <div class="acts">
+          <button class="ghost mini" type="button" id="clientPrev" data-ui="previous">Trang trước</button>
+          <button class="ghost mini" type="button" id="clientNext" data-ui="next">Trang sau</button>
+        </div>
+      </div>
+    </div>
+    <dialog class="proxy-dialog" id="clientKeyDialog" aria-labelledby="clientKeyFormTitle">
+      <h2 id="clientKeyFormTitle">Tạo khóa API</h2>
       <form id="clientKeyForm">
-        <h3 id="clientKeyFormTitle">Tạo khóa</h3>
         <div class="client-options">
           <label>Tên người dùng<input id="clientKeyLabel" type="text" required maxlength="80" autocomplete="off"></label>
           <label>Số ngày lưu prompt và kết quả
@@ -328,21 +484,25 @@
         <label><input type="checkbox" id="clientEnabled" checked> Cho phép dùng khóa</label>
         <label id="clientKeepLegacy"><input type="checkbox" id="clientLegacy"> Giữ quyền cũ theo nhà cung cấp</label>
         <div id="clientRules"></div>
-        <div class="acts">
-          <button id="clientSave" type="submit">Tạo khóa người dùng</button>
-          <button id="clientDismiss" type="button" class="ghost" hidden>Hủy chỉnh sửa</button>
+        <p id="clientFormStatus" class="hint status-text" role="status"></p>
+        <div class="proxy-actions">
+          <button id="clientDismiss" type="button" class="ghost" data-ui="cancel">Hủy</button>
+          <button id="clientSave" type="submit" data-ui="newKey">Tạo khóa API</button>
         </div>
       </form>
       <div id="clientKeyNew" hidden>
         <label for="clientKeyResult">Mã khóa chỉ hiện một lần. Sao chép để gửi cho người dùng.</label>
         <div class="row">
           <input id="clientKeyResult" type="text" readonly autocomplete="off" spellcheck="false">
-          <button type="button" class="ghost" onclick="copyEl('clientKeyResult')">Sao chép khóa</button>
+          <button type="button" onclick="copyEl('clientKeyResult')" data-ui="copyKey">Sao chép khóa</button>
         </div>
+        <div class="proxy-actions"><button type="button" class="ghost" id="closeClientSecret" data-ui="done">Xong</button></div>
       </div>
-    </div>
+    </dialog>
+  </section>
+  <section class="tab" id="tab-usage">
     <div class="card" id="clientHistory">
-      <h3>Lịch sử API</h3>
+      <div class="status-line"><h2 data-ui="filterUsage">Lọc lượt sử dụng</h2></div>
       <form id="usageFilter">
         <div class="client-options">
           <label>Khóa API<select id="usageOwner"></select></label>
@@ -364,14 +524,33 @@
         <button type="button" class="mini ghost" id="usageNext" disabled>Trang sau</button>
       </div>
     </div>
-    <dialog class="proxy-dialog" id="usageDialog">
-      <h2>Chi tiết lượt sử dụng</h2>
+    <dialog class="proxy-dialog" id="usageDialog" aria-labelledby="usageDialogTitle">
+      <h2 id="usageDialogTitle" data-ui="usageDetails">Chi tiết lượt sử dụng</h2>
       <div id="usageDetails"></div>
       <form method="dialog" class="proxy-actions"><button class="ghost">Đóng</button></form>
     </dialog>
   </section>
   <section class="tab" id="tab-openai"></section>
   <section class="tab" id="tab-gemini"></section>
+  <section class="tab" id="tab-official">
+    <p id="officialNotice" class="hint status-text" role="status"></p>
+    <div class="section-grid" id="officialPanels"></div>
+  </section>
+  <template id="officialTemplate">
+    <form class="card official-form">
+      <div class="status-line"><h2 data-official-name></h2><span class="badge mute" data-official-state></span></div>
+      <p class="hint"><code data-official-model-id></code></p>
+      <label><span data-ui="defaultModel">Mô hình mặc định</span><input type="text" name="model" maxlength="200" required spellcheck="false" autocomplete="off"></label>
+      <label><span data-ui="providerKey">Khóa API của nhà cung cấp</span><input type="password" name="api_key" autocomplete="new-password" spellcheck="false"></label>
+      <p class="hint" data-official-help></p>
+      <div class="acts">
+        <button type="submit" data-ui="save">Lưu</button>
+        <button type="button" class="ghost" data-official-test data-ui="testConnection">Kiểm tra kết nối</button>
+        <button type="button" class="ghost" data-official-clear data-ui="removeKey">Gỡ khóa đã lưu</button>
+      </div>
+      <p class="hint status-text" data-official-result role="status"></p>
+    </form>
+  </template>
   <template id="chatProviderTemplate">
     <div class="card">
       <h3 data-provider-title></h3>
@@ -395,9 +574,9 @@
       <button type="button" class="ghost" data-provider-test>Kiểm tra phiên trình duyệt</button>
     </div>
     <div class="card" data-web-accounts-panel hidden>
-      <h3>Tài khoản Chromium</h3>
+      <h3 data-ui="chromiumAccounts">Tài khoản Chromium</h3>
       <form data-web-account-create hidden>
-        <label>Tên tài khoản <input name="label" maxlength="120" required></label>
+        <label><span data-ui="accountName">Tên tài khoản</span><input type="text" name="label" maxlength="120" required></label>
         <button type="submit">Thêm hồ sơ</button>
       </form>
       <div data-web-accounts></div>
@@ -414,41 +593,11 @@
   </template>
 
   <!-- ==================== 账号池 ==================== -->
-  <section class="tab active" id="tab-pool">
+  <section class="tab" id="tab-pool">
     <div class="warnbar" id="expWarn" style="display:none">
       <span id="expWarnText"></span>
       <button class="ghost mini" onclick="goTab('cookie')">去重新登录</button>
     </div>
-    <div class="card" style="border-color:rgba(79,140,255,.4)">
-      <h3>接入信息 <span class="tag">下游项目填这两个值</span></h3>
-      <div class="hint">把下面两项填进你的项目就能调用。BASE URL 就是接口地址前缀。</div>
-      <div class="row">
-        <div style="flex:3">
-          <label>BASE URL（接口地址）</label>
-          <div class="copyline">
-            <input type="text" id="inBase" readonly>
-            <button class="ghost mini" onclick="copyEl('inBase')">复制</button>
-          </div>
-        </div>
-        <div style="flex:3">
-          <label>API Key（访问密钥）</label>
-          <div class="copyline">
-            <input type="text" id="inKey" readonly>
-            <button class="ghost mini" onclick="toggleKey()" id="keyEye">显示</button>
-            <button class="ghost mini" onclick="copyKey()">复制</button>
-            <button class="danger mini" onclick="rotateKey()">重新生成</button>
-          </div>
-        </div>
-      </div>
-      <div class="hint">Base URL riêng cho Muse: <code id="museScopedBase"></code>
-        <button class="ghost mini" onclick="copyText($('museScopedBase').textContent)">Sao chép</button>
-      </div>
-      <div class="hint" style="margin:11px 0 0" data-i18n="model-names-hint">
-        模型名：<code>muse-spark</code>（对话/代码）、<code>muse-image</code>（生图）、<code>muse-video</code>（生视频）。
-        完整调用示例见「接入文档」页签。
-      </div>
-    </div>
-
     <div class="stats">
       <div class="stat b"><div class="k">账号总数</div><div class="v" id="sTotal">0</div></div>
       <div class="stat g"><div class="k">可用</div><div class="v" id="sOk">0</div></div>
@@ -457,6 +606,48 @@
       <div class="stat"><div class="k">媒体文件</div><div class="v" id="sMedia">0</div></div>
     </div>
 
+    <div class="card">
+      <div class="table-heading">
+        <div style="display:flex;align-items:center;gap:10px">
+          <h3 style="margin:0">账号列表 <span class="tag" id="poolCount">0</span></h3>
+          <span class="badge ok" id="keepaliveBadge" style="font-size:11px">● 自动保活轮转中 (30m)</span>
+        </div>
+        <div class="acts">
+          <button type="button" id="quickMuseImport" data-ui="importMuse">Nhập tài khoản</button>
+          <button class="ghost" id="btnKeepaliveAll" onclick="keepaliveAll()" style="font-size:12px;padding:6px 14px">⚡ 一键保活所有账号</button>
+        </div>
+      </div>
+      <div class="hint" data-i18n="keepalive-hint">系统已开启<b>后台每 30 分钟静默保活</b>与<b>多账号公平轮转（LRU）</b>；「测试」会真实打开 muse.ai 验证会话。</div>
+      <div class="tblwrap"><table>
+        <thead><tr>
+          <th>标签</th><th>账号 ID</th><th>状态</th><th>有效期</th><th>额度</th><th data-i18n="col-enabled">启用</th><th>Cookie</th>
+          <th>最后使用</th><th>备注</th><th style="min-width:250px">操作</th>
+        </tr></thead>
+        <tbody id="poolBody"><tr><td colspan="10" class="empty">加载中…</td></tr></tbody>
+      </table></div>
+    </div>
+    <details class="card disclosure-card" id="museImport">
+      <summary>添加账号</summary>
+      <div class="hint" data-i18n="add-account-hint">
+        从浏览器复制 <b>muse.ai</b> 的 Cookie 字符串粘贴进来即可。必要 cookie：
+        <code>hatch_sess</code>。<code>hatch_vml</code> 为可选工作区令牌，缺少时不阻止导入。
+        批量导入时每行一个账号，格式 <code>标签 | cookie串</code>（标签可省略）。
+      </div>
+      <div class="row">
+        <div style="max-width:230px">
+          <label>账号标签（单条导入用）</label>
+          <input type="text" id="newLabel" placeholder="例如 muse-main">
+        </div>
+        <div style="flex:3">
+          <label>Cookie 字符串</label>
+          <textarea id="newCookie" rows="4" placeholder="hatch_sess=...; hatch_vml=...&#10;或批量：&#10;acc-01 | hatch_sess=...; hatch_vml=...&#10;acc-02 | hatch_sess=...; hatch_vml=..."></textarea>
+        </div>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap">
+        <button class="primary-lg" onclick="addAccount(false)">导入账号</button>
+        <button class="ghost" onclick="document.getElementById('newCookie').value='';">清空</button>
+      </div>
+    </details>
     <div class="card">
       <form id="musePromptForm">
         <label for="musePromptLanguage">Muse 提示词指令语言</label>
@@ -482,53 +673,40 @@
       </form>
     </div>
 
-    <div class="card">
-      <h3>添加账号 <span class="tag">支持批量</span></h3>
-      <div class="hint" data-i18n="add-account-hint">
-        从浏览器复制 <b>muse.ai</b> 的 Cookie 字符串粘贴进来即可。必要 cookie：
-        <code>hatch_sess</code>。<code>hatch_vml</code> 为可选工作区令牌，缺少时不阻止导入。
-        批量导入时每行一个账号，格式 <code>标签 | cookie串</code>（标签可省略）。
-      </div>
+    <details class="card disclosure-card">
+      <summary data-ui="adminAccess">Kết nối và khóa quản trị</summary>
+      <div class="hint" data-ui="adminAccessHelp">Dùng khóa quản trị cho bảng điều khiển và tiện ích. Cấp khóa riêng trong mục Khóa API cho ứng dụng và khách hàng.</div>
       <div class="row">
-        <div style="max-width:230px">
-          <label>账号标签（单条导入用）</label>
-          <input type="text" id="newLabel" placeholder="例如 muse-main">
+        <div style="flex:3">
+          <label>BASE URL（接口地址）</label>
+          <div class="copyline">
+            <input type="text" id="inBase" readonly>
+            <button class="ghost mini" onclick="copyEl('inBase')">复制</button>
+          </div>
         </div>
         <div style="flex:3">
-          <label>Cookie 字符串</label>
-          <textarea id="newCookie" rows="4" placeholder="hatch_sess=...; hatch_vml=...&#10;或批量：&#10;acc-01 | hatch_sess=...; hatch_vml=...&#10;acc-02 | hatch_sess=...; hatch_vml=..."></textarea>
+          <label for="inKey" data-ui="adminKey">Khóa quản trị</label>
+          <div class="copyline">
+            <input type="text" id="inKey" readonly>
+            <button class="ghost mini" onclick="toggleKey()" id="keyEye">显示</button>
+            <button class="ghost mini" onclick="copyKey()">复制</button>
+            <button class="danger mini" onclick="rotateKey()">重新生成</button>
+          </div>
         </div>
       </div>
-      <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap">
-        <button class="primary-lg" onclick="addAccount(false)">导入账号</button>
-        <button class="ghost" onclick="document.getElementById('newCookie').value='';">清空</button>
+      <div class="hint">Base URL riêng cho Muse: <code id="museScopedBase"></code>
+        <button class="ghost mini" onclick="copyText($('museScopedBase').textContent)">Sao chép</button>
       </div>
-    </div>
-
-    <div class="card">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:8px">
-        <div style="display:flex;align-items:center;gap:10px">
-          <h3 style="margin:0">账号列表 <span class="tag" id="poolCount">0</span></h3>
-          <span class="badge ok" id="keepaliveBadge" style="font-size:11px">● 自动保活轮转中 (30m)</span>
-        </div>
-        <div style="display:flex;gap:8px">
-          <button class="secondary" id="btnKeepaliveAll" onclick="keepaliveAll()" style="font-size:12px;padding:6px 14px">⚡ 一键保活所有账号</button>
-        </div>
+      <div class="hint" style="margin:11px 0 0" data-i18n="model-names-hint">
+        模型名：<code>muse-spark</code>（对话/代码）、<code>muse-image</code>（生图）、<code>muse-video</code>（生视频）。
+        完整调用示例见「接入文档」页签。
       </div>
-      <div class="hint" data-i18n="keepalive-hint">系统已开启<b>后台每 30 分钟静默保活</b>与<b>多账号公平轮转（LRU）</b>；「测试」会真实打开 muse.ai 验证会话。</div>
-      <div class="tblwrap"><table>
-        <thead><tr>
-          <th>标签</th><th>账号 ID</th><th>状态</th><th>有效期</th><th>额度</th><th data-i18n="col-enabled">启用</th><th>Cookie</th>
-          <th>最后使用</th><th>备注</th><th style="min-width:250px">操作</th>
-        </tr></thead>
-        <tbody id="poolBody"><tr><td colspan="10" class="empty">加载中…</td></tr></tbody>
-      </table></div>
-    </div>
+    </details>
   </section>
 
   <!-- ==================== 获取 Cookie ==================== -->
   <section class="tab" id="tab-cookie">
-    <div class="card" id="extensionUpgradeNotice" role="note" data-i18n="extension-upgrade-notice"><b>浏览器扩展 1.0.5</b><br><a href="/admin/extension">下载扩展</a>。如需更新解压的扩展，请替换文件后在 <code>chrome://extensions</code> 或 <code>edge://extensions</code> 点击重新加载。</div>
+    <div class="card" id="extensionUpgradeNotice" role="note" data-i18n="extension-upgrade-notice"><b>浏览器扩展 1.0.6</b><br><a href="/admin/extension">下载扩展</a>。如需更新解压的扩展，请替换文件后在 <code>chrome://extensions</code> 或 <code>edge://extensions</code> 点击重新加载。</div>
     <div class="card" style="border-color:rgba(52,211,153,.45)">
       <h3>方式一：浏览器扩展 <span class="tag">推荐 · 零命令行 · 全平台</span></h3>
       <div class="hint" data-i18n="ext-why-hint">
@@ -588,7 +766,7 @@
             <div style="flex:3">
               <label>API Key（填进扩展）</label>
               <div class="copyline">
-                <input type="text" id="exKey" readonly>
+                <input type="password" id="exKey" aria-label="Khóa quản trị dành cho tiện ích" readonly>
                 <button class="ghost mini" onclick="copyExKey()">复制</button>
               </div>
             </div>
@@ -681,18 +859,29 @@
   <section class="tab" id="tab-tasks">
     <div class="card">
       <h3>生成任务记录 <span class="tag" id="taskCount">0</span></h3>
-      <div class="hint">生视频是异步任务，状态会从 queued → processing → succeeded / failed。</div>
-      <div style="margin-bottom:12px;display:flex;gap:9px">
+      <div class="toolbar">
+        <label><span data-ui="providers">Nhà cung cấp AI</span><select id="taskProvider"><option value="" data-ui="allProviders">Tất cả AI</option><option value="muse">Muse</option><option value="chatgpt">ChatGPT Web</option><option value="gemini-web">Gemini Web</option></select></label>
+        <label><span data-ui="status">Trạng thái</span><select id="taskState"></select></label>
+        <label class="search"><span data-ui="findTask">Tìm mã tác vụ</span><input id="taskSearch" type="search" autocomplete="off" maxlength="100"></label>
+      </div>
+      <div class="acts" style="margin-bottom:12px">
         <button class="ghost mini" onclick="loadTasks()">刷新</button>
         <button class="danger mini" onclick="clearTasks()">清空全部</button>
       </div>
       <div class="tblwrap"><table>
         <thead><tr>
-          <th>任务 ID</th><th>类型</th><th>提示词</th><th>状态</th>
+          <th>任务 ID</th><th data-ui="providerType">AI và loại</th><th>提示词</th><th>状态</th>
           <th>耗时</th><th>创建时间</th><th>结果 / 错误</th><th></th>
         </tr></thead>
         <tbody id="taskBody"><tr><td colspan="8" class="empty">加载中…</td></tr></tbody>
       </table></div>
+      <div class="pager">
+        <p class="hint" id="taskListStatus" role="status"></p>
+        <div class="acts">
+          <button type="button" class="ghost mini" id="taskPrev" data-ui="previous" disabled>Trang trước</button>
+          <button type="button" class="ghost mini" id="taskNext" data-ui="next" disabled>Trang sau</button>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -718,8 +907,26 @@
   <!-- ==================== 接口测试 ==================== -->
   <section class="tab" id="tab-play">
     <div class="card">
+      <div class="status-line"><h2 data-ui="playAccess">Quyền dùng để thử API</h2></div>
+      <div class="toolbar">
+        <label><span data-ui="accessMode">Dùng quyền</span><select id="playAuthMode"><option value="admin" data-ui="adminMode">Quản trị viên</option><option value="client" data-ui="clientMode">Khóa của người dùng</option></select></label>
+        <label id="playKeyField" class="search" hidden><span data-ui="clientKey">Khóa người dùng</span><input id="playKey" type="password" autocomplete="off" spellcheck="false" placeholder="m2c_…"></label>
+        <button class="ghost" type="button" id="playDiscover" data-ui="discoverModels">Kiểm tra và tải mô hình</button>
+      </div>
+      <p class="hint status-text" id="playStatus" role="status"></p>
+    </div>
+    <div class="section-grid">
+    <form class="card" id="textPlayForm">
+      <h3 data-ui="tryText">Thử văn bản</h3>
+      <p class="mono">POST /v1/chat/completions</p>
+      <label><span data-ui="model">Mô hình</span><select id="playTextModel"><option value="muse/text">Muse</option></select></label>
+      <label><span data-ui="message">Nội dung</span><textarea id="playText" rows="3" required></textarea></label>
+      <button id="playTextSend" type="submit" data-ui="send">Gửi</button>
+      <pre id="playTextResult" class="out" role="status" hidden data-no-i18n></pre>
+    </form>
+    <div class="card">
       <h3>在线生图测试 <span class="tag">POST /v1/images/generations</span></h3>
-      <div class="hint">真实调用 muse.ai 生成，图片约 10–30 秒返回。</div>
+      <label><span data-ui="model">Mô hình</span><select id="playImageModel"><option value="muse/image">Muse</option></select></label>
       <div class="row">
         <div style="flex:3"><label>提示词</label>
           <input type="text" id="imgPrompt" value="一只戴宇航头盔的柴犬，赛博朋克风格，霓虹灯背景"></div>
@@ -727,12 +934,12 @@
           <select id="imgSize"><option>1:1</option><option>16:9</option><option>9:16</option><option>4:3</option><option>3:4</option></select></div>
       </div>
       <div style="margin-top:12px"><button class="primary-lg" id="imgBtn" onclick="runImage()">开始生成图片</button></div>
-      <div class="result" id="imgRes"></div>
+      <div class="result" id="imgRes" role="status"></div>
     </div>
 
     <div class="card">
       <h3>在线生视频测试 <span class="tag">POST /v1/videos</span></h3>
-      <div class="hint">异步任务，一般 60–120 秒完成，页面会自动轮询进度。</div>
+      <label><span data-ui="model">Mô hình</span><select id="playVideoModel"><option value="muse/video">Muse</option></select></label>
       <div class="row">
         <div style="flex:3"><label>提示词</label>
           <input type="text" id="vidPrompt" value="一只橙色小猫在草地上慢慢走动，阳光明媚"></div>
@@ -742,7 +949,8 @@
           <select id="vidSize"><option>16:9</option><option>9:16</option><option>1:1</option></select></div>
       </div>
       <div style="margin-top:12px"><button class="primary-lg" id="vidBtn" onclick="runVideo()">开始生成视频</button></div>
-      <div class="result" id="vidRes"></div>
+      <div class="result" id="vidRes" role="status"></div>
+    </div>
     </div>
   </section>
 
@@ -898,10 +1106,11 @@ t = requests.post(<span class="s">"BASE/v1/videos"</span>, json={<span class="s"
       </div>
     </div>
   </section>
+  </div>
 </main>
 
 <footer style="max-width:1280px;margin:18px auto 32px;padding:12px 24px;text-align:center;color:var(--muted);font-size:12px;border-top:1px solid var(--line)">
-  <span>开源仓库：<a href="https://github.com/czg86389-hub/muse2api" target="_blank" style="color:var(--acc);text-decoration:none">GitHub · muse2api</a></span>
+  <a href="https://github.com/mktminhqpbga-glitch/mac2API" target="_blank" rel="noopener noreferrer">GitHub · mac2API</a>
 </footer>
 
 <div id="toasts"></div>
@@ -1385,7 +1594,7 @@ const I18N_EN = {
 };
 /* 含富文本的块：data-i18n="key" → 英文 innerHTML（须保留原有子元素的 id/class/属性） */
 const I18N_EN_HTML = {
-  "extension-upgrade-notice": "<b>Browser extension 1.0.5</b><br><a href=\"/admin/extension\">Download the extension</a>. To update an unpacked installation, replace its files and click Reload at <code>chrome://extensions</code> or <code>edge://extensions</code>.",
+  "extension-upgrade-notice": "<b>Browser extension 1.0.6</b><br><a href=\"/admin/extension\">Download the extension</a>. To update an unpacked installation, replace its files and click Reload at <code>chrome://extensions</code> or <code>edge://extensions</code>.",
   "repo-status-desc": "Comparing your local version with the latest version in the official GitHub repository… (online upgrades keep your <code>.env</code> keys and the <code>data/</code> Account Pool and media data)",
   "auth-banner": "\n      <b>Enter your API Key first so the page can load data</b><br>\n      <span style=\"color:var(--muted)\">\n        The API Key is this service's own \"access password\". It stops other people from using your Muse account quota.\n        It is <b style=\"color:var(--text)\">not</b> your Muse password. It is a random string generated at deploy time (it starts with <code>m2a_</code>).<br>\n        Paste it into the box at the top right and click \"Save\". Your browser remembers it, so you won't need to enter it again.\n      </span>\n    ",
   "model-names-hint": "\n        Model names: <code>muse-spark</code> (chat/code), <code>muse-image</code> (images), <code>muse-video</code> (videos).\n        See the \"Integration Docs\" tab for full examples.\n      ",
@@ -2073,7 +2282,7 @@ const I18N_VI = {
   "✗ 保活失败: 未知错误": "✗ Duy trì phiên thất bại do lỗi chưa xác định"
 };
 const I18N_VI_HTML = {
-  "extension-upgrade-notice": "<b>Tiện ích trình duyệt 1.0.5</b><br><a href=\"/admin/extension\">Tải tiện ích</a>. Để cập nhật bản giải nén, thay tệp rồi bấm Tải lại tại <code>chrome://extensions</code> hoặc <code>edge://extensions</code>.",
+  "extension-upgrade-notice": "<b>Tiện ích trình duyệt 1.0.6</b><br><a href=\"/admin/extension\">Tải tiện ích</a>. Để cập nhật bản giải nén, thay tệp rồi bấm Tải lại tại <code>chrome://extensions</code> hoặc <code>edge://extensions</code>.",
   "repo-status-desc": "Đang đối chiếu phiên bản đã cài với kho cập nhật. Cấu hình <code>.env</code> và dữ liệu trong <code>data/</code> được giữ lại khi cập nhật.",
   "auth-banner": "<b>Nhập API Key để tải dữ liệu</b><br><span style=\"color:var(--muted)\">Dùng khóa truy cập của dịch vụ Muse2API và bấm Lưu.</span>",
   "model-names-hint": "Model: <code>muse-spark</code> (chat và mã), <code>muse-image</code> (ảnh), <code>muse-video</code> (video). Xem mục Hướng dẫn tích hợp để biết ví dụ.",
@@ -2187,6 +2396,7 @@ function setAuth(ok){
   $('keyBox').classList.toggle('ok', ok);
   $('keyBox').classList.toggle('miss', !ok);
   $('keyLbl').textContent = ok ? '✓ 已登录' : 'API Key 必填';
+  if (!ok) clearAdminView();
 }
 
 function saveKey(){
@@ -2203,22 +2413,25 @@ function toast(msg, kind){
   d.className = 'toast ' + (kind || '');
   d.textContent = msg;
   $('toasts').appendChild(d);
+  if ($('toasts').childElementCount > 3) $('toasts').firstElementChild.remove();
   setTimeout(() => { d.style.opacity = '0'; d.style.transition = '.3s'; }, 3600);
   setTimeout(() => d.remove(), 4000);
 }
 
 async function api(path, opts){
-  opts = opts || {};
-  opts.headers = Object.assign({'Content-Type':'application/json'}, opts.headers || {});
-  if (KEY) opts.headers['Authorization'] = 'Bearer ' + KEY;
-  const r = await fetch(path, opts);
+  const {authKey, ...options} = opts || {};
+  const requestKey = authKey ?? KEY;
+  const updateAdminAuth = authKey === undefined;
+  options.headers = Object.assign({'Content-Type':'application/json'}, options.headers || {});
+  if (requestKey) options.headers.Authorization = 'Bearer ' + requestKey;
+  const r = await fetch(path, options);
   const txt = await r.text();
   let data; try { data = JSON.parse(txt); } catch(e){ data = null; }
   if (r.status === 401){
-    setAuth(false);
+    if (updateAdminAuth && KEY === requestKey) setAuth(false);
     throw new Error('API Key 未填写或填写错误');
   }
-  setAuth(true);
+  if (updateAdminAuth && KEY === requestKey) setAuth(true);
   if (!r.ok) {
     let msg = '';
     if (data) {
@@ -2272,35 +2485,158 @@ function ago(ts){
   if (s < 86400) return Math.floor(s/3600) + ' 小时前';
   return Math.floor(s/86400) + ' 天前';
 }
-function cp(el){
-  const t = el.parentElement.innerText.replace(/^(复制|Copy)\n?/, '');
-  navigator.clipboard.writeText(t).then(() => toast('已复制', 'ok'));
+function cp(button){
+  const sample = button.closest('pre').cloneNode(true);
+  sample.querySelectorAll('button').forEach(item => item.remove());
+  return copyText(sample.textContent.trim());
 }
 
 /* ================= 页签 ================= */
-function goTab(name){
-  const b = document.querySelector(`nav.tabs button[data-t="${name}"]`);
-  if (b) b.click();
+const uiCopy = {
+  navigate:['Chuyển trang','Go to','切换页面'],
+  operations:['Vận hành','Operations','运营'], overview:['Tổng quan','Overview','概览'],
+  clients:['Khóa API','API keys','API 密钥'], usage:['Lịch sử API','API usage','API 用量'],
+  tasks:['Tác vụ','Tasks','任务'], media:['Thư viện media','Media library','媒体库'],
+  connections:['Kết nối AI','AI connections','AI 连接'], official:['API chính thức','Official APIs','官方 API'],
+  cookie:['Tiện ích trình duyệt','Browser extension','浏览器扩展'], integration:['Tích hợp','Integration','集成'],
+  docs:['Tài liệu API','API documentation','API 文档'], play:['Thử API','API playground','API 测试'],
+  refresh:['Làm mới','Refresh','刷新'], save:['Lưu','Save','保存'], send:['Gửi','Send','发送'],
+  access:['Cấp quyền truy cập API','Grant API access','授予 API 访问权限'],
+  accessHelp:['Cấp một khóa cho mỗi khách hàng hoặc ứng dụng. Bạn có thể giới hạn mô hình, tài khoản và số lượt sử dụng.',
+              'Give each customer or app its own key. Set model, account and usage limits.',
+              '为每位客户或应用分配独立密钥。可限制模型、账号和调用次数。'],
+  manageKeys:['Quản lý khóa','Manage keys','管理密钥'], sharedBase:['Base URL dùng chung','Shared Base URL','通用 Base URL'],
+  copy:['Sao chép','Copy','复制'], providersReady:['Sẵn sàng / đã cấu hình','Ready / configured','就绪 / 已配置'],
+  activeKeys:['Khóa đang bật','Active keys','启用的密钥'], requestsToday:['Lượt API hôm nay','API requests today','今天的 API 调用'],
+  activeTasks:['Tác vụ chờ hoặc đang chạy','Queued or running jobs','排队或运行中的任务'],
+  providers:['Nhà cung cấp AI','AI providers','AI 服务商'], adminAccess:['Kết nối và khóa quản trị','Connection and admin key','连接与管理密钥'],
+  adminAccessHelp:['Dùng khóa quản trị cho bảng điều khiển và tiện ích. Cấp khóa riêng trong mục Khóa API cho ứng dụng và khách hàng.',
+                   'Use the admin key in the dashboard and extension. Issue separate API keys for apps and customers.',
+                   '管理密钥用于控制台与扩展。请为应用和客户分配独立 API 密钥。'],
+  adminKey:['Khóa quản trị','Admin key','管理密钥'], importMuse:['Nhập tài khoản','Import account','导入账号'],
+  loginTitle:['Nhập khóa quản trị để mở bảng điều khiển','Enter your admin key to open the dashboard','请输入管理密钥以打开控制台'],
+  loginHelp:['Dán khóa quản trị ở phía trên và bấm Lưu. Khóa được giữ trong phiên của tab này.',
+             'Paste the admin key above and select Save. It is stored for this tab session.',
+             '在上方粘贴管理密钥并保存。密钥保存在当前标签页会话中。'],
+  clientList:['Danh sách khóa','API keys','密钥列表'], newKey:['Tạo khóa API','Create API key','创建 API 密钥'],
+  searchKeys:['Tìm tên khóa hoặc mô hình','Search key names or models','搜索密钥名称或模型'],
+  status:['Trạng thái','Status','状态'], anyStatus:['Tất cả','All','全部'],
+  enabled:['Đang bật','Active','已启用'], paused:['Tạm khóa','Paused','已暂停'], revoked:['Đã thu hồi','Revoked','已撤销'],
+  keyName:['Tên khóa','Key name','密钥名称'], permissions:['Quyền sử dụng','Permissions','权限'],
+  thisMonth:['Sử dụng tháng này','Usage this month','本月用量'], actions:['Thao tác','Actions','操作'],
+  previous:['Trang trước','Previous','上一页'], next:['Trang sau','Next','下一页'],
+  cancel:['Hủy','Cancel','取消'], done:['Xong','Done','完成'], copyKey:['Sao chép khóa','Copy key','复制密钥'],
+  filterUsage:['Lọc lượt sử dụng','Filter usage','筛选用量'], usageDetails:['Chi tiết lượt sử dụng','Usage details','用量详情'],
+  defaultModel:['Mô hình mặc định','Default model','默认模型'], providerKey:['Khóa API của nhà cung cấp','Provider API key','服务商 API 密钥'],
+  testConnection:['Kiểm tra kết nối','Test connection','测试连接'], removeKey:['Gỡ khóa đã lưu','Remove saved key','删除已保存的密钥'],
+  chromiumAccounts:['Tài khoản Chromium','Chromium accounts','Chromium 账号'], accountName:['Tên tài khoản','Account name','账号名称'],
+  providerType:['AI và loại','Provider and type','服务商与类型'], allProviders:['Tất cả AI','All providers','所有服务商'],
+  findTask:['Tìm mã tác vụ','Find task ID','搜索任务 ID'],
+  playAccess:['Quyền dùng để thử API','API test credentials','API 测试凭据'], accessMode:['Dùng quyền','Test with','使用权限'],
+  adminMode:['Quản trị viên','Administrator','管理员'], clientMode:['Khóa của người dùng','User API key','用户 API 密钥'],
+  clientKey:['Khóa người dùng','User API key','用户密钥'], discoverModels:['Kiểm tra và tải mô hình','Verify key and load models','验证密钥并加载模型'],
+  tryText:['Thử văn bản','Test text','测试文本'], model:['Mô hình','Model','模型'], message:['Nội dung','Message','内容'],
+  ready:['Sẵn sàng','Ready','就绪'], configured:['Đã cấu hình','Configured','已配置'], needs_check:['Cần kiểm tra','Needs verification','待验证'],
+  setup:['Chưa cấu hình','Not configured','未配置'], openProvider:['Quản lý kết nối','Manage connection','管理连接'],
+  text:['Văn bản','Text','文本'], image:['Ảnh','Image','图片'], video:['Video','Video','视频'],
+  editKey:['Chỉnh sửa','Edit','编辑'], rotateKey:['Đổi mã khóa','Rotate key','轮换密钥'], revokeKey:['Thu hồi','Revoke','撤销'],
+  viewUsage:['Xem lịch sử','View usage','查看用量'], updateKey:['Lưu thay đổi','Save changes','保存修改'],
+  loading:['Đang tải…','Loading…','加载中…'],
+};
+const uiLang = {vi:0, en:1, zh:2}[LANG];
+function ui(key){ return uiCopy[key]?.[uiLang] || key; }
+function localizeUi(root = document){
+  root.querySelectorAll('[data-ui]').forEach(node => { node.textContent = ui(node.dataset.ui); });
 }
-document.querySelectorAll('nav.tabs button').forEach(b => {
-  b.onclick = () => {
-    closeMediaPreview();
-    document.querySelectorAll('nav.tabs button').forEach(x => x.classList.remove('active'));
-    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
-    b.classList.add('active');
-    $('tab-' + b.dataset.t).classList.add('active');
-    if (chatProviderPanels.has(b.dataset.t)) loadChatProvider(b.dataset.t);
-    if (b.dataset.t === 'tasks') loadTasks();
-    if (b.dataset.t === 'clients') loadClientKeys();
-    else {
-      $('clientKeyNew').hidden = true;
-      $('clientKeyResult').value = '';
-    }
-    if (b.dataset.t === 'media') loadMedia();
-    if (b.dataset.t === 'cookie') $('cmdText').textContent = buildCmd($('inBase').value);
-  };
-});
+localizeUi();
 
+const pageContexts = {
+  overview: ['Theo dõi kết nối AI và việc sử dụng API trên một màn hình.', 'Monitor AI connections and API activity.', '查看 AI 连接与 API 活动。'],
+  clients: ['Cấp quyền theo mô hình, tài khoản và hạn mức cho từng khách hàng.', 'Manage model access, accounts and usage limits for each customer.', '管理每位客户的模型、账号和用量限制。'],
+  usage: ['Đối chiếu lượt gọi, chi phí AI và số tiền thu theo khóa.', 'Review requests, provider costs and customer charges.', '核对请求、服务商成本和客户费用。'],
+  pool: ['Quản lý tài khoản Muse, proxy và hàng đợi tạo nội dung.', 'Manage Muse accounts, proxies and generation queues.', '管理 Muse 账号、代理和生成队列。'],
+  openai: ['Dùng phiên web đã đăng nhập để tạo văn bản và ảnh.', 'Use a signed-in web session for text and images.', '使用已登录的网页会话生成文本和图像。'],
+  gemini: ['Dùng phiên web đã đăng nhập để tạo văn bản và ảnh.', 'Use a signed-in web session for text and images.', '使用已登录的网页会话生成文本和图像。'],
+  official: ['Cấu hình khóa riêng của OpenAI và Google để gọi API văn bản.', 'Configure OpenAI and Google credentials for text APIs.', '配置 OpenAI 和 Google 凭据以调用文本 API。'],
+  tasks: ['Theo dõi trạng thái tạo ảnh và video.', 'Track image and video jobs.', '跟踪图片和视频任务。'],
+  play: ['Gửi yêu cầu bằng quyền quản trị hoặc khóa của khách hàng.', 'Send requests using admin credentials or a customer key.', '使用管理员或客户密钥测试请求。'],
+};
+const navButtons = [...document.querySelectorAll('nav.tabs button[data-t]')];
+let activeTab = 'overview';
+
+function goTab(name){
+  const button = navButtons.find(item => item.dataset.t === name);
+  if (button) button.click();
+}
+
+function showTab(name, {navigate = false, focus = false} = {}){
+  const button = navButtons.find(item => item.dataset.t === name);
+  if (!button) return;
+  closeMediaPreview();
+  if (activeTab === 'clients' && name !== 'clients') $('clientKeyDialog').close();
+  if (activeTab === 'usage' && name !== 'usage') $('usageDialog').close();
+  if (activeTab === 'official' && name !== 'official') {
+    $('officialPanels').querySelectorAll('input[type=password]').forEach(input => { input.value = ''; });
+  }
+  if (activeTab === 'play' && name !== 'play') resetPlayCredentials();
+  navButtons.forEach(item => {
+    const selected = item === button;
+    item.classList.toggle('active', selected);
+    if (selected) item.setAttribute('aria-current', 'page');
+    else item.removeAttribute('aria-current');
+  });
+  document.querySelectorAll('section.tab').forEach(panel => panel.classList.toggle('active', panel.id === 'tab-' + name));
+  activeTab = name;
+  $('mobileNav').value = name;
+  $('pageRefresh').hidden = ['docs','cookie'].includes(name);
+  $('pageTitle').textContent = button.textContent;
+  $('pageContext').textContent = pageContexts[name]?.[uiLang] || '';
+  if (navigate && location.hash !== '#' + name) history.pushState(null, '', '#' + name);
+  if (focus) $('pageTitle').focus();
+  loadActiveTab();
+}
+
+function loadActiveTab(){
+  if (chatProviderPanels.has(activeTab)) return loadChatProvider(activeTab);
+  switch (activeTab) {
+    case 'overview': return loadOverview();
+    case 'pool': return loadPool();
+    case 'tasks': return Promise.all([loadPool(), loadTasks()]);
+    case 'clients': return loadClientKeys();
+    case 'usage': return loadUsageView();
+    case 'media': return loadMedia();
+    case 'official': return loadOfficialProviders();
+    case 'play': return $('playAuthMode').value === 'admin' ? loadPlayModels() : undefined;
+    case 'cookie': $('cmdText').textContent = buildCmd($('inBase').value); break;
+  }
+}
+navButtons.forEach(button => {
+  button.onclick = () => showTab(button.dataset.t, {navigate:true, focus:true});
+});
+for (const group of document.querySelectorAll('.nav-group')) {
+  const options = document.createElement('optgroup');
+  options.label = group.querySelector('.nav-title').textContent;
+  options.append(...[...group.querySelectorAll('button')].map(button => new Option(button.textContent, button.dataset.t)));
+  $('mobileNav').append(options);
+}
+$('mobileNav').onchange = () => showTab($('mobileNav').value, {navigate:true, focus:true});
+window.addEventListener('hashchange', () => {
+  const target = location.hash.slice(1);
+  showTab(navButtons.some(button => button.dataset.t === target) ? target : 'overview');
+});
+$('quickMuseImport').onclick = () => {
+  $('museImport').open = true;
+  $('newLabel').focus();
+};
+$('key').addEventListener('keydown', event => {
+  if (event.key === 'Enter') saveKey();
+});
+$('pageRefresh').onclick = async () => {
+  const button = $('pageRefresh');
+  button.disabled = true;
+  try { await loadActiveTab(); }
+  finally { button.disabled = false; }
+};
 
 const clientKeyLabels = {
   muse: 'Muse', chatgpt: 'ChatGPT Web', 'gemini-web': 'Gemini Web',
@@ -2317,6 +2653,13 @@ const clientPriceUnits = {
 const money = new Intl.NumberFormat('vi-VN', {style: 'currency', currency: 'VND'});
 const clientDate = new Intl.DateTimeFormat('vi-VN', {dateStyle: 'short', timeStyle: 'medium', timeZone: 'Asia/Ho_Chi_Minh'});
 const USAGE_PAGE_SIZE = 25;
+const KEY_PAGE_SIZE = 12;
+let keyPage = 0;
+let nextUsageOwner = '';
+let taskLoad = 0;
+let taskPage = 0;
+let taskSearchTimer = 0;
+const TASK_PAGE_SIZE = 60;
 let usagePage = 0;
 let usageLoad = 0;
 let clientKeys = [];
@@ -2336,7 +2679,7 @@ function clientButton(text, action, className = 'ghost mini') {
   button.onclick = async () => {
     button.disabled = true;
     try { await action(); }
-    catch (error) { $('clientKeyStatus').textContent = error.message; }
+    catch (error) { $(activeTab === 'usage' ? 'usageStatus' : 'clientKeyStatus').textContent = error.message; }
     finally { button.disabled = false; }
   };
   return button;
@@ -2352,8 +2695,12 @@ function clearClientSecret() {
 }
 
 function showClientSecret(value) {
+  $('clientKeyFormTitle').textContent = ui('copyKey');
+  $('clientKeyForm').hidden = true;
   $('clientKeyResult').value = value;
   $('clientKeyNew').hidden = false;
+  if (!$('clientKeyDialog').open) $('clientKeyDialog').showModal();
+  $('clientKeyResult').select();
 }
 
 function selectOptions(id, options, all) {
@@ -2437,78 +2784,124 @@ function clientRule(model, values) {
 function editClient(client = null) {
   editingClient = client;
   clearClientSecret();
-  $('clientKeyFormTitle').textContent = client ? 'Chỉnh sửa khóa' : 'Tạo khóa';
+  $('clientKeyForm').hidden = false;
+  $('clientFormStatus').textContent = '';
+  $('clientKeyFormTitle').textContent = client ? ui('editKey') : ui('newKey');
   $('clientKeyLabel').value = client?.label || '';
   $('clientHistoryDays').value = client?.history_days ?? 0;
   $('clientEnabled').checked = client?.enabled ?? true;
   $('clientKeepLegacy').hidden = !client || Boolean(client.rules);
   $('clientLegacy').checked = Boolean(client && !client.rules);
-  $('clientSave').textContent = client ? 'Lưu thay đổi' : 'Tạo khóa người dùng';
-  $('clientDismiss').hidden = !client;
+  $('clientSave').textContent = client ? ui('updateKey') : ui('newKey');
   const models = [...clientModels];
   for (const id of Object.keys(client?.rules || {})) {
     if (!models.some(model => model.id === id)) {
       models.push({id, provider: id.split('/')[0], kind: 'text', accounts: [], configured: false});
     }
   }
-  $('clientRules').replaceChildren(...models.map(model => clientRule(model, client?.rules?.[model.id])));
+  const groups = new Map();
+  for (const model of models) {
+    if (!groups.has(model.provider)) {
+      const group = clientElement('section', undefined, 'client-provider-group');
+      group.append(clientElement('h3', clientKeyLabels[model.provider] || model.provider));
+      groups.set(model.provider, group);
+    }
+    groups.get(model.provider).append(clientRule(model, client?.rules?.[model.id]));
+  }
+  $('clientRules').replaceChildren(...groups.values());
   $('clientRules').hidden = $('clientLegacy').checked;
   $('clientLegacy').onchange = () => { $('clientRules').hidden = $('clientLegacy').checked; };
 }
 
-async function loadClientKeys(reset = true) {
-  try {
-    const {clients, models} = await api('/admin/client-keys');
-    clientKeys = clients;
-    clientModels = models;
-    const rows = clients.map(client => {
-      const row = clientElement('tr');
-      const label = clientElement('td', client.label);
-      const month = client.month;
-      const grants = client.rules ? Object.entries(client.rules).map(([model, rule]) =>
-        model + (rule.accounts.length ? ' (' + rule.accounts.length + ' tài khoản)' : ''))
-        : client.providers.map(id => clientKeyLabels[id] || id);
-      const stats = month ? month.requests + ' lượt · ' + month.completed + ' hoàn tất' : '0 lượt';
-      const summary = clientElement('td', stats);
-      if (month) {
-        const charge = clientMoney(month.charge) + (month.charge != null && month.charge_unknown ? ' + chưa xác định' : '');
-        const upstream = clientMoney(month.upstream, true) + (month.upstream != null && month.upstream_unknown ? ' + chưa xác định' : '');
-        summary.append(clientElement('div', 'Tiền thu ' + charge, 'hint'),
-                       clientElement('div', 'Chi phí AI ' + upstream, 'hint'),
-                       clientElement('div', 'Dùng gần nhất ' + clientDate.format(month.last_used * 1000), 'hint'));
-      }
-      const actions = clientElement('div', undefined, 'acts');
-      const actionCell = clientElement('td');
-      actionCell.append(actions);
-      const endpoint = '/admin/client-keys/' + encodeURIComponent(client.id);
-      if (!client.revoked_at) {
-        actions.append(clientButton('Chỉnh sửa', () => {
-          editClient(client);
-          $('clientKeyLabel').focus();
-        }), clientButton('Đổi mã khóa', async () => {
+function getKeyState(client){
+  return client.revoked_at ? 'revoked' : client.enabled === false ? 'paused' : 'enabled';
+}
+
+function searchText(value){
+  return value.toLocaleLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '').replace(/đ/g, 'd');
+}
+
+function paintClientKeys(page = 0){
+  const search = searchText($('clientSearch').value.trim());
+  const state = $('clientState').value;
+  const matches = clientKeys.filter(client => {
+    const models = Object.keys(client.rules || {});
+    const services = client.providers.map(id => clientKeyLabels[id] || id);
+    return (!state || getKeyState(client) === state) &&
+      searchText([client.label, ...models, ...services].join(' ')).includes(search);
+  });
+  const pages = Math.max(1, Math.ceil(matches.length / KEY_PAGE_SIZE));
+  keyPage = Math.max(0, Math.min(page, pages - 1));
+  const rows = matches.slice(keyPage * KEY_PAGE_SIZE, (keyPage + 1) * KEY_PAGE_SIZE).map(client => {
+    const row = clientElement('tr');
+    const label = clientElement('td', client.label);
+    const month = client.month;
+    const grants = client.rules ? Object.entries(client.rules).map(([model, rule]) =>
+      model + (rule.accounts.length ? ' (' + rule.accounts.length + ')' : ''))
+      : client.providers.map(id => clientKeyLabels[id] || id);
+    const grantCell = clientElement('td');
+    const chips = clientElement('div', undefined, 'acts');
+    chips.append(...grants.map(grant => clientElement('span', grant, 'badge mute')));
+    grantCell.append(chips);
+    const stats = month ? month.requests + ' lượt · ' + month.completed + ' hoàn tất' : '0 lượt';
+    const summary = clientElement('td', stats);
+    if (month) {
+      const charge = clientMoney(month.charge) + (month.charge != null && month.charge_unknown ? ' + chưa xác định' : '');
+      summary.append(clientElement('div', 'Tiền thu ' + charge, 'hint'));
+    }
+    const actions = clientElement('div', undefined, 'acts');
+    const actionCell = clientElement('td');
+    actionCell.append(actions);
+    const endpoint = '/admin/client-keys/' + encodeURIComponent(client.id);
+    if (!client.revoked_at) {
+      actions.append(clientButton(ui('editKey'), () => openClientEditor(client)),
+        clientButton(ui('rotateKey'), async () => {
           if (!confirm('Đổi mã khóa cho ' + client.label + '? Mã cũ sẽ hết hiệu lực ngay.')) return;
           const rotated = await api(endpoint + '/rotate', {method: 'POST'});
-          await loadClientKeys();
           showClientSecret(rotated.api_key);
-        }), clientButton('Thu hồi', async () => {
+          await loadClientKeys();
+        }),
+        clientButton(ui('revokeKey'), async () => {
           if (!confirm('Thu hồi vĩnh viễn khóa của ' + client.label + '?')) return;
           await api(endpoint, {method: 'DELETE'});
           await loadClientKeys();
         }, 'danger mini'));
-      }
-      actions.append(clientButton('Xem lịch sử', async () => {
-        $('usageOwner').value = client.id;
-        await loadApiUsage(0);
-        $('clientHistory').scrollIntoView({block: 'start'});
-      }));
-      row.append(label, clientElement('td', grants.join(', ')),
-                 clientElement('td', client.revoked_at ? 'Đã thu hồi' : client.enabled === false ? 'Tạm khóa' : 'Đang bật'),
-                 summary, actionCell);
-      return row;
-    });
-    $('clientKeyList').replaceChildren(...rows);
-    $('clientKeyStatus').textContent = clients.length ? '' : 'Chưa có khóa người dùng.';
-    if (reset) editClient();
+    }
+    actions.append(clientButton(ui('viewUsage'), () => {
+      nextUsageOwner = client.id;
+      $('usageModel').value = $('usageAccount').value = $('usageState').value = '';
+      $('usageSince').value = $('usageUntil').value = '';
+      goTab('usage');
+    }));
+    const status = clientElement('td');
+    const current = getKeyState(client);
+    status.append(clientElement('span', ui(current), 'badge ' + {enabled:'ok', paused:'warn', revoked:'mute'}[current]));
+    row.append(label, grantCell, status, summary, actionCell);
+    return row;
+  });
+  if (!rows.length) {
+    const row = clientElement('tr');
+    const message = matches.length || clientKeys.length ? 'Không có khóa khớp bộ lọc.' : 'Chưa có khóa người dùng.';
+    const cell = clientElement('td', message, 'empty');
+    cell.colSpan = 5;
+    row.append(cell);
+    rows.push(row);
+  }
+  $('clientKeyList').replaceChildren(...rows);
+  $('clientKeyStatus').textContent = matches.length + ' khóa · ' + (keyPage + 1) + '/' + pages;
+  $('clientPrev').disabled = keyPage === 0;
+  $('clientNext').disabled = keyPage + 1 >= pages;
+}
+
+async function loadClientKeys({paint = true} = {}){
+  const status = $(paint ? 'clientKeyStatus' : 'usageStatus');
+  status.textContent = ui('loading');
+  try {
+    const {clients, models} = await api('/admin/client-keys');
+    clientKeys = clients;
+    clientModels = models;
+    $('newClientKey').disabled = false;
+    if (paint) paintClientKeys(keyPage);
     selectOptions('usageOwner', clients.map(key => [key.id, key.label]), 'Tất cả khóa');
     const historyModels = new Set([...models.map(model => model.id),
       ...clients.flatMap(client => Object.keys(client.rules || {}))]);
@@ -2519,12 +2912,41 @@ async function loadClientKeys(reset = true) {
     accounts.set('gemini:api', 'Gemini API');
     accounts.set('linked-chrome', 'Chrome đang liên kết');
     selectOptions('usageAccount', [...accounts], 'Tất cả tài khoản');
-    selectOptions('usageState', Object.entries(usageStates), 'Tất cả trạng thái');
-    await loadApiUsage(reset ? 0 : usagePage);
-  } catch (error) { $('clientKeyStatus').textContent = error.message; }
+    selectOptions('usageState', Object.entries(usageStates), ui('anyStatus'));
+    return true;
+  } catch (error) {
+    status.textContent = t(error.message);
+    if (paint) $('newClientKey').disabled = true;
+    return false;
+  }
 }
 
-$('clientDismiss').onclick = () => editClient();
+async function loadUsageView(){
+  if (!await loadClientKeys({paint:false}) || activeTab !== 'usage') return;
+  if (nextUsageOwner) {
+    $('usageOwner').value = nextUsageOwner;
+    nextUsageOwner = '';
+  }
+  return loadApiUsage(0);
+}
+
+function openClientEditor(client){
+  editClient(client);
+  $('clientKeyDialog').showModal();
+  $('clientKeyLabel').focus();
+}
+$('newClientKey').disabled = true;
+$('newClientKey').onclick = () => openClientEditor();
+$('clientSearch').oninput = () => paintClientKeys();
+$('clientState').onchange = () => paintClientKeys();
+$('clientPrev').onclick = () => paintClientKeys(keyPage - 1);
+$('clientNext').onclick = () => paintClientKeys(keyPage + 1);
+$('clientDismiss').onclick = () => $('clientKeyDialog').close();
+$('closeClientSecret').onclick = () => $('clientKeyDialog').close();
+$('clientKeyDialog').addEventListener('close', clearClientSecret);
+$('clientKeyDialog').addEventListener('cancel', event => {
+  if ($('clientSave').disabled) event.preventDefault();
+});
 $('clientKeyForm').addEventListener('submit', async event => {
   event.preventDefault();
   const payload = {label: $('clientKeyLabel').value.trim(), enabled: $('clientEnabled').checked,
@@ -2543,20 +2965,31 @@ $('clientKeyForm').addEventListener('submit', async event => {
       payload.rules[block.dataset.model] = rule;
     }
     if (!Object.keys(payload.rules).length) {
-      $('clientKeyStatus').textContent = 'Hãy chọn ít nhất một mô hình.';
+      $('clientFormStatus').textContent = 'Hãy chọn ít nhất một mô hình.';
+      $('clientFormStatus').dataset.error = 'true';
       return;
     }
   }
   const button = $('clientSave');
-  button.disabled = true;
+  button.disabled = $('clientDismiss').disabled = true;
+  $('clientFormStatus').dataset.error = 'false';
+  $('clientFormStatus').textContent = ui('loading');
   try {
     const path = '/admin/client-keys' + (editingClient ? '/' + encodeURIComponent(editingClient.id) : '');
     const saved = await api(path, {method: editingClient ? 'PATCH' : 'POST', body: JSON.stringify(payload)});
+    if (saved.api_key) {
+      $('clientSearch').value = $('clientState').value = '';
+      keyPage = 0;
+      showClientSecret(saved.api_key);
+    } else {
+      $('clientKeyDialog').close();
+    }
     await loadClientKeys();
-    if (saved.api_key) showClientSecret(saved.api_key);
-    $('clientKeyStatus').textContent = 'Đã lưu khóa ' + saved.label + '.';
-  } catch (error) { $('clientKeyStatus').textContent = error.message; }
-  finally { button.disabled = false; }
+    toast('Đã lưu khóa ' + saved.label + '.', 'ok');
+  } catch (error) {
+    $('clientFormStatus').dataset.error = 'true';
+    $('clientFormStatus').textContent = t(error.message);
+  } finally { button.disabled = $('clientDismiss').disabled = false; }
 });
 
 function usageDetailsText(container, label, value) {
@@ -2614,8 +3047,19 @@ async function showUsage(id) {
   $('usageDialog').showModal();
 }
 
+function usageStatusCell(status){
+  const cell = clientElement('td');
+  const tone = {completed:'ok', failed:'bad', interrupted:'warn', processing:'info'}[status] || 'mute';
+  cell.append(clientElement('span', usageStates[status] || status, 'badge ' + tone));
+  return cell;
+}
+
 async function loadApiUsage(page) {
   const requestNumber = ++usageLoad;
+  if ($('usageSince').value && $('usageUntil').value && $('usageSince').value > $('usageUntil').value) {
+    $('usageStatus').textContent = 'Ngày bắt đầu phải trước hoặc bằng ngày kết thúc.';
+    return;
+  }
   const params = new URLSearchParams({limit: USAGE_PAGE_SIZE, offset: page * USAGE_PAGE_SIZE});
   for (const [key, id] of [['owner', 'usageOwner'], ['model', 'usageModel'], ['account', 'usageAccount'], ['status', 'usageState']]) {
     if ($(id).value) params.set(key, $(id).value);
@@ -2633,11 +3077,11 @@ async function loadApiUsage(page) {
     const rows = items.map(item => {
       const row = clientElement('tr');
       const details = clientElement('td');
-      details.append(clientButton('Xem chi tiết', () => showUsage(item.id)));
+      details.append(clientButton(ui('usageDetails'), () => showUsage(item.id)));
       const name = clientKeys.find(key => key.id === item.owner)?.label || item.owner;
       row.append(clientElement('td', clientDate.format(item.created_at * 1000)),
                  clientElement('td', name + ' · ' + item.model),
-                 clientElement('td', usageStates[item.status] || item.status),
+                 usageStatusCell(item.status),
                  clientElement('td', clientMoney(item.charge)),
                  clientElement('td', clientMoney(item.upstream, true)), details);
       return row;
@@ -2661,12 +3105,139 @@ $('usageFilter').onsubmit = event => { event.preventDefault(); loadApiUsage(0); 
 $('usagePrev').onclick = () => loadApiUsage(Math.max(0, usagePage - 1));
 $('usageNext').onclick = () => loadApiUsage(usagePage + 1);
 
+const providerTabs = {muse:'pool', chatgpt:'openai', 'gemini-web':'gemini', openai:'official', gemini:'official'};
+let overviewRequest = 0;
+async function loadOverview(){
+  const request = ++overviewRequest;
+  const notice = $('overviewNotice');
+  if (!$('overviewProviders').childElementCount) notice.textContent = ui('loading');
+  try {
+    const data = await api('/admin/overview');
+    if (request !== overviewRequest) return;
+    const ready = data.providers.filter(item => ['ready', 'configured'].includes(item.state)).length;
+    $('overviewReady').textContent = ready + '/' + data.providers.length;
+    $('overviewKeys').textContent = data.active_keys;
+    $('overviewRequests').textContent = data.requests_today ?? '—';
+    $('overviewTasks').textContent = data.active_tasks;
+    $('overviewProviders').replaceChildren(...data.providers.map(item => {
+      const tile = clientElement('article', undefined, 'provider-tile');
+      const header = clientElement('div', undefined, 'status-line');
+      const tone = {ready:'ok', configured:'info', needs_check:'warn', setup:'mute'}[item.state];
+      header.append(clientElement('h3', clientKeyLabels[item.id] || item.id),
+                    clientElement('span', ui(item.state), 'badge ' + tone));
+      const capabilities = new Set(item.models.map(model => {
+        const kind = model.split('/').at(-1);
+        return ['image','video'].includes(kind) ? kind : 'text';
+      }));
+      const badges = clientElement('div', undefined, 'acts');
+      badges.append(...[...capabilities].map(kind => clientElement('span', ui(kind), 'pill')));
+      const action = clientElement('div', undefined, 'tile-footer');
+      action.append(clientButton(ui('openProvider'), () => goTab(providerTabs[item.id])));
+      tile.append(header, badges, action);
+      return tile;
+    }));
+    notice.textContent = '';
+  } catch (error) {
+    if (request !== overviewRequest) return;
+    notice.textContent = t(error.message);
+    $('overviewProviders').replaceChildren();
+    for (const id of ['overviewReady','overviewKeys','overviewRequests','overviewTasks']) $(id).textContent = '—';
+  }
+}
+
+const officialPanels = new Map();
+function renderOfficialProvider(provider) {
+  let entry = officialPanels.get(provider.id);
+  if (!entry) {
+    const form = $('officialTemplate').content.firstElementChild.cloneNode(true);
+    localizeUi(form);
+    const name = form.querySelector('[data-official-name]');
+    name.textContent = clientKeyLabels[provider.id] || provider.label;
+    const result = form.querySelector('[data-official-result]');
+    const state = form.querySelector('[data-official-state]');
+    const modelId = form.querySelector('[data-official-model-id]');
+    const helper = form.querySelector('[data-official-help]');
+    const save = form.querySelector('[type=submit]');
+    const test = form.querySelector('[data-official-test]');
+    const clear = form.querySelector('[data-official-clear]');
+    const key = form.elements.api_key;
+    const model = form.elements.model;
+    const endpoint = '/admin/chat-providers/' + encodeURIComponent(provider.id);
+    entry = {form, provider, apply, result};
+    officialPanels.set(provider.id, entry);
+    $('officialPanels').append(form);
+
+    function apply(data){
+      entry.provider = data;
+      state.className = 'badge ' + (data.configured ? 'info' : 'mute');
+      state.textContent = ui(data.configured ? 'configured' : 'setup');
+      model.value = data.model;
+      modelId.textContent = data.model_id;
+      key.value = '';
+      key.disabled = data.key_from_env;
+      test.disabled = !data.configured;
+      clear.hidden = !data.configured || data.key_from_env;
+      helper.textContent = data.key_from_env
+        ? ['Khóa đang được cấp qua biến môi trường của máy chủ.', 'The server supplies this key through an environment variable.', '密钥由服务器环境变量提供。'][uiLang]
+        : ['Để trống nếu chỉ đổi mô hình hoặc muốn giữ khóa đã lưu.', 'Leave blank to keep the saved key.', '留空以保留已保存的密钥。'][uiLang];
+    }
+    async function action(run, message){
+      form.setAttribute('aria-busy', 'true');
+      save.disabled = test.disabled = clear.disabled = true;
+      result.dataset.error = 'false';
+      result.textContent = ui('loading');
+      try {
+        const updated = await run();
+        if (updated && updated.id) apply(updated);
+        result.textContent = message;
+      } catch (error) {
+        result.dataset.error = 'true';
+        result.textContent = t(error.message);
+      } finally {
+        form.removeAttribute('aria-busy');
+        save.disabled = clear.disabled = false;
+        test.disabled = !entry.provider.configured;
+      }
+    }
+    form.onsubmit = event => {
+      event.preventDefault();
+      const body = {model: model.value.trim()};
+      if (!entry.provider.key_from_env && key.value.trim()) body.api_key = key.value.trim();
+      action(() => api(endpoint, {method:'PUT', body:JSON.stringify(body)}),
+             ['Đã lưu cấu hình.', 'Settings saved.', '已保存设置。'][uiLang]);
+    };
+    test.onclick = () => action(() => api(endpoint + '/test', {method:'POST'}),
+                                ['Kết nối dùng được với cấu hình đã lưu.', 'The saved connection responded.', '已保存的连接可用。'][uiLang]);
+    clear.onclick = () => {
+      if (!confirm(['Gỡ khóa API đã lưu của nhà cung cấp này?', 'Remove this provider’s saved API key?', '删除该服务商已保存的 API 密钥？'][uiLang])) return;
+      action(() => api(endpoint, {method:'PUT', body:JSON.stringify({model:entry.provider.model, api_key:null})}),
+             ['Đã gỡ khóa đã lưu.', 'Saved key removed.', '已删除保存的密钥。'][uiLang]);
+    };
+  }
+  if (!entry.form.hasAttribute('aria-busy')) entry.apply(provider);
+}
+async function loadOfficialProviders(){
+  const notice = $('officialNotice');
+  notice.dataset.error = 'false';
+  notice.textContent = ui('loading');
+  try {
+    const {providers} = await api('/admin/chat-providers');
+    if (activeTab !== 'official') return;
+    providers.forEach(renderOfficialProvider);
+    notice.textContent = '';
+  } catch (error) {
+    notice.dataset.error = 'true';
+    notice.textContent = t(error.message);
+  }
+}
+
 const chatProviderPanels = new Map([
   ['openai', 'chatgpt', 'ChatGPT Web'],
   ['gemini', 'gemini-web', 'Gemini Web'],
 ].map(([tab, id, title]) => {
   const panel = $('tab-' + tab);
   panel.append($('chatProviderTemplate').content.cloneNode(true));
+  localizeUi(panel);
   panel.querySelector('[data-provider-title]').textContent = title;
   panel.querySelector('[data-provider-model-id]').textContent = 'Mô-đun: ' + id + '/text · ' + id + '/image';
   const base = panel.querySelector('[data-provider-base]');
@@ -2718,11 +3289,13 @@ const chatProviderPanels = new Map([
     accountsList.replaceChildren();
     for (const account of entries) {
       const row = document.createElement('div');
-      row.className = 'row';
-      const description = document.createElement('span');
+      row.className = 'provider-row';
       const details = account.busy ? 'Đang dùng' : !account.verified ? 'Chờ kiểm tra' : account.enabled ? 'Đang bật' : 'Đã tắt';
-      description.textContent = `${account.label} · ${details}${account.proxy ? ' · ' + account.proxy.server : ''}`;
-      row.append(description);
+      const description = clientElement('div');
+      description.append(clientElement('strong', account.label),
+                         clientElement('p', details + (account.proxy ? ' · ' + account.proxy.server : ''), 'hint'));
+      const buttons = clientElement('div', undefined, 'acts');
+      row.append(description, buttons);
       const path = accountsPath + '/' + encodeURIComponent(account.id);
       const actions = [
         ['Đăng nhập', () => accountAction(path + '/login', {method: 'POST'}, 'Đăng nhập trong cửa sổ Chromium rồi bấm Kiểm tra.'), !data.managed_login_available],
@@ -2743,7 +3316,7 @@ const chatProviderPanels = new Map([
           try { await action(); }
           finally { for (const [sibling, wasDisabled] of buttons) sibling.disabled = wasDisabled; }
         };
-        row.append(button);
+        buttons.append(button);
       }
       accountsList.append(row);
     }
@@ -2793,7 +3366,7 @@ const chatProviderPanels = new Map([
       const result = await api('/v1/chat/completions', {method: 'POST', body: JSON.stringify({
         model: id + '/text', messages: [{role: 'user', content: prompt}],
       })});
-      output.textContent = result.choices[0]?.message?.content || 'Trang web chưa trả lời.';
+      output.textContent = result.choices?.[0]?.message?.content || 'Trang web chưa trả lời.';
     } catch (error) { output.textContent = error.message; }
     finally { send.disabled = false; }
   };
@@ -2820,6 +3393,9 @@ async function loadApikey(){
     fillExtFields(d.base_url);
     $('cmdText').textContent = buildCmd(d.base_url);
   }catch(e){
+    realKey = '';
+    keyShown = false;
+    renderKey();
     $('inBase').value = location.origin + '/v1';
     fillExtFields(location.origin);
     $('cmdText').textContent = '（先在右上角填入 API Key，这里会生成完整命令）';
@@ -2838,7 +3414,7 @@ function toggleKey(){ keyShown = !keyShown; renderKey(); }
 
 function buildCmd(baseUrl){
   const root = (baseUrl || location.origin).replace(/\/v1\/?$/, '').replace(/\/+$/, '');
-  return `python get_muse_cookie.py --base ${root} --key ${realKey || '你的API_KEY'} --label muse-01`;
+  return `python get_muse_cookie.py --base ${root} --key m2a_YOUR_KEY --label muse-01`;
 }
 
 async function copyText(v){
@@ -3233,7 +3809,33 @@ async function delAcc(id, label){
 }
 
 /* ================= 任务记录 ================= */
-async function loadTasks(){
+async function loadTasks(page = taskPage){
+  const request = ++taskLoad;
+  const params = new URLSearchParams({limit:TASK_PAGE_SIZE, offset:page * TASK_PAGE_SIZE});
+  for (const [key, id] of [['provider','taskProvider'],['status','taskState'],['q','taskSearch']]) {
+    const value = $(id).value.trim();
+    if (value) params.set(key, value);
+  }
+  try {
+    const response = await api('/admin/tasks?' + params);
+    if (request !== taskLoad) return;
+    const items = response.tasks || [];
+    if (!items.length && page) return loadTasks(page - 1);
+    taskPage = page;
+    $('taskCount').textContent = response.total ?? items.length;
+    $('taskListStatus').textContent = items.length ? (page * TASK_PAGE_SIZE + 1) + '–' +
+      (page * TASK_PAGE_SIZE + items.length) + ' / ' + (response.total ?? items.length) : '';
+    $('taskPrev').disabled = page === 0;
+    $('taskNext').disabled = !response.has_more;
+    paintTasks(items);
+  } catch (error) {
+    if (request !== taskLoad) return;
+    $('taskBody').innerHTML = `<tr><td colspan="8" class="empty">加载失败：${esc(error.message)}</td></tr>`;
+    $('taskPrev').disabled = $('taskNext').disabled = true;
+  }
+}
+
+function paintTasks(ts){
   const translateTaskText = t;
   const errorLabels = {
     vi: {before_send: 'Dừng trước khi gửi', muse_reply: 'Muse đã phản hồi', delivery_unknown: 'Cần đối chiếu việc gửi',
@@ -3248,12 +3850,8 @@ async function loadTasks(){
     en: {queued: 'Queued', processing: 'Processing', completed: 'Completed', succeeded: 'Completed', failed: 'Failed', cancelled: 'Cancelled', interrupted: 'Needs reconciliation'},
     zh: {queued: '排队', processing: '处理中', completed: '已完成', succeeded: '已完成', failed: '失败', cancelled: '已取消', interrupted: '需要核对'},
   };
-  try{
-    const d = await api('/admin/tasks?limit=60');
-    const ts = d.tasks || [];
-    $('taskCount').textContent = ts.length;
-    if (!ts.length){ $('taskBody').innerHTML = '<tr><td colspan="8" class="empty">暂无任务记录</td></tr>'; return; }
-    const openErrors = new Set([...$('taskBody').querySelectorAll('details[data-task-error][open]')]
+  if (!ts.length){ $('taskBody').innerHTML = '<tr><td colspan="8" class="empty">暂无任务记录</td></tr>'; return; }
+  const openErrors = new Set([...$('taskBody').querySelectorAll('details[data-task-error][open]')]
       .map(detail => detail.dataset.taskError));
     $('taskBody').innerHTML = ts.map(t => {
       const cls = (t.status === 'succeeded' || t.status === 'completed') ? 'ok' : t.status === 'failed' ? 'bad'
@@ -3261,7 +3859,7 @@ async function loadTasks(){
       const accountLabel = accounts.find(a => a.id === t.account)?.label;
       const accountText = accountLabel ? accountLabel + ' (' + t.account + ')' : t.account;
       let out = '—';
-      if (t.result && t.result.url) out = `<a href="${esc(t.result.url)}" target="_blank">查看结果</a> <span class="mono">${fmtBytes(t.result.bytes)}</span>`;
+      if (t.result && t.result.url) out = `<a href="${esc(t.result.url)}" target="_blank">查看结果</a> <span class="mono">${fmtBytes(t.result.bytes ?? t.result.size)}</span>`;
       else if (t.error || t.last_error) {
         const message = translateTaskText(t.error || t.last_error);
         const previous = t.last_error && translateTaskText(t.last_error);
@@ -3279,8 +3877,8 @@ async function loadTasks(){
       }
       return `<tr>
         <td class="mono">${esc(t.id)}${t.account ? `<br><small>${esc(accountText)} · #${t.attempt || 1}</small>` : ''}</td>
-        <td>${t.kind === 'video' ? '<span class="badge info">视频</span>' : '<span class="badge info">图片</span>'}</td>
-        <td><span class="ellip" title="${esc(t.prompt)}">${esc(t.prompt)}</span></td>
+        <td><span class="badge info">${esc(ui(t.kind))}</span><div class="mono">${esc(clientKeyLabels[t.provider || 'muse'])}</div></td>
+        <td><span class="ellip" title="${esc(t.prompt)}">${esc(t.prompt || '—')}</span></td>
         <td><span class="badge ${cls}">${esc(states[LANG][t.status] || t.status)}</span></td>
         <td class="mono">${taskDuration(t)}</td>
         <td class="mono">${fmtTime(t.created_at)}</td>
@@ -3288,10 +3886,15 @@ async function loadTasks(){
         <td><button class="danger mini" onclick="delTask('${t.id}')">删</button></td>
       </tr>`;
     }).join('');
-  }catch(e){
-    $('taskBody').innerHTML = `<tr><td colspan="8" class="empty">加载失败：${esc(e.message)}</td></tr>`;
-  }
 }
+selectOptions('taskState', Object.entries(usageStates), ui('anyStatus'));
+$('taskProvider').onchange = $('taskState').onchange = () => loadTasks(0);
+$('taskSearch').oninput = () => {
+  clearTimeout(taskSearchTimer);
+  taskSearchTimer = setTimeout(() => loadTasks(0), 240);
+};
+$('taskPrev').onclick = () => loadTasks(Math.max(0, taskPage - 1));
+$('taskNext').onclick = () => loadTasks(taskPage + 1);
 async function delTask(id){
   try{ await api('/admin/tasks/' + id, {method:'DELETE'}); loadTasks(); }
   catch(e){ toast('删除失败：' + e.message, 'bad'); }
@@ -3495,85 +4098,194 @@ async function loadMedia(){
 }
 
 /* ================= 在线测试 ================= */
-async function runImage(){
-  const btn = $('imgBtn'), box = $('imgRes');
-  const prompt = $('imgPrompt').value.trim();
-  if (!prompt) return toast('请输入提示词', 'warn');
-  btn.disabled = true; btn.innerHTML = '<span class="spin"></span>生成中…';
-  box.className = 'result show';
-  box.innerHTML = '<span class="spin"></span>正在提交图片任务，生成期间会持续查询状态…';
-  const t0 = Date.now();
-  try{
-    let r = await api('/v1/images/tasks', {method:'POST',
-      body: JSON.stringify({prompt, size: $('imgSize').value, timeout:600})});
-    const taskId = r.id;
-    const deadline = Date.now() + 15 * 60 * 1000;
-    let failures = 0;
-    while (r.status !== 'completed') {
-      if (Date.now() >= deadline) throw new Error('等待超过 15 分钟，请在任务记录查看结果，勿重复提交');
-      if (['failed', 'cancelled', 'interrupted'].includes(r.status)) throw new Error(r.error || r.status);
-      box.textContent = `任务 ${taskId} · ${r.status} · 已等待 ${Math.floor((Date.now()-t0)/1000)} 秒`;
-      await new Promise(resolve => setTimeout(resolve, 3000));
-      try {
-        r = await api('/v1/images/tasks/' + encodeURIComponent(taskId));
-        failures = 0;
-      } catch (e) {
-        if (++failures >= 6) throw new Error('状态查询暂时失败，请在任务记录查看，勿重复提交');
-      }
-    }
-    const it = r.data[0];
-    box.innerHTML = `<b style="color:var(--ok)">✓ 生成成功</b>
-      <span class="mono" style="color:var(--muted);margin-left:10px">${((Date.now()-t0)/1000).toFixed(1)}s · ${fmtBytes(it.bytes)}</span>
-      <img src="${esc(it.url)}" alt="">
-      <pre class="out">${esc(JSON.stringify(r, null, 2))}</pre>`;
-    loadMedia();
-  }catch(e){
-    box.innerHTML = `<b style="color:var(--bad)">✗ 生成失败</b><pre class="out">${esc(e.message)}</pre>`;
-  }finally{ btn.disabled = false; btn.textContent = '开始生成图片'; }
+const playModelFields = {text:'playTextModel', image:'playImageModel', video:'playVideoModel'};
+let playModelRequest = 0;
+function playAuth(){
+  if ($('playAuthMode').value === 'admin') return KEY;
+  const key = $('playKey').value.trim();
+  if (!key.startsWith('m2c_')) {
+    throw new Error(['Nhập khóa người dùng bắt đầu bằng m2c_.', 'Enter a user key starting with m2c_.', '请输入以 m2c_ 开头的用户密钥。'][uiLang]);
+  }
+  return key;
 }
 
-async function runVideo(){
-  const btn = $('vidBtn'), box = $('vidRes');
+function playMessage(text, error = false){
+  $('playStatus').dataset.error = String(error);
+  $('playStatus').textContent = text;
+}
+
+function clearPlayModels(useDefaults = false){
+  Object.entries(playModelFields).forEach(([kind, id]) => {
+    $(id).replaceChildren(...(useDefaults ? [new Option('Muse · ' + ui(kind), 'muse/' + kind)] : []));
+  });
+  updatePlayButtons();
+}
+
+function updatePlayButtons(){
+  for (const [kind, button] of Object.entries({text:'playTextSend', image:'imgBtn', video:'vidBtn'})) {
+    $(button).disabled = $(button).dataset.busy === 'true' || !$(playModelFields[kind]).value;
+  }
+}
+
+function resetPlayCredentials(){
+  playModelRequest++;
+  $('playKey').value = '';
+  $('playAuthMode').value = 'admin';
+  $('playKeyField').hidden = true;
+  $('playDiscover').disabled = false;
+  playMessage('');
+  clearPlayModels(true);
+}
+
+async function loadPlayModels(){
+  const request = ++playModelRequest;
+  $('playDiscover').disabled = true;
+  const previous = Object.fromEntries(Object.entries(playModelFields).map(([kind, id]) => [kind, $(id).value]));
+  try {
+    const data = await api('/v1/models', {authKey:playAuth()});
+    if (request !== playModelRequest || activeTab !== 'play') return;
+    if (!Array.isArray(data?.data)) throw new Error('Danh sách mô hình chưa sẵn sàng.');
+    const aliases = {'muse-spark':'muse/text', 'muse-image':'muse/image', 'muse-video':'muse/video'};
+    const byKind = {text:new Map(), image:new Map(), video:new Map()};
+    for (const model of data.data) {
+      const id = aliases[model.id] || model.id;
+      const kind = model.type || (['image', 'video'].includes(id.split('/').at(-1)) ? id.split('/').at(-1) : 'text');
+      if (byKind[kind] && id) byKind[kind].set(id, id);
+    }
+    for (const [kind, id] of Object.entries(playModelFields)) {
+      const options = [...byKind[kind].keys()];
+      $(id).replaceChildren(...options.map(model => new Option(model, model)));
+      if (options.includes(previous[kind])) $(id).value = previous[kind];
+    }
+    updatePlayButtons();
+    playMessage(Object.values(byKind).some(models => models.size)
+      ? ['Chỉ hiển thị mô hình có trong danh sách của khóa này.', 'Showing models in this key’s catalog.', '仅显示此密钥目录中的模型。'][uiLang]
+      : ['Khóa này chưa có mô hình khả dụng.', 'This key has no available models.', '此密钥暂无可用模型。'][uiLang]);
+  } catch (error) {
+    if (request !== playModelRequest) return;
+    if ($('playAuthMode').value === 'client') clearPlayModels();
+    playMessage(t(error.message), true);
+  } finally {
+    if (request === playModelRequest) $('playDiscover').disabled = false;
+  }
+}
+
+$('playAuthMode').onchange = () => {
+  const scoped = $('playAuthMode').value === 'client';
+  playModelRequest++;
+  $('playDiscover').disabled = false;
+  $('playKey').value = '';
+  $('playKeyField').hidden = !scoped;
+  clearPlayModels(!scoped);
+  playMessage('');
+  if (scoped) $('playKey').focus();
+  else loadPlayModels();
+};
+$('playKey').oninput = () => {
+  playModelRequest++;
+  $('playDiscover').disabled = false;
+  clearPlayModels();
+  playMessage('');
+};
+$('playDiscover').onclick = loadPlayModels;
+$('textPlayForm').onsubmit = async event => {
+  event.preventDefault();
+  const prompt = $('playText').value.trim();
+  const model = $('playTextModel').value;
+  if (!prompt || !model) return;
+  const output = $('playTextResult');
+  $('playTextSend').dataset.busy = 'true';
+  updatePlayButtons();
+  output.hidden = false;
+  output.textContent = ui('loading');
+  try {
+    const result = await api('/v1/chat/completions', {authKey:playAuth(), method:'POST',
+      body:JSON.stringify({model, messages:[{role:'user', content:prompt}]})});
+    output.textContent = result.choices?.[0]?.message?.content || JSON.stringify(result, null, 2);
+  } catch (error) {
+    output.textContent = t(error.message);
+  } finally {
+    delete $('playTextSend').dataset.busy;
+    updatePlayButtons();
+  }
+};
+
+async function pollPlayTask(route, receipt, authKey, showProgress) {
+  const id = receipt.id || receipt.task_id;
+  const deadline = Date.now() + 15 * 60 * 1000;
+  let state = receipt;
+  let failures = 0;
+  if (!id) throw new Error('API chưa trả mã tác vụ.');
+  while (true) {
+    if (['completed','succeeded'].includes(state.status)) return state;
+    if (['failed','cancelled','interrupted'].includes(state.status)) throw new Error(t(state.error || usageStates[state.status] || state.status));
+    if (Date.now() >= deadline) throw new Error('Hết thời gian theo dõi. Tra cứu tác vụ ' + id + ' trước khi gửi lại.');
+    showProgress(id, state.status);
+    if (state !== receipt || failures) await new Promise(resolve => setTimeout(resolve, 2800));
+    try {
+      state = await api(route + '/' + encodeURIComponent(id), {authKey});
+      failures = 0;
+    } catch (error) {
+      if (++failures >= 4) throw new Error('Chưa đọc được tác vụ ' + id + '. ' + t(error.message));
+    }
+  }
+}
+
+async function runPlayMedia(kind, request) {
+  const image = kind === 'image';
+  const button = $(image ? 'imgBtn' : 'vidBtn');
+  const box = $(image ? 'imgRes' : 'vidRes');
+  const route = image ? '/v1/images/tasks' : '/v1/videos';
+  if (!request.model) return;
+  button.dataset.busy = 'true';
+  updatePlayButtons();
+  box.className = 'result show';
+  box.textContent = ui('loading');
+  try {
+    const authKey = playAuth();
+    const receipt = await api(route, {authKey, method:'POST', body: JSON.stringify(request)});
+    const result = await pollPlayTask(route, receipt, authKey, (id, status) => {
+      box.textContent = id + ' · ' + (usageStates[status] || status || ui('loading'));
+    });
+    const media = image ? result.data?.[0] : (result.result || result);
+    box.textContent = '';
+    const url = media?.url || result.url;
+    if (url) {
+      const preview = document.createElement(image ? 'img' : 'video');
+      preview.src = url;
+      if (image) preview.alt = ui('image');
+      else { preview.controls = true; preview.playsInline = true; preview.preload = 'metadata'; }
+      box.append(preview);
+    }
+    const raw = clientElement('pre', JSON.stringify(result, null, 2), 'out');
+    raw.setAttribute('data-no-i18n', '');
+    box.append(raw);
+    if (activeTab === 'media' && authKey === KEY) loadMedia();
+  } catch (error) {
+    box.replaceChildren(clientElement('pre', t(error.message), 'out'));
+  } finally {
+    delete button.dataset.busy;
+    updatePlayButtons();
+  }
+}
+
+function runImage(){
+  const prompt = $('imgPrompt').value.trim();
+  if (!prompt) return toast('请输入提示词', 'warn');
+  return runPlayMedia('image', {prompt, model:$('playImageModel').value, size:$('imgSize').value, timeout:600});
+}
+
+function runVideo(){
   const prompt = $('vidPrompt').value.trim();
   if (!prompt) return toast('请输入提示词', 'warn');
-  const durationInput = $('vidDur');
-  const duration = durationInput.valueAsNumber;
-  if (!durationInput.validity.valid || (durationInput.value && !Number.isSafeInteger(duration))) {
+  const input = $('vidDur');
+  const duration = input.valueAsNumber;
+  if (!input.validity.valid || (input.value && !Number.isSafeInteger(duration))) {
     return toast('视频时长必须是正整数（秒）', 'warn');
   }
-  const request = {prompt, size: $('vidSize').value};
-  if (durationInput.value) request.duration = duration;
-  btn.disabled = true; btn.innerHTML = '<span class="spin"></span>生成中…';
-  box.className = 'result show';
-  box.innerHTML = '<span class="spin"></span>正在创建视频任务…';
-  const t0 = Date.now();
-  try{
-    const t = await api('/v1/videos', {method:'POST', body: JSON.stringify(request)});
-    const tick = async () => {
-      const s = await api('/v1/videos/' + t.id);
-      const el = ((Date.now()-t0)/1000).toFixed(0);
-      if (s.status === 'succeeded' || s.status === 'completed'){
-        const vurl = (s.result && s.result.url) || s.url || '';
-        const vbytes = (s.result && s.result.bytes) || 0;
-        box.innerHTML = `<b style="color:var(--ok)">✓ 生成成功</b>
-          <span class="mono" style="color:var(--muted);margin-left:10px">${el}s · ${fmtBytes(vbytes)}</span>
-          <video src="${esc(vurl)}" controls playsinline></video>
-          <pre class="out">${esc(JSON.stringify(s, null, 2))}</pre>`;
-        btn.disabled = false; btn.textContent = '开始生成视频';
-        loadMedia(); loadTasks();
-      }else if (['failed', 'cancelled', 'interrupted'].includes(s.status)){
-        box.innerHTML = `<pre class="out">${esc(s.error || s.status)}</pre>`;
-        btn.disabled = false; btn.textContent = '开始生成视频';
-      }else{
-        box.innerHTML = `<span class="spin"></span>任务 ${esc(s.status)} · 已等待 ${el}s（视频通常 60–120 秒）…`;
-        setTimeout(tick, 4000);
-      }
-    };
-    tick();
-  }catch(e){
-    box.innerHTML = `<b style="color:var(--bad)">✗ 创建任务失败</b><pre class="out">${esc(e.message)}</pre>`;
-    btn.disabled = false; btn.textContent = '开始生成视频';
-  }
+  const request = {prompt, model:$('playVideoModel').value, size:$('vidSize').value};
+  if (input.value) request.duration = duration;
+  return runPlayMedia('video', request);
 }
 
 /* ================= 官方仓库实时更新检测、弹窗通知与一键升级 ================= */
@@ -3745,15 +4457,16 @@ function taskDuration(task) {
 /* ================= 总览刷新 ================= */
 async function loadStatus(){
   try{
-    const d = await api('/admin/status');
+    const d = await api('/admin/status?compact=1');
     loadMusePromptLanguage(d.muse_prompt_language);
     renderGenerationQueue(d.generation_queue, d.config);
     $('pSvc').className = 'pill on';
     $('pSvc').innerHTML = '<span class="led"></span>服务 <b>正常</b>';
-    $('pBr').className = 'pill ' + (d.browser_running ? 'on' : 'off');
+    $('pBr').className = d.browser_running ? 'pill on' : 'pill';
     $('pBr').innerHTML = `<span class="led"></span>Muse 浏览器 <b>${d.browser_running ? '运行中' : '空闲'}</b>`;
     $('sMedia').textContent = d.media_count ?? 0;
     if (d.base_url){ $('dBase').textContent = d.base_url; $('inBase').value = d.base_url; }
+    $('overviewBase').value = d.base_url || location.origin + '/v1';
   }catch(e){
     if (authOK === false){
       $('pSvc').className = 'pill';
@@ -3765,13 +4478,57 @@ async function loadStatus(){
   }
 }
 
-function refreshAll(){ loadStatus(); loadPool(); loadApikey(); loadRepoStatus(false); }
+function clearAdminView(){
+  realKey = '';
+  keyShown = false;
+  renderKey();
+  fillExtFields('');
+  clientKeys = [];
+  clientModels = [];
+  accounts = [];
+  taskLoad++;
+  usageLoad++;
+  overviewRequest++;
+  closeMediaPreview();
+  $('clientKeyDialog').close();
+  $('usageDialog').close();
+  $('proxyDialog').close();
+  clearClientSecret();
+  resetPlayCredentials();
+  officialPanels.clear();
+  _allMedia = [];
+  _selectedMedia.clear();
+  for (const id of ['overviewProviders','clientKeyList','usageList','officialPanels','poolBody','taskBody','mediaGrid']) {
+    $(id).replaceChildren();
+  }
+  $('newClientKey').disabled = true;
+  $('overviewNotice').textContent = ui('loginTitle');
+  for (const id of ['overviewReady','overviewKeys','overviewRequests','overviewTasks','sTotal','sOk','sBad','sDis','sMedia']) {
+    $(id).textContent = '—';
+  }
+}
 
-refreshAll();
+function refreshAll(){
+  loadStatus();
+  if (activeTab !== 'pool' && activeTab !== 'tasks') loadPool();
+  loadApikey();
+  loadRepoStatus(false);
+  loadActiveTab();
+}
+
+const startTab = location.hash.slice(1);
+if (navButtons.some(button => button.dataset.t === startTab)) activeTab = startTab;
+showTab(activeTab);
+loadStatus();
+if (activeTab !== 'pool' && activeTab !== 'tasks') loadPool();
+loadApikey();
+loadRepoStatus(false);
 setInterval(() => {
-  loadStatus(); loadPool();
-  if ($('tab-tasks').classList.contains('active')) loadTasks();
-}, 8000);
+  loadStatus();
+  if (activeTab === 'pool') loadPool();
+  if (activeTab === 'overview') loadOverview();
+  if (activeTab === 'tasks') loadTasks();
+}, 12000);
 setInterval(() => {
   loadRepoStatus(false);
 }, 60000);

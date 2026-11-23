@@ -1,5 +1,11 @@
 # Nhật ký và bàn giao mac2API
 
+## Bảng quản trị API và tiện ích 1.0.6
+
+- Giao diện mac2API dùng điều hướng theo nhóm, tổng quan nhiều nhà cung cấp và bố cục thích ứng trên thiết bị nhỏ. Có màn hình cấu hình OpenAI và Gemini API chính thức.
+- Khóa API có tìm kiếm, bộ lọc và phân trang. Lịch sử API có trang riêng. Tác vụ có bộ lọc theo nhà cung cấp, trạng thái và mã.
+- Mục Thử API dùng được khóa quản trị hoặc khóa của khách. Khi truy vấn trạng thái media lỗi, bảng điều khiển hiển thị mã tác vụ để tra cứu.
+
 ## Rà soát hàng đợi và đối chiếu sử dụng API
 
 - Kiểm tra lại quyền trước mỗi lần thử gửi trên trình duyệt. Tác vụ Muse chỉ giữ khe Chromium khi đã có tài khoản được phép.

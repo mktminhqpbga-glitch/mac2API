@@ -15,7 +15,7 @@ accounts=[{'id':'fixture'+str(i).zfill(5),'label':'Fixture-'+str(i),'enabled':Tr
  'quota':{'found':True,'plan':'Free plan','weekly_used_pct':29,'extra_left':'1B tokens left','checked_at':now-10000}} for i in range(8)]
 events=[]
 network=[]
-server_state={'mode':'update'}
+server_state={'mode':'update','videoPolls':0}
 feature_errors=[]
 def check(value,message):
  if not value:feature_errors.append(message)
@@ -24,6 +24,7 @@ class Handler(BaseHTTPRequestHandler):
  def log_message(self,*a):pass
  def do_GET(self):
   path=urlsplit(self.path).path
+  status_code=200
   network.append({'method':'GET','path':path})
   if path in ['/','/admin']:data=html;kind='text/html; charset=utf-8'
   elif path=='/admin/accounts':data={'accounts':accounts,'stats':{'total':8,'healthy':8}};kind='application/json'
@@ -38,12 +39,19 @@ class Handler(BaseHTTPRequestHandler):
    data={'tasks':[{'id':'fixture-task','kind':'video','prompt':'fixture task','status':'failed','error':'参考素材上传未确认（0/1），已停止生成','created_at':now-7,'account':'fixture00000','queue_elapsed':2.0,'elapsed':5.0,'total_elapsed':7.0,'attempt':1,
                    'error_code':'MUSE_REFERENCE_UPLOAD_UNCONFIRMED','error_stage':'before_send',
                    'reference_count':1,'confirmed_reference_count':0}]};kind='application/json'
-  elif path=='/v1/videos/fixture-video':data={'status':'failed','error':'fixture only'};kind='application/json'
+  elif path=='/v1/videos/fixture-video':
+   server_state['videoPolls'] += 1
+   if server_state['videoPolls'] == 1:
+    status_code=502
+    data={'error':{'message':'temporary fixture transport error'}}
+   else:
+    data={'status':'failed','error':'fixture only'}
+   kind='application/json'
   elif path.endswith('/thumbnail'):data=thumbnail_bytes;kind='image/jpeg'
   elif path.endswith('.mp4'):data=video_bytes;kind='video/mp4'
   else:data={'browser_running':True,'media_count':2,'status':'ok','generation_queue':{'queue_timeout':3600},'config':{'image_timeout':240,'video_timeout':600}};kind='application/json'
   body=data if isinstance(data,bytes) else json.dumps(data).encode()
-  self.send_response(200);self.send_header('Content-Type',kind);self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
+  self.send_response(status_code);self.send_header('Content-Type',kind);self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
  def do_POST(self):
   body=json.loads(self.rfile.read(int(self.headers.get('Content-Length',0))) or b'{}')
   path=urlsplit(self.path).path
@@ -98,6 +106,7 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
   page.js("goTab('play');$('vidDur').value='125';$('vidBtn').click()")
   wait("$('vidRes').textContent.includes('fixture only') && !$('vidBtn').disabled")
   assert events[-1]['path']=='/v1/videos' and events[-1]['body']['duration']==125
+  assert server_state['videoPolls']==2
   page.js("$('vidDur').value='0';$('vidBtn').click()")
   assert page.js("!$('vidBtn').disabled && $('vidDur').validity.rangeUnderflow")
   assert sum(item['path']=='/v1/videos' for item in events)==1

@@ -2,50 +2,41 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>Muse2API Cookie 导入</title>
+<title>mac2API 账号连接</title>
 <style>
-  :root{color-scheme:dark}
+  :root{color-scheme:dark;--bg:#101622;--panel:#151c29;--line:#273243;--text:#eef3fb;--muted:#a4b2c8;--accent:#9cb9ff;--action:#3d67d8}
   *{box-sizing:border-box}
-  body{
-    width:380px;margin:0;padding:16px 18px 18px;
-    background:#0d1117;color:#e6edf3;
-    font:13px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",
-         "Microsoft YaHei",sans-serif;
-  }
-  h1{font-size:15px;margin:0 0 3px;display:flex;align-items:center;gap:7px}
-  h1 .dot{width:8px;height:8px;border-radius:50%;background:#4f8cff}
-  h1 .langsel{margin-left:auto;width:auto;padding:3px 6px;border-radius:6px;border:1px solid #30363d;
-    background:#161b22;color:#e6edf3;font-size:11.5px;font-weight:400;cursor:pointer}
-  .sub{color:#8b949e;font-size:11.5px;margin:0 0 14px}
-  label{display:block;font-size:11.5px;color:#8b949e;margin:11px 0 4px}
-  input{
-    width:100%;padding:8px 10px;border-radius:7px;
-    border:1px solid #30363d;background:#161b22;color:#e6edf3;font-size:12.5px;
-    font-family:ui-monospace,SFMono-Regular,Consolas,monospace;
-  }
-  input:focus{outline:none;border-color:#4f8cff}
-  button{
-    width:100%;margin-top:16px;padding:11px;border:0;border-radius:8px;
-    background:linear-gradient(180deg,#4f8cff,#3d7bf0);color:#fff;
-    font-size:13.5px;font-weight:600;cursor:pointer;
-  }
-  .provider-buttons{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
-  button:hover{filter:brightness(1.08)}
-  button:disabled{opacity:.55;cursor:default;filter:none}
-  .steps{background:#161b22;border:1px solid #30363d;border-radius:8px;
-    padding:10px 12px;margin-top:14px;font-size:11.5px;color:#8b949e;line-height:1.75}
-  .steps b{color:#e6edf3}
-  #log{margin-top:14px;font-size:12px;white-space:pre-wrap;word-break:break-all;
-    font-family:ui-monospace,Consolas,monospace;display:none}
+  body{width:380px;max-width:100vw;margin:0;padding:16px 17px 17px;background:var(--bg);color:var(--text);
+    font:13px/1.55 Inter,system-ui,-apple-system,"Segoe UI",sans-serif}
+  h1{font-size:15px;line-height:1.2;letter-spacing:-.02em;margin:0 0 7px;display:flex;align-items:center;gap:8px}
+  h1 .dot{width:24px;height:24px;flex:none;display:grid;place-items:center;border-radius:7px;background:#23375e}
+  h1 .dot::before{content:"";width:9px;height:9px;border:2px solid #c3d4ff;border-radius:3px;transform:rotate(45deg)}
+  h1 .langsel{margin-left:auto;padding:4px 5px;border-radius:7px;border:1px solid var(--line);
+    background:var(--panel);color:var(--text);font-size:11px;font-weight:400;cursor:pointer}
+  .sub,label,.foot{color:var(--muted);font-size:11.5px}
+  .sub{margin:0 0 13px}
+  label{display:block;margin:10px 0 4px}
+  input{width:100%;padding:9px 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel);
+    color:var(--text);font:12.5px ui-monospace,SFMono-Regular,Consolas,monospace}
+  button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .provider-buttons{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:13px}
+  button{padding:9px 7px;border:1px solid transparent;border-radius:8px;background:var(--action);color:#fff;
+    font-size:13px;font-weight:650;cursor:pointer}
+  button:hover{background:#4674eb}
+  button:disabled{opacity:.5;cursor:default}
+  .steps{padding:11px 12px;margin-top:12px;background:var(--panel);border:1px solid var(--line);border-radius:9px;
+    color:var(--muted);font-size:11.5px}
+  .steps b{color:var(--text)}
+  #log{display:none;margin-top:12px;padding:10px 11px;background:var(--panel);border:1px solid var(--line);
+    border-radius:9px;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}
   #log.show{display:block}
-  .ok{color:#3fb950}.bad{color:#f85149}.warn{color:#d29922}
-  .foot{margin-top:14px;padding-top:11px;border-top:1px solid #21262d;
-    font-size:11px;color:#6e7681;line-height:1.7}
-  code{background:#161b22;padding:1px 5px;border-radius:4px;font-size:11px}
+  .ok{color:#61d8aa}.bad{color:#ff9a9f}.warn{color:#f2ca84}
+  .foot{margin-top:13px;padding-top:10px;border-top:1px solid var(--line)}
+  code{padding:1px 5px;border-radius:4px;background:var(--panel);font-size:11px}
 </style>
 </head>
 <body>
-  <h1><span class="dot"></span><span data-i18n-text>Muse2API Cookie 导入</span><span id="extensionVersion" style="font-size:11px;color:#8b949e">v1.0.5</span>
+  <h1><span class="dot" aria-hidden="true"></span><span data-i18n-text>mac2API 账号连接</span><span id="extensionVersion" style="font-size:11px;color:var(--muted)">v1.0.6</span>
     <select id="langSel" class="langsel" title="Ngôn ngữ / Language / 语言">
       <option value="vi">Tiếng Việt</option>
       <option value="zh">中文</option>
@@ -54,13 +45,13 @@
   </h1>
   <p class="sub" data-i18n-text>选择当前标签页对应的服务。</p>
 
-  <label data-i18n-text>服务地址（BASE URL）</label>
+  <label for="base" data-i18n-text>服务地址（BASE URL）</label>
   <input id="base" placeholder="http://your-server-ip:18610" spellcheck="false">
 
-  <label>API Key</label>
+  <label for="key" data-i18n-text>管理密钥</label>
   <input id="key" type="password" placeholder="m2a_..." spellcheck="false">
 
-  <label data-i18n-text>账号标签（可留空）</label>
+  <label for="label" data-i18n-text>账号标签（可留空）</label>
   <input id="label" placeholder="例如 muse-main" spellcheck="false">
 
   <div class="provider-buttons">
