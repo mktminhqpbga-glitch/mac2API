@@ -1,5 +1,10 @@
 # Nhật ký và bàn giao mac2API
 
+## Chỉnh sửa khóa người dùng và theo dõi sử dụng API
+
+- Chọn mô hình và tài khoản theo từng khóa, sửa quyền ngay trên khóa hiện có, tạm khóa và đổi mã. Kiểm tra lại quyền trước khi gửi yêu cầu tới nhà cung cấp.
+- Theo dõi tác vụ media và chat, tài khoản xử lý, hạn mức ngày, chi tiết lỗi, tiền thu và chi phí AI ước tính. Nội dung lịch sử có thời hạn khi được bật.
+
 ## Kho hồ sơ web và proxy theo tài khoản
 
 - ChatGPT Web và Gemini Web có kho hồ sơ Chromium riêng, đăng nhập trực tiếp và kiểm tra trong bảng quản trị. Mỗi hồ sơ có nút bật, tắt và cấu hình proxy.

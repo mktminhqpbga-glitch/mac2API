@@ -1789,13 +1789,15 @@ class MuseEngine:
 
     def chat_stream(self, cookies: dict, prompt: str, expires: dict | None = None,
                     timeout: int | None = None, account_id: str | None = None,
-                    stop_event=None):
+                    stop_event=None, before_submit=None):
         """发一条消息，流式 yield 增量文本。"""
         timeout = int(timeout or getattr(self.cfg, "chat_timeout", 300))
         self.ensure_page(cookies, expires, account_id=account_id)
         self.reset_thread(for_chat=True)
         self._ensure_clean_composer(cookies, expires, account_id)
         base_agent, base_text, _ = self._poll_chat()
+        if before_submit:
+            before_submit()
         try:
             delivery = self._send(prompt)
         except Exception as exc:
@@ -2216,7 +2218,7 @@ class MuseEngine:
                  timeout: int = 240, expires: dict | None = None, account_id: str | None = None,
                  on_progress=None, reference_image: str | None = None,
                  reference_images: list[str] | None = None,
-                 stop_event=None) -> dict:
+                 stop_event=None, before_submit=None) -> dict:
         deadline = time.monotonic() + timeout
         self.ensure_page(cookies, expires, account_id=account_id)
         self.reset_thread(for_chat=False)
@@ -2230,17 +2232,21 @@ class MuseEngine:
             self._muse_page_not_ready(self.page, getattr(self._ensure_local(), "proxy_config", None))
         self._scroll_bottom()
         refs = list(reference_images or ([] if not reference_image else [reference_image]))
+        if before_submit:
+            before_submit()
         upload = self._attach_images(refs, task_deadline=deadline) if refs else None
         try:
             return self._generate_attached(prompt, expect, deadline, on_progress,
                                            stop_event, (upload or {}).get("hashes") or set(),
-                                           expected_references=len(refs))
+                                           expected_references=len(refs),
+                                           **({"before_submit": before_submit} if before_submit else {}))
         finally:
             if upload:
                 shutil.rmtree(upload["dir"], ignore_errors=True)
 
     def _generate_attached(self, prompt: str, expect: str, deadline: float,
-                           on_progress, stop_event, upload_hashes: set, *, expected_references=None) -> dict:
+                           on_progress, stop_event, upload_hashes: set, *, expected_references=None,
+                           before_submit=None) -> dict:
         atts_before = self.attachments()
         baseline_sources = {a.get(k) for a in atts_before for k in ("src", "vSrc", "iSrc") if a.get(k)}
         base = atts_before[-1] if atts_before else {}
@@ -2248,6 +2254,8 @@ class MuseEngine:
         base_agent_cnt = self._agent_count()
         if time.monotonic() >= deadline:
             raise MuseGenerationError("任务准备超时，已停止发送")
+        if before_submit:
+            before_submit()
         try:
             send_options = ({"expected_references": expected_references, "deadline": deadline}
                             if expected_references is not None else {})

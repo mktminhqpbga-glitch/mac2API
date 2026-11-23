@@ -126,10 +126,10 @@ class Store:
         with _LOCK:
             return [self._public_client(client) for client in self.clients.values()]
 
-    def create_client(self, label: str, providers: list[str]):
+    def create_client(self, label: str, providers: list[str], **settings):
         client_id = uuid.uuid4().hex[:16]
         token = f"m2c_{client_id}.{secrets.token_urlsafe(32)}"
-        client = {"id": client_id, "label": label, "providers": providers,
+        client = {**settings, "id": client_id, "label": label, "providers": providers,
                   "digest": hashlib.sha256(token.encode()).hexdigest(), "created_at": int(time.time())}
         with _LOCK:
             clients = {**self.clients, client_id: client}
@@ -137,30 +137,48 @@ class Store:
             self.clients = clients
         return {**self._public_client(client), "api_key": token}
 
-    def revoke_client(self, client_id: str) -> bool:
+    def get_client(self, client_id: str, *, active_only=False):
+        client = self.clients.get(client_id)
+        if client and (not active_only or (not client.get("revoked_at") and client.get("enabled", True))):
+            return self._public_client(client)
+        return None
+
+    def update_client(self, client_id: str, *, rotate=False, revoke=False, **changes):
         with _LOCK:
-            if client_id not in self.clients:
-                return False
-            clients = dict(self.clients)
-            del clients[client_id]
+            client = self.clients.get(client_id)
+            if not client or client.get("revoked_at"):
+                return None
+            client = {**client, **changes, "updated_at": int(time.time())}
+            token = None
+            if rotate:
+                token = f"m2c_{client_id}.{secrets.token_urlsafe(32)}"
+                client.update(digest=hashlib.sha256(token.encode()).hexdigest(),
+                              key_version=client.get("key_version", 0) + 1)
+            if revoke:
+                client.update(revoked_at=int(time.time()), enabled=False)
+                client.pop("digest", None)
+            clients = {**self.clients, client_id: client}
             _write(self.clients_file, clients)
             self.clients = clients
-            self._client_requests.pop(client_id, None)
-            return True
+            return {**self._public_client(client), **({"api_key": token} if token else {})}
+
+    def revoke_client(self, client_id: str) -> bool:
+        return self.update_client(client_id, revoke=True) is not None
 
     def find_client(self, token: str) -> dict | None:
         match = re.fullmatch(r"m2c_([0-9a-f]{16})\.[A-Za-z0-9_-]{43}", token)
         if not match:
             return None
         client = self.clients.get(match[1])
-        if client and hmac.compare_digest(client["digest"], hashlib.sha256(token.encode()).hexdigest()):
+        if (client and client.get("enabled", True) and not client.get("revoked_at")
+                and hmac.compare_digest(client.get("digest", ""), hashlib.sha256(token.encode()).hexdigest())):
             return self._public_client(client)
         return None
 
     def acquire_client_request(self, client_id: str, rate_limit: int, active_limit: int) -> bool:
         now = time.monotonic()
         with _LOCK:
-            if client_id not in self.clients:
+            if not self.get_client(client_id, active_only=True):
                 return False
             recent = [seen for seen in self._client_requests.get(client_id, []) if seen > now - 60]
             active = self._client_active.get(client_id, 0)
@@ -248,11 +266,12 @@ class Store:
     def pick_account(self, preferred_id: str | None = None, rotate: bool = True,
                      force_rotate: bool = False, exclude_id: str | None = None,
                      exclude_ids: set[str] | list[str] | None = None,
-                     record_use: bool = True) -> dict | None:
+                     record_use: bool = True, allowed_ids: set[str] | None = None) -> dict | None:
         """选择可用账号：优先复用当前已预热的健康账号（减少切号重连耗时），每满 15 次或遇错自动轮转。
         exclude_ids: 需要排除的账号 ID 集合（例如正在被其他并发线程占用的账号）。"""
         with _LOCK:
-            live = [a for a in self.accounts if a.get("enabled", True) and a.get("cookies")]
+            live = [a for a in self.accounts if a.get("enabled", True) and a.get("cookies")
+                    and (allowed_ids is None or (a["id"] in allowed_ids and a.get("ok") is not False))]
             if not live:
                 return None
             blocked = set(exclude_ids or [])
@@ -369,9 +388,9 @@ class Store:
                 "expiring": expiring, "expired": expired}
 
     # ---------- 任务 ----------
-    def create_task(self, kind: str, prompt: str, **metadata) -> dict:
+    def create_task(self, kind: str, prompt: str, *, task_id=None, **metadata) -> dict:
         with _LOCK:
-            tid = "task_" + uuid.uuid4().hex[:20]
+            tid = task_id or "task_" + uuid.uuid4().hex[:20]
             t = {"id": tid, "object": "task", "kind": kind, "prompt": prompt,
                  "status": "queued", "created_at": int(time.time()),
                  "updated_at": int(time.time()), "result": None, "error": None, **metadata}

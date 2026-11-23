@@ -123,6 +123,15 @@
   button.mini{padding:4px 10px;font-size:12px;border-radius:7px}
   button.primary-lg{padding:11px 24px;font-size:13.5px}
 
+  #clientKeyForm fieldset{border:1px solid var(--line);border-radius:9px;margin:10px 0;padding:10px 12px;min-width:0}
+  .client-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));gap:10px;margin:12px 0}
+  .client-checks{display:flex;gap:5px 16px;flex-wrap:wrap;margin-top:8px}
+  .client-checks label,.client-rule > label{display:flex;align-items:center;gap:6px;color:var(--text)}
+  .client-rule details{margin:8px 0 0;color:var(--muted);font-size:13px}
+  #usageDialog{width:min(720px,calc(100% - 32px))}
+  #usageDetails pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:225px;overflow:auto;font-size:13px}
+  #usageDetails p{overflow-wrap:anywhere}
+
   /* ---------- 表格 ---------- */
   .tblwrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius)}
   table{width:100%;border-collapse:collapse;font-size:13px}
@@ -302,29 +311,64 @@
   <section class="tab" id="tab-clients">
     <div class="card">
       <h3>Khóa API người dùng</h3>
+      <div class="tblwrap"><table>
+        <thead><tr><th>Tên khóa</th><th>Quyền sử dụng</th><th>Trạng thái</th><th>Sử dụng tháng này</th><th>Thao tác</th></tr></thead>
+        <tbody id="clientKeyList"></tbody>
+      </table></div>
+      <p id="clientKeyStatus" class="hint" role="status"></p>
       <form id="clientKeyForm">
-        <label for="clientKeyLabel">Tên người dùng</label>
-        <input id="clientKeyLabel" required maxlength="80" autocomplete="off">
-        <fieldset>
-          <legend>Nhà cung cấp được phép</legend>
-          <label><input type="checkbox" name="provider" value="muse" checked> Muse</label>
-          <label><input type="checkbox" name="provider" value="chatgpt"> ChatGPT Web</label>
-          <label><input type="checkbox" name="provider" value="gemini-web"> Gemini Web</label>
-          <label><input type="checkbox" name="provider" value="openai"> OpenAI API</label>
-          <label><input type="checkbox" name="provider" value="gemini"> Gemini API</label>
-        </fieldset>
-        <button type="submit">Tạo khóa người dùng</button>
+        <h3 id="clientKeyFormTitle">Tạo khóa</h3>
+        <div class="client-options">
+          <label>Tên người dùng<input id="clientKeyLabel" type="text" required maxlength="80" autocomplete="off"></label>
+          <label>Số ngày lưu prompt và kết quả
+            <input id="clientHistoryDays" type="number" min="0" max="30" value="0" required>
+          </label>
+        </div>
+        <p class="hint">Nhập 0 để chỉ lưu dữ liệu vận hành của yêu cầu mới. Giá tính bằng đồng Việt Nam (VND).</p>
+        <label><input type="checkbox" id="clientEnabled" checked> Cho phép dùng khóa</label>
+        <label id="clientKeepLegacy"><input type="checkbox" id="clientLegacy"> Giữ quyền cũ theo nhà cung cấp</label>
+        <div id="clientRules"></div>
+        <div class="acts">
+          <button id="clientSave" type="submit">Tạo khóa người dùng</button>
+          <button id="clientDismiss" type="button" class="ghost" hidden>Hủy chỉnh sửa</button>
+        </div>
       </form>
       <div id="clientKeyNew" hidden>
-        <label for="clientKeyResult">Khóa mới chỉ hiện một lần. Sao chép để gửi cho người dùng.</label>
+        <label for="clientKeyResult">Mã khóa chỉ hiện một lần. Sao chép để gửi cho người dùng.</label>
         <div class="row">
-          <input id="clientKeyResult" readonly autocomplete="off" spellcheck="false">
+          <input id="clientKeyResult" type="text" readonly autocomplete="off" spellcheck="false">
           <button type="button" class="ghost" onclick="copyEl('clientKeyResult')">Sao chép khóa</button>
         </div>
       </div>
-      <p id="clientKeyStatus" class="hint" role="status"></p>
-      <ul id="clientKeyList"></ul>
     </div>
+    <div class="card" id="clientHistory">
+      <h3>Lịch sử API</h3>
+      <form id="usageFilter">
+        <div class="client-options">
+          <label>Khóa API<select id="usageOwner"></select></label>
+          <label>Mô hình<select id="usageModel"></select></label>
+          <label>Tài khoản xử lý<select id="usageAccount"></select></label>
+          <label>Trạng thái<select id="usageState"></select></label>
+          <label>Từ ngày <span class="hint">(giờ Việt Nam)</span><input type="date" id="usageSince"></label>
+          <label>Đến hết ngày <span class="hint">(giờ Việt Nam)</span><input type="date" id="usageUntil"></label>
+        </div>
+        <button type="submit" class="ghost">Lọc và làm mới</button>
+      </form>
+      <p id="usageStatus" class="hint" role="status"></p>
+      <div class="tblwrap"><table>
+        <thead><tr><th>Thời điểm</th><th>Khóa và mô hình</th><th>Trạng thái</th><th>Tiền thu</th><th>Chi phí AI</th><th>Chi tiết</th></tr></thead>
+        <tbody id="usageList"></tbody>
+      </table></div>
+      <div class="acts">
+        <button type="button" class="mini ghost" id="usagePrev" disabled>Trang trước</button>
+        <button type="button" class="mini ghost" id="usageNext" disabled>Trang sau</button>
+      </div>
+    </div>
+    <dialog class="proxy-dialog" id="usageDialog">
+      <h2>Chi tiết lượt sử dụng</h2>
+      <div id="usageDetails"></div>
+      <form method="dialog" class="proxy-actions"><button class="ghost">Đóng</button></form>
+    </dialog>
   </section>
   <section class="tab" id="tab-openai"></section>
   <section class="tab" id="tab-gemini"></section>
@@ -2262,59 +2306,360 @@ const clientKeyLabels = {
   muse: 'Muse', chatgpt: 'ChatGPT Web', 'gemini-web': 'Gemini Web',
   openai: 'OpenAI API', gemini: 'Gemini API',
 };
+const usageStates = {
+  queued: 'Đang chờ', processing: 'Đang chạy', completed: 'Hoàn tất',
+  failed: 'Thất bại', interrupted: 'Cần đối chiếu', cancelled: 'Đã hủy',
+};
+const clientPriceUnits = {
+  request: 'Mỗi lượt', image: 'Mỗi ảnh', video_second: 'Mỗi giây video',
+  input_1k_tokens: 'Mỗi 1.000 token đầu vào', output_1k_tokens: 'Mỗi 1.000 token đầu ra',
+};
+const money = new Intl.NumberFormat('vi-VN', {style: 'currency', currency: 'VND'});
+const clientDate = new Intl.DateTimeFormat('vi-VN', {dateStyle: 'short', timeStyle: 'medium', timeZone: 'Asia/Ho_Chi_Minh'});
+const USAGE_PAGE_SIZE = 25;
+let usagePage = 0;
+let usageLoad = 0;
+let clientKeys = [];
+let clientModels = [];
+let editingClient = null;
 
-async function loadClientKeys() {
-  try {
-    const {clients} = await api('/admin/client-keys');
-    const list = $('clientKeyList');
-    list.replaceChildren();
-    for (const client of clients) {
-      const row = document.createElement('li');
-      row.textContent = client.label + ' · ' + client.providers.map(id => clientKeyLabels[id] || id).join(', ') + ' ';
-      const button = document.createElement('button');
-      button.className = 'ghost mini';
-      button.textContent = 'Thu hồi';
-      button.onclick = async () => {
-        if (!confirm('Thu hồi khóa của ' + client.label + '?')) return;
-        button.disabled = true;
-        try {
-          await api('/admin/client-keys/' + encodeURIComponent(client.id), {method: 'DELETE'});
-          $('clientKeyNew').hidden = true;
-          $('clientKeyResult').value = '';
-          await loadClientKeys();
-        } catch (error) {
-          $('clientKeyStatus').textContent = error.message;
-          button.disabled = false;
-        }
-      };
-      row.append(button);
-      list.append(row);
+function clientElement(tag, text, className) {
+  const node = document.createElement(tag);
+  if (text !== undefined) node.textContent = text;
+  if (className) node.className = className;
+  return node;
+}
+
+function clientButton(text, action, className = 'ghost mini') {
+  const button = clientElement('button', text, className);
+  button.type = 'button';
+  button.onclick = async () => {
+    button.disabled = true;
+    try { await action(); }
+    catch (error) { $('clientKeyStatus').textContent = error.message; }
+    finally { button.disabled = false; }
+  };
+  return button;
+}
+
+function clientMoney(amount, estimated = false) {
+  return amount == null ? 'Chưa xác định' : money.format(amount) + (estimated ? ' (ước tính)' : '');
+}
+
+function clearClientSecret() {
+  $('clientKeyResult').value = '';
+  $('clientKeyNew').hidden = true;
+}
+
+function showClientSecret(value) {
+  $('clientKeyResult').value = value;
+  $('clientKeyNew').hidden = false;
+}
+
+function selectOptions(id, options, all) {
+  const node = $(id);
+  const current = node.value;
+  node.replaceChildren(new Option(all, ''), ...options.map(([value, label]) => new Option(label, value)));
+  if (options.some(([value]) => value === current)) node.value = current;
+}
+
+function clientNumber(label, value, className, min, max) {
+  const wrapper = clientElement('label', label);
+  const field = clientElement('input', undefined, className);
+  field.type = 'number';
+  field.min = min;
+  field.max = max;
+  field.value = value ?? '';
+  wrapper.append(field);
+  return wrapper;
+}
+
+function clientRule(model, values) {
+  const block = clientElement('fieldset', undefined, 'client-rule');
+  block.dataset.model = model.id;
+  const choice = clientElement('input', undefined, 'client-grant');
+  choice.type = 'checkbox';
+  choice.checked = Boolean(values);
+  choice.disabled = model.configured === false && !values;
+  const label = clientElement('label');
+  const caption = (clientKeyLabels[model.provider] || model.provider) + ' · ' + model.id;
+  label.append(choice, clientElement('span', caption + (choice.disabled ? ' (chưa cấu hình)' : '')));
+  block.append(label);
+  const work = clientElement('fieldset');
+  const accountChoices = clientElement('div', undefined, 'client-checks');
+  const selected = new Set(values?.accounts || []);
+  const accounts = [...model.accounts];
+  for (const id of selected) {
+    if (!accounts.some(account => account.id === id)) accounts.push({id, label: id + ' (đã xóa)'});
+  }
+  for (const account of accounts) {
+    const container = clientElement('label');
+    const checkbox = clientElement('input', undefined, 'client-account');
+    checkbox.type = 'checkbox';
+    checkbox.value = account.id;
+    checkbox.checked = selected.has(account.id);
+    const status = !account.enabled ? ' · Đang tắt' : !account.verified ? ' · Chưa xác minh' : '';
+    container.append(checkbox, clientElement('span', account.label + status));
+    accountChoices.append(container);
+  }
+  const official = ['openai', 'gemini'].includes(model.provider);
+  if (!official) {
+    work.append(clientElement('legend', 'Tài khoản được dùng'), accountChoices);
+    if (!accounts.length) work.append(clientElement('p', 'Chưa có tài khoản trong kho.', 'hint'));
+  } else {
+    work.append(clientElement('legend', 'Thông tin sử dụng'), clientElement('p', 'Dùng cấu hình API chính thức của máy chủ.', 'hint'));
+  }
+  work.append(clientNumber('Hạn mức lượt mỗi ngày (bỏ trống để không đặt)', values?.daily_limit,
+                          'client-limit', 1, 1000000));
+  const prices = clientElement('details');
+  prices.append(clientElement('summary', 'Cài đặt giá'));
+  const units = ['request', ...{image: ['image'], video: ['video_second'],
+                               text: official ? ['input_1k_tokens', 'output_1k_tokens'] : []}[model.kind]];
+  for (const [field, title] of [['charge', 'Tiền thu của khách'], ['upstream', 'Chi phí AI ước tính']]) {
+    const group = clientElement('div', undefined, 'client-options');
+    for (const unit of units) {
+      const wrapper = clientNumber(clientPriceUnits[unit], values?.[field]?.[unit], 'client-price', 0, 100000000);
+      const input = wrapper.querySelector('input');
+      input.dataset.field = field;
+      input.dataset.unit = unit;
+      group.append(wrapper);
     }
+    prices.append(clientElement('p', title), group);
+  }
+  work.append(prices);
+  block.append(work);
+  const toggle = () => { work.hidden = !choice.checked; work.disabled = !choice.checked; };
+  choice.onchange = toggle;
+  toggle();
+  return block;
+}
+
+function editClient(client = null) {
+  editingClient = client;
+  clearClientSecret();
+  $('clientKeyFormTitle').textContent = client ? 'Chỉnh sửa khóa' : 'Tạo khóa';
+  $('clientKeyLabel').value = client?.label || '';
+  $('clientHistoryDays').value = client?.history_days ?? 0;
+  $('clientEnabled').checked = client?.enabled ?? true;
+  $('clientKeepLegacy').hidden = !client || Boolean(client.rules);
+  $('clientLegacy').checked = Boolean(client && !client.rules);
+  $('clientSave').textContent = client ? 'Lưu thay đổi' : 'Tạo khóa người dùng';
+  $('clientDismiss').hidden = !client;
+  const models = [...clientModels];
+  for (const id of Object.keys(client?.rules || {})) {
+    if (!models.some(model => model.id === id)) {
+      models.push({id, provider: id.split('/')[0], kind: 'text', accounts: [], configured: false});
+    }
+  }
+  $('clientRules').replaceChildren(...models.map(model => clientRule(model, client?.rules?.[model.id])));
+  $('clientRules').hidden = $('clientLegacy').checked;
+  $('clientLegacy').onchange = () => { $('clientRules').hidden = $('clientLegacy').checked; };
+}
+
+async function loadClientKeys(reset = true) {
+  try {
+    const {clients, models} = await api('/admin/client-keys');
+    clientKeys = clients;
+    clientModels = models;
+    const rows = clients.map(client => {
+      const row = clientElement('tr');
+      const label = clientElement('td', client.label);
+      const month = client.month;
+      const grants = client.rules ? Object.entries(client.rules).map(([model, rule]) =>
+        model + (rule.accounts.length ? ' (' + rule.accounts.length + ' tài khoản)' : ''))
+        : client.providers.map(id => clientKeyLabels[id] || id);
+      const stats = month ? month.requests + ' lượt · ' + month.completed + ' hoàn tất' : '0 lượt';
+      const summary = clientElement('td', stats);
+      if (month) {
+        const charge = clientMoney(month.charge) + (month.charge != null && month.charge_unknown ? ' + chưa xác định' : '');
+        const upstream = clientMoney(month.upstream, true) + (month.upstream != null && month.upstream_unknown ? ' + chưa xác định' : '');
+        summary.append(clientElement('div', 'Tiền thu ' + charge, 'hint'),
+                       clientElement('div', 'Chi phí AI ' + upstream, 'hint'),
+                       clientElement('div', 'Dùng gần nhất ' + clientDate.format(month.last_used * 1000), 'hint'));
+      }
+      const actions = clientElement('div', undefined, 'acts');
+      const actionCell = clientElement('td');
+      actionCell.append(actions);
+      const endpoint = '/admin/client-keys/' + encodeURIComponent(client.id);
+      if (!client.revoked_at) {
+        actions.append(clientButton('Chỉnh sửa', () => {
+          editClient(client);
+          $('clientKeyLabel').focus();
+        }), clientButton('Đổi mã khóa', async () => {
+          if (!confirm('Đổi mã khóa cho ' + client.label + '? Mã cũ sẽ hết hiệu lực ngay.')) return;
+          const rotated = await api(endpoint + '/rotate', {method: 'POST'});
+          await loadClientKeys();
+          showClientSecret(rotated.api_key);
+        }), clientButton('Thu hồi', async () => {
+          if (!confirm('Thu hồi vĩnh viễn khóa của ' + client.label + '?')) return;
+          await api(endpoint, {method: 'DELETE'});
+          await loadClientKeys();
+        }, 'danger mini'));
+      }
+      actions.append(clientButton('Xem lịch sử', async () => {
+        $('usageOwner').value = client.id;
+        await loadApiUsage(0);
+        $('clientHistory').scrollIntoView({block: 'start'});
+      }));
+      row.append(label, clientElement('td', grants.join(', ')),
+                 clientElement('td', client.revoked_at ? 'Đã thu hồi' : client.enabled === false ? 'Tạm khóa' : 'Đang bật'),
+                 summary, actionCell);
+      return row;
+    });
+    $('clientKeyList').replaceChildren(...rows);
     $('clientKeyStatus').textContent = clients.length ? '' : 'Chưa có khóa người dùng.';
+    if (reset) editClient();
+    selectOptions('usageOwner', clients.map(key => [key.id, key.label]), 'Tất cả khóa');
+    const historyModels = new Set([...models.map(model => model.id),
+      ...clients.flatMap(client => Object.keys(client.rules || {}))]);
+    selectOptions('usageModel', [...historyModels].map(id => [id, id]), 'Tất cả mô hình');
+    const accounts = new Map(models.flatMap(model =>
+      model.accounts.map(account => [account.id, (clientKeyLabels[model.provider] || model.provider) + ' · ' + account.label])));
+    accounts.set('openai:api', 'OpenAI API');
+    accounts.set('gemini:api', 'Gemini API');
+    accounts.set('linked-chrome', 'Chrome đang liên kết');
+    selectOptions('usageAccount', [...accounts], 'Tất cả tài khoản');
+    selectOptions('usageState', Object.entries(usageStates), 'Tất cả trạng thái');
+    await loadApiUsage(reset ? 0 : usagePage);
   } catch (error) { $('clientKeyStatus').textContent = error.message; }
 }
 
+$('clientDismiss').onclick = () => editClient();
 $('clientKeyForm').addEventListener('submit', async event => {
   event.preventDefault();
-  const form = event.currentTarget;
-  const providers = new FormData(form).getAll('provider');
-  if (!providers.length) {
-    $('clientKeyStatus').textContent = 'Hãy chọn ít nhất một nhà cung cấp.';
-    return;
+  const payload = {label: $('clientKeyLabel').value.trim(), enabled: $('clientEnabled').checked,
+                   history_days: Number($('clientHistoryDays').value)};
+  if (!$('clientLegacy').checked) {
+    payload.rules = {};
+    for (const block of $('clientRules').querySelectorAll('.client-rule')) {
+      if (!block.querySelector('.client-grant').checked) continue;
+      const accounts = Array.from(block.querySelectorAll('.client-account:checked'), input => input.value);
+      const rule = {accounts, charge: {}, upstream: {}};
+      const limit = block.querySelector('.client-limit').value;
+      if (limit) rule.daily_limit = Number(limit);
+      for (const input of block.querySelectorAll('.client-price')) {
+        if (input.value) rule[input.dataset.field][input.dataset.unit] = Number(input.value);
+      }
+      payload.rules[block.dataset.model] = rule;
+    }
+    if (!Object.keys(payload.rules).length) {
+      $('clientKeyStatus').textContent = 'Hãy chọn ít nhất một mô hình.';
+      return;
+    }
   }
-  const button = form.querySelector('button[type=submit]');
+  const button = $('clientSave');
   button.disabled = true;
   try {
-    const client = await api('/admin/client-keys', {
-      method: 'POST', body: JSON.stringify({label: $('clientKeyLabel').value.trim(), providers}),
-    });
-    $('clientKeyResult').value = client.api_key;
-    $('clientKeyNew').hidden = false;
-    $('clientKeyLabel').value = '';
+    const path = '/admin/client-keys' + (editingClient ? '/' + encodeURIComponent(editingClient.id) : '');
+    const saved = await api(path, {method: editingClient ? 'PATCH' : 'POST', body: JSON.stringify(payload)});
     await loadClientKeys();
+    if (saved.api_key) showClientSecret(saved.api_key);
+    $('clientKeyStatus').textContent = 'Đã lưu khóa ' + saved.label + '.';
   } catch (error) { $('clientKeyStatus').textContent = error.message; }
   finally { button.disabled = false; }
 });
+
+function usageDetailsText(container, label, value) {
+  if (value === undefined || value === null || value === '') return;
+  container.append(clientElement('strong', label), clientElement('p', value));
+}
+
+async function showUsage(id) {
+  const item = await api('/admin/api-usage/' + encodeURIComponent(id));
+  const view = $('usageDetails');
+  view.replaceChildren();
+  usageDetailsText(view, 'Mã yêu cầu', item.id + ' · ' + item.route);
+  usageDetailsText(view, 'Trạng thái', usageStates[item.status] || item.status);
+  usageDetailsText(view, 'Thời gian chờ và chạy', item.queue_seconds + ' giây chờ · ' +
+                   (item.run_seconds == null ? 'Chưa chạy' : item.run_seconds + ' giây chạy'));
+  usageDetailsText(view, 'Lần xử lý theo tài khoản', item.account_attempts.map((entry, index) =>
+    (index + 1) + '. ' + (entry.label || 'Phiên liên kết') + ' · ' + clientDate.format(entry.started_at * 1000)
+  ).join(' / ') || 'Chưa chọn tài khoản');
+  const usage = item.usage;
+  const quantities = [
+    usage.images == null ? '' : usage.images + ' ảnh',
+    usage.video_seconds == null ? '' : usage.video_seconds + ' giây video',
+    usage.input_tokens == null ? '' : usage.input_tokens + ' token đầu vào',
+    usage.output_tokens == null ? '' : usage.output_tokens + ' token đầu ra',
+  ].filter(Boolean);
+  usageDetailsText(view, 'Mức sử dụng', quantities.join(' · ') || 'Chưa có số đo');
+  const params = Object.entries(item.parameters).map(([name, value]) => name + ' = ' + value);
+  usageDetailsText(view, 'Đầu vào', item.reference_count + ' tệp tham chiếu' + (params.length ? ' · ' + params.join(', ') : ''));
+  usageDetailsText(view, 'Tiền thu', clientMoney(item.charge));
+  usageDetailsText(view, 'Chi phí AI', clientMoney(item.upstream, true));
+  for (const [field, title] of [['charge', 'Giá khách lúc nhận'], ['upstream', 'Giá ước tính lúc nhận']]) {
+    const prices = Object.entries(item.prices[field]).map(([unit, price]) =>
+      clientPriceUnits[unit] + ' ' + clientMoney(price));
+    usageDetailsText(view, title, prices.join(' · '));
+  }
+  if (item.confirmed_reference_count != null) {
+    usageDetailsText(view, 'Tệp tham chiếu được xác nhận', item.confirmed_reference_count + '/' + item.reference_count);
+  }
+  const stages = {before_send: 'Trước khi gửi', muse_reply: 'Khi Muse phản hồi', delivery_unknown: 'Cần đối chiếu sau khi gửi'};
+  usageDetailsText(view, 'Chi tiết lỗi', [stages[item.error_stage], item.error_code, item.error].filter(Boolean).join(' · '));
+  for (const [value, title] of [[item.input, 'Prompt đã lưu'], [item.output, 'Phản hồi đã lưu']]) {
+    if (value) {
+      const content = clientElement('pre', value);
+      content.setAttribute('data-no-i18n', '');
+      view.append(clientElement('strong', title), content);
+    }
+  }
+  if (item.result_url) {
+    const link = clientElement('a', 'Mở tệp kết quả');
+    link.href = item.result_url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    view.append(link);
+  }
+  $('usageDialog').showModal();
+}
+
+async function loadApiUsage(page) {
+  const requestNumber = ++usageLoad;
+  const params = new URLSearchParams({limit: USAGE_PAGE_SIZE, offset: page * USAGE_PAGE_SIZE});
+  for (const [key, id] of [['owner', 'usageOwner'], ['model', 'usageModel'], ['account', 'usageAccount'], ['status', 'usageState']]) {
+    if ($(id).value) params.set(key, $(id).value);
+  }
+  for (const [key, id] of [['since', 'usageSince'], ['until', 'usageUntil']]) {
+    if ($(id).value) {
+      const day = Date.parse($(id).value + 'T00:00:00+07:00') / 1000;
+      params.set(key, day + (key === 'until' ? 86400 : 0));
+    }
+  }
+  try {
+    const {items, has_more, totals} = await api('/admin/api-usage?' + params);
+    if (requestNumber !== usageLoad) return;
+    usagePage = page;
+    const rows = items.map(item => {
+      const row = clientElement('tr');
+      const details = clientElement('td');
+      details.append(clientButton('Xem chi tiết', () => showUsage(item.id)));
+      const name = clientKeys.find(key => key.id === item.owner)?.label || item.owner;
+      row.append(clientElement('td', clientDate.format(item.created_at * 1000)),
+                 clientElement('td', name + ' · ' + item.model),
+                 clientElement('td', usageStates[item.status] || item.status),
+                 clientElement('td', clientMoney(item.charge)),
+                 clientElement('td', clientMoney(item.upstream, true)), details);
+      return row;
+    });
+    $('usageList').replaceChildren(...rows);
+    const charge = clientMoney(totals.charge) + (totals.charge != null && totals.charge_unknown ? ' + chưa xác định' : '');
+    const upstream = clientMoney(totals.upstream, true) +
+      (totals.upstream != null && totals.upstream_unknown ? ' + chưa xác định' : '');
+    const spentLabel = params.has('account') ? 'Chi phí các lượt kết thúc ở tài khoản này' : 'Chi phí AI';
+    $('usageStatus').textContent = items.length
+      ? 'Trang ' + (page + 1) + ' · ' + totals.requests + ' lượt · Tiền thu ' + charge + ' · ' + spentLabel + ' ' + upstream
+      : 'Chưa có lượt sử dụng phù hợp.';
+    $('usagePrev').disabled = page === 0;
+    $('usageNext').disabled = !has_more;
+  } catch (error) {
+    if (requestNumber === usageLoad) $('usageStatus').textContent = error.message;
+  }
+}
+
+$('usageFilter').onsubmit = event => { event.preventDefault(); loadApiUsage(0); };
+$('usagePrev').onclick = () => loadApiUsage(Math.max(0, usagePage - 1));
+$('usageNext').onclick = () => loadApiUsage(usagePage + 1);
 
 const chatProviderPanels = new Map([
   ['openai', 'chatgpt', 'ChatGPT Web'],

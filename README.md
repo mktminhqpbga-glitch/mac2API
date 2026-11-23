@@ -155,7 +155,15 @@ Mỗi địa chỉ riêng có `GET /models` và chỉ chấp nhận mô-đun ph�
 
 ### Cấp khóa API cho nhiều người dùng
 
-Trong bảng quản trị, mở **Khóa người dùng**, nhập nhãn rồi chọn các nhà cung cấp được phép. Sao chép khóa `m2c_…` ngay sau khi tạo và điền vào trường **API Key** trong MacFlow hoặc ứng dụng gọi API. Mỗi người hoặc ứng dụng có thể dùng khóa riêng. Khóa quản trị `m2a_…` vẫn dùng được để vận hành dịch vụ và quản lý toàn bộ tác vụ.
+Trong bảng quản trị, mở **Khóa người dùng**, nhập tên rồi chọn từng mô hình và tài khoản được dùng. Với ChatGPT Web và Gemini Web, chọn hồ sơ trong kho **Tài khoản Chromium**. OpenAI API và Gemini API dùng thông tin xác thực chính thức đã cấu hình trên máy chủ. Sao chép mã `m2c_…` ngay sau khi tạo và điền vào trường **API Key** trong MacFlow hoặc ứng dụng gọi API.
+
+Bấm **Chỉnh sửa** để thay tên, quyền, hạn mức ngày, giá, trạng thái và số ngày lưu nội dung. Các thay đổi quyền được áp dụng lúc chọn tài khoản và trước khi gửi nội dung. Tạm khóa hoặc bỏ quyền chặn yêu cầu chưa gửi. Yêu cầu đã gửi vẫn được theo dõi. **Đổi mã khóa** thay mã bí mật trên cùng một bản ghi và hết hiệu lực mã cũ cùng các liên kết ký cũ. **Thu hồi** vô hiệu hóa khóa vĩnh viễn và giữ lịch sử cho quản trị viên. Khóa cũ giữ phạm vi theo nhà cung cấp cho tới khi bạn chọn quyền theo mô hình.
+
+Mục **Lịch sử API** cho phép lọc theo khóa, mô hình, tài khoản, trạng thái và ngày. Chi tiết hiển thị tài khoản theo lần xử lý, thời gian, lỗi và mức sử dụng. API khách đọc lịch sử của chính khóa qua `GET /v1/usage` hoặc `GET /v1/usage/{id}`. Phản hồi tạo ảnh đồng bộ và chat có header `X-Mac2API-Usage-Id` để tra cứu. Tác vụ media bất đồng bộ dùng chính ID tác vụ. Có thể chọn lưu prompt và phản hồi dạng văn bản tối đa 30 ngày. Lịch sử media giữ số lượng tệp tham chiếu và có liên kết kết quả khi bật lưu nội dung và tệp vẫn còn trong kho.
+
+Hạn mức ngày tính theo số yêu cầu được tiếp nhận cho từng mô hình và đặt lại lúc 00:00 giờ Việt Nam. Ảnh và video bất đồng bộ gửi lại với cùng `Idempotency-Key` dùng biên nhận cũ. Tiền thu và giá ước tính phía AI tính bằng VND theo mức giá lúc nhận yêu cầu. Số giây dùng thời lượng tệp video đã đo. Token dùng số liệu do API chính thức trả về. Tác vụ thất bại xác định có tiền thu 0 đồng. Tác vụ cần đối chiếu, tác vụ thiếu số liệu tính giá và chi phí AI chưa cấu hình hiện **Chưa xác định**.
+
+Lịch sử nằm trong `data/api-usage.sqlite3`. Khi cập nhật, mac2API nhập dữ liệu vận hành của tác vụ media còn lưu từ phiên bản cũ. Khóa quản trị `m2a_…` vẫn dùng để vận hành dịch vụ và quản lý toàn bộ tác vụ.
 
 Khóa người dùng chỉ xem được tác vụ của chính khóa đó. Tải tệp bằng URL đã ký hoặc Bearer của chủ tệp hay quản trị viên. Chữ ký có hiệu lực tối đa 7 ngày. Gọi lại API tác vụ để lấy URL mới nếu tệp vẫn còn. Khi thu hồi khóa người dùng, các URL ký cho khóa đó hết hiệu lực. URL quản trị chưa ký từ bản cũ có thể tải với Bearer quản trị hoặc lấy lại từ bảng điều khiển. Khi cần thời gian chuyển đổi, đặt `MUSE2API_ALLOW_LEGACY_PUBLIC_MEDIA=1` cho các URL quản trị cũ.
 

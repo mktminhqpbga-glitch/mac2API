@@ -141,10 +141,14 @@ class ManagedWebAccounts:
         return [account for account in self.accounts.values()
                 if account["provider"] == provider and account["enabled"]]
 
-    def state(self, provider):
+    def state(self, provider, allowed_ids=None):
         with self.condition:
-            accounts = self.enabled(provider)
+            accounts = [account for account in self.enabled(provider)
+                        if allowed_ids is None or account["id"] in allowed_ids]
             if not accounts:
+                if allowed_ids is not None:
+                    return {"configured": False, "connected": False, "ready": False,
+                            "busy": False, "reason": "not_configured"}
                 return None
             verified = [account["id"] for account in accounts if account["verified"]]
             busy = bool(verified) and all(aid in self.in_use for aid in verified)
@@ -168,13 +172,18 @@ class ManagedWebAccounts:
             self._release(aid)
 
     @contextmanager
-    def reserve(self, provider, deadline, guard):
+    def reserve(self, provider, deadline, guard, allowed_accounts=None):
         with self.condition:
             account = None
             while True:
                 if guard:
                     guard()
                 enabled = self.enabled(provider)
+                allowed_ids = allowed_accounts() if allowed_accounts else None
+                if allowed_ids is not None:
+                    enabled = [item for item in enabled if item["id"] in allowed_ids]
+                    if not enabled:
+                        raise WebProviderError("Không có tài khoản web được cấp quyền đang bật.", 503)
                 if not enabled:
                     break
                 verified = [item for item in enabled if item["verified"]]

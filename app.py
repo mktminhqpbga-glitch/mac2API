@@ -41,18 +41,21 @@ import mimetypes
 import os
 import re
 import shutil
+import sqlite3
+import subprocess
 import threading
 import time
 import uuid
 import zipfile
 
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                Response, StreamingResponse)
 from pydantic import model_validator, BaseModel, Field, SecretStr, field_validator
 
 from chat_providers import ChatProviders, ProviderName, ProviderSettings
+from client_usage import ClientJob, ClientUsage, Price, TextOutcome, redact_content
 from config import CFG
 from engine import (ESSENTIAL_COOKIES, MAX_REFERENCE_IMAGE_BYTES,
                     MAX_REFERENCE_IMAGES, MAX_REFERENCE_TOTAL_BYTES, MAX_VIDEO_REFERENCES,
@@ -120,7 +123,8 @@ async def protect_bearer_transport(request: Request, call_next):
                 {"error": {"code": "HTTPS_REQUIRED", "message": "Kết nối từ xa cần HTTPS."}},
                 status_code=403, headers={"Cache-Control": "no-store"})
     response = await call_next(request)
-    if request.url.path.startswith(("/admin/apikey", "/admin/client-keys", "/admin/api-clients")):
+    if request.url.path.startswith(("/admin/apikey", "/admin/client-keys", "/admin/api-clients",
+                                    "/admin/api-usage", "/v1/usage")):
         response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -139,6 +143,7 @@ class AccessLogFilter(logging.Filter):
 logging.getLogger("uvicorn.access").addFilter(AccessLogFilter())
 
 store = Store(CFG)
+client_usage = ClientUsage(os.path.join(CFG.data_dir, "api-usage.sqlite3"))
 chat_providers = ChatProviders(CFG.data_dir)
 if CFG.web_cdp_port and (not 1 <= CFG.web_cdp_port <= 65535 or CFG.web_cdp_port == CFG.cdp_port):
     raise ValueError("MUSE2API_WEB_CDP_PORT must be separate from the Muse CDP port")
@@ -222,28 +227,51 @@ def _web_call(fn, *args, on_acquired=None, on_queue=None, queue_guard=None,
             GEN_LOCK.release()
 
 
-def _run_web_generation(provider, prompt, *, image, timeout, on_acquired=None, on_queue=None, queue_guard=None):
+class WebAccountChanged(Exception):
+    """Re-select a leased account if its authorization changed before leaving the queue."""
+
+
+def _run_web_generation(provider, prompt, *, image, timeout, on_acquired=None, on_queue=None, queue_guard=None,
+                        allowed_accounts=None, on_account=None):
     queued_at = time.monotonic()
     queue_timeout = QUEUE_POLICY.settings()["queue_timeout"]
     deadline = queued_at + queue_timeout if queue_timeout else None
-    try:
-        with managed_web.reserve(provider, deadline, queue_guard) as account:
-            def generate():
-                if not account:
-                    return web_providers.generate(provider, prompt, image=image, timeout=timeout)
-                try:
-                    return web_providers.generate(provider, prompt, image=image, timeout=timeout,
-                                                  managed_page=lambda: managed_web.page(account, WEB_PROVIDERS[provider].url))
-                except WebSessionUnavailable:
-                    managed_web.update(account, verified=False)
-                    raise
+    while True:
+        try:
+            reserve_options = {"allowed_accounts": allowed_accounts} if allowed_accounts else {}
+            with managed_web.reserve(provider, deadline, queue_guard, **reserve_options) as account:
+                aid = account["id"] if account else None
 
-            return _web_call(generate, queued_at=queued_at, queue_timeout=queue_timeout,
-                             on_acquired=on_acquired, on_queue=on_queue, queue_guard=queue_guard)
-    except WebProviderError as error:
-        if on_queue:
-            on_queue(time.monotonic() - queued_at)
-        raise HTTPException(error.status, str(error)) from error
+                def generate():
+                    if allowed_accounts:
+                        allowed = allowed_accounts()
+                        if allowed is not None and aid not in allowed:
+                            raise WebAccountChanged()
+                    if on_acquired:
+                        on_acquired()
+                    if on_account:
+                        on_account(aid or "linked-chrome", account["label"] if account else "Chrome đang liên kết")
+                    options = {}
+                    if allowed_accounts:
+                        options["before_submit"] = lambda: _check_dispatch(allowed_accounts, aid)
+                    if account:
+                        options["managed_page"] = lambda: managed_web.page(account, WEB_PROVIDERS[provider].url)
+                    try:
+                        return web_providers.generate(provider, prompt, image=image, timeout=timeout, **options)
+                    except WebSessionUnavailable:
+                        if account:
+                            managed_web.update(account, verified=False)
+                        raise
+
+                return _web_call(generate, queued_at=queued_at, queue_timeout=queue_timeout,
+                                 on_queue=on_queue, queue_guard=queue_guard)
+        except WebAccountChanged:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise _backpressure("QUEUE_TIMEOUT", "Hết thời gian chờ tài khoản được cấp quyền.", 1)
+        except WebProviderError as error:
+            if on_queue:
+                on_queue(time.monotonic() - queued_at)
+            raise HTTPException(error.status, str(error)) from error
 
 
 def _run_web_image(provider, prompt, timeout, **callbacks):
@@ -343,19 +371,22 @@ class AccountPoolManager:
 
     def acquire(self, account_id: str | None = None, preferred_id: str | None = None,
                 rotate: bool = True, force_rotate: bool = False,
-                timeout: float | None = 60.0, record_use: bool = True, queue_guard=None) -> dict:
+                timeout: float | None = 60.0, record_use: bool = True, queue_guard=None,
+                allowed_accounts=None, omit_id=None) -> dict:
         deadline = None if timeout is None else time.monotonic() + timeout
         with self.cond:
             while True:
                 if queue_guard:
                     queue_guard()
+                allowed = allowed_accounts() if allowed_accounts else None
                 remaining = None if deadline is None else deadline - time.monotonic()
                 if remaining is not None and remaining <= 0:
                     raise MuseGenerationError("等待空闲账号超时，当前所有账号均处于繁忙中")
 
                 if account_id:
                     acc = self.store.get_account(account_id)
-                    if not acc or not acc.get("enabled", True):
+                    _check_dispatch(allowed_accounts, account_id)
+                    if not acc or not acc.get("enabled", True) or (allowed is not None and acc.get("ok") is False):
                         raise MuseAuthError(f"指定账号 {account_id} 不存在或已禁用")
                     if account_id not in self.busy_accounts:
                         self.busy_accounts.add(account_id)
@@ -368,12 +399,17 @@ class AccountPoolManager:
                         force_rotate=force_rotate,
                         exclude_ids=self.busy_accounts,
                         record_use=record_use,
+                        **({"allowed_ids": allowed - {omit_id}} if allowed is not None else {}),
                     )
                     if acc:
                         self.busy_accounts.add(acc["id"])
                         return acc
 
                 live = [a for a in self.store.accounts if a.get("enabled", True) and a.get("cookies")]
+                if allowed is not None and not any(a["id"] in allowed and a["id"] != omit_id
+                                                  and a.get("ok") is not False for a in live):
+                    raise HTTPException(503, {"code": "CLIENT_ACCOUNTS_UNAVAILABLE",
+                                              "message": "Không có tài khoản Muse đã cấp quyền sẵn sàng."})
                 if not live:
                     raise MuseAuthError("没有可用账号，请先在管理页面导入 cookie")
 
@@ -591,7 +627,7 @@ def contract_auth(request: Request, authorization: str | None = Header(default=N
     if not client:
         raise HTTPException(401, "API Key không hợp lệ hoặc đã bị thu hồi.", headers=NO_STORE)
     scope = _path_provider(request)
-    if scope and scope not in client["providers"]:
+    if scope and request.url.path.endswith("/capabilities") and scope not in client["providers"]:
         raise HTTPException(403, "Khóa API không có quyền dùng Base URL này.", headers=NO_STORE)
     return client
 
@@ -606,7 +642,8 @@ async def api_auth(request: Request, authorization: str | None = Header(default=
     if not client:
         raise HTTPException(401, "API Key không hợp lệ hoặc đã bị thu hồi.")
     provider = _path_provider(request)
-    if provider and provider not in client["providers"]:
+    if (provider and provider not in client["providers"]
+            and not (request.method == "GET" and "/models" not in request.url.path)):
         raise HTTPException(403, "Khóa API này không có quyền dùng nhà cung cấp ở Base URL này.")
     is_write = request.method == "POST"
     if is_write and not store.acquire_client_request(
@@ -626,15 +663,66 @@ def _authorize_model(client, model: str, kind: str):
     module = MODULES.get(model)
     official = chat_providers.route(model)
     if module:
-        provider = module[0]
+        if module[1] != kind:
+            raise HTTPException(400, "Mô-đun không phù hợp với loại tác vụ ở endpoint này.")
+        provider, canonical = module[0], model
     elif official and kind == "text":
-        provider = official[0]
-    elif model in (MUSE_MODELS_BY_KIND[kind], f"muse/{MUSE_MODELS_BY_KIND[kind]}"):
-        provider = "muse"
+        provider, canonical = official[0], model
+    elif resolve_model(model.removeprefix("muse/"), default="") == MUSE_MODELS_BY_KIND[kind]:
+        provider, canonical = "muse", f"muse/{kind}"
     else:
         raise HTTPException(400, "Hãy chỉ định model có trong danh sách /models của khóa API này.")
-    if provider not in client["providers"]:
-        raise HTTPException(403, "Khóa API này không có quyền dùng mô-đun đã chọn.")
+    rules = client.get("rules")
+    if provider not in client["providers"] or (rules is not None and canonical not in rules):
+        raise HTTPException(403, {"code": "CLIENT_MODEL_DENIED",
+                                  "message": "Khóa API này không có quyền dùng mô hình đã chọn."})
+    return canonical
+
+
+def _active_client(owner):
+    client = store.get_client(owner, active_only=True)
+    if not client:
+        raise HTTPException(403, {"code": "CLIENT_KEY_INACTIVE",
+                                  "message": "Khóa API đã bị tạm khóa hoặc thu hồi trước khi gửi."})
+    return client
+
+
+def _account_permissions(owner, model, kind):
+    if not owner:
+        return None
+
+    def allowed():
+        client = _active_client(owner)
+        canonical = _authorize_model(client, model, kind)
+        rules = client.get("rules")
+        return set(rules[canonical]["accounts"]) if rules is not None else None
+
+    return allowed
+
+
+def _check_dispatch(allowed, aid):
+    accounts = allowed() if allowed else None
+    if accounts is not None and aid not in accounts:
+        raise HTTPException(403, {"code": "CLIENT_ACCOUNT_DENIED",
+                                  "message": "Quyền dùng tài khoản đã thay đổi trước khi gửi yêu cầu."})
+
+
+def _begin_client_job(owner, model, kind, route, *, job_id=None, **metadata):
+    if not owner:
+        return None
+    client = _active_client(owner)
+    model = _authorize_model(client, model, kind)
+    return client_usage.begin(job_id or "use_" + uuid.uuid4().hex, client, model, kind, route, **metadata)
+
+
+def _record_account(job, aid, label):
+    if job:
+        job.record("attempt", aid, label)
+
+
+def _muse_account_name(aid):
+    account = store.get_account(aid) or {}
+    return account.get("label") or aid
 
 
 def _client_id(client):
@@ -671,6 +759,8 @@ def _check_media_admission(tasks, kind, owner):
 
 def _public_task(task, client):
     data = dict(task)
+    data.pop("usage", None)
+    data.pop("private_content", None)
     error = data.get("error")
     if (isinstance(error, str) and not data.get("error_code") and data.get("status") == "failed"
             and (data.get("provider") or "muse") == "muse"):
@@ -692,7 +782,8 @@ def _public_task(task, client):
     result = data.get("result")
     if isinstance(result, dict) and result.get("filename"):
         url = media_url(result["filename"], admin=not _client_id(client))
-        data.update(result={**result, "url": url}, url=url)
+        public_result = {key: value for key, value in result.items() if key != "path"}
+        data.update(result={**public_result, "url": url}, url=url)
         if data.get("kind") == "video":
             data["video"] = {"url": url}
     return data
@@ -759,11 +850,26 @@ def _renew_and_persist(acc_id: str, wake_vm: bool = True, force: bool = False) -
 
 
 def safe_chat_stream(cookies: dict, prompt: str, expires: dict | None,
-                     timeout: int, account_id: str | None):
+                     timeout: int, account_id: str | None, *, allowed_accounts=None,
+                     on_acquired=None, on_account=None):
     """Acquire a generation slot before the account lease; release both after cleanup."""
     import queue
     q = queue.Queue(maxsize=100)
     stop_event = threading.Event()
+
+    def emit(kind, value):
+        while not stop_event.is_set():
+            try:
+                q.put((kind, value), timeout=0.25)
+                return
+            except queue.Full:
+                continue
+
+    def check_queue():
+        if stop_event.is_set():
+            raise TaskNotQueued()
+        if allowed_accounts:
+            allowed_accounts()
 
     def worker():
         cur_id = account_id
@@ -773,9 +879,9 @@ def safe_chat_stream(cookies: dict, prompt: str, expires: dict | None,
         leased_id = None
         slot_acquired = False
         try:
-            slot_acquired = GEN_LOCK.acquire(timeout=timeout)
+            slot_acquired = _wait_for_generation_slot(timeout, check_queue)
             if not slot_acquired:
-                q.put(("error", MuseGenerationError("等待对话并发槽位超时")))
+                emit("error", MuseGenerationError("等待对话并发槽位超时"))
                 return
             for attempt in range(2):
                 if stop_event.is_set():
@@ -786,8 +892,14 @@ def safe_chat_stream(cookies: dict, prompt: str, expires: dict | None,
                         ACCOUNT_POOL.release(leased_id)
                         leased_id = None
                     try:
-                        alt = ACCOUNT_POOL.acquire(rotate=True, force_rotate=True, timeout=timeout)
-                    except Exception:
+                        alt = ACCOUNT_POOL.acquire(rotate=True, force_rotate=True, timeout=timeout,
+                                                   **({"allowed_accounts": allowed_accounts,
+                                                       "omit_id": cur_id} if allowed_accounts else {}))
+                    except HTTPException as exc:
+                        if exc.status_code != 503:
+                            raise
+                        break
+                    except (MuseAuthError, MuseGenerationError):
                         break
                     if not alt or alt["id"] == cur_id:
                         if alt:
@@ -798,9 +910,19 @@ def safe_chat_stream(cookies: dict, prompt: str, expires: dict | None,
                     cur_cookies = alt["cookies"]
                     cur_exp = alt.get("cookies_exp")
                     log.info("【对话自动切号】切换到备用账号 %s (%s) 重试...", alt.get("label"), cur_id)
+                elif allowed_accounts:
+                    account = ACCOUNT_POOL.acquire(timeout=timeout, allowed_accounts=allowed_accounts)
+                    leased_id = cur_id = account["id"]
+                    cur_cookies, cur_exp = account["cookies"], account.get("cookies_exp")
                 elif cur_id:
                     ACCOUNT_POOL.acquire(account_id=cur_id, timeout=timeout)
                     leased_id = cur_id
+
+                _check_dispatch(allowed_accounts, cur_id)
+                if attempt == 0 and on_acquired:
+                    on_acquired()
+                if on_account:
+                    on_account(cur_id, _muse_account_name(cur_id))
 
                 yielded = False
                 try:
@@ -815,16 +937,20 @@ def safe_chat_stream(cookies: dict, prompt: str, expires: dict | None,
                     engine.start()
                     for chunk in engine.chat_stream(
                         cur_cookies, prompt, cur_exp, timeout,
-                        account_id=cur_id, stop_event=stop_event
+                        account_id=cur_id, stop_event=stop_event,
+                        **({"before_submit": lambda: _check_dispatch(allowed_accounts, cur_id)}
+                           if allowed_accounts else {})
                     ):
                         yielded = True
-                        q.put(("data", chunk))
+                        emit("data", chunk)
                         if stop_event.is_set():
                             return
                     if cur_id:
                         store.mark(cur_id, True, "")
                         _sync_cookies(cur_id)
                     return
+                except HTTPException:
+                    raise
                 except MusePostSendError as exc:
                     last_exc = exc
                     break
@@ -850,25 +976,25 @@ def safe_chat_stream(cookies: dict, prompt: str, expires: dict | None,
                     if yielded:
                         break
             if last_exc is not None:
-                q.put(("error", last_exc))
+                emit("error", last_exc)
+        except TaskNotQueued:
+            return
         except Exception as exc:
-            q.put(("error", exc))
+            emit("error", exc)
         finally:
-            try:
-                engine.close_current_page()
-            except Exception as exc:
-                log.warning("对话清理失败: %s", type(exc).__name__)
-            finally:
+            if slot_acquired:
                 try:
-                    _clear_account_proxy()
-                finally:
                     try:
-                        if leased_id:
-                            ACCOUNT_POOL.release(leased_id)
+                        engine.close_current_page()
                     finally:
-                        if slot_acquired:
-                            GEN_LOCK.release()
-                        q.put(("done", None))
+                        _clear_account_proxy()
+                except Exception as exc:
+                    log.warning("对话清理失败: %s", type(exc).__name__)
+                finally:
+                    if leased_id:
+                        ACCOUNT_POOL.release(leased_id)
+                    GEN_LOCK.release()
+            emit("done", None)
 
     threading.Thread(target=worker, daemon=True).start()
 
@@ -1589,8 +1715,11 @@ def build_video_prompt(r: VideoRequest, kinds: list[str] | None = None, *, langu
 
 
 def _media_signature(name: str, mode: str, expires: int):
-    payload = f"{mode}:{expires}:{name}".encode()
-    return hmac.new(CFG.api_key.encode(), payload, hashlib.sha256).hexdigest()
+    match = CLIENT_MEDIA_PATTERN.match(name)
+    client = store.get_client(match[1]) if match and mode == "c" else None
+    version = (client or {}).get("key_version", 0)
+    suffix = f":{version}" if version else ""
+    return hmac.new(CFG.api_key.encode(), f"{mode}:{expires}:{name}{suffix}".encode(), hashlib.sha256).hexdigest()
 
 
 MEDIA_URL_TTL_SECONDS = 7 * 86400
@@ -1622,7 +1751,8 @@ def _check_media_access(name: str, access: str, authorization: str | None):
     if signature and CFG.api_key:
         mode, timestamp, mac = signature.groups()
         now = int(time.time())
-        if (now <= int(timestamp) <= now + MEDIA_URL_TTL_SECONDS and (mode == "a" or owner in store.clients)
+        if (now <= int(timestamp) <= now + MEDIA_URL_TTL_SECONDS and
+                (mode == "a" or (owner and store.get_client(owner, active_only=True)))
                 and hmac.compare_digest(mac, _media_signature(name, mode, int(timestamp)))):
             return True
     if not owner and CFG.allow_legacy_public_media and not access:
@@ -1731,14 +1861,19 @@ def _run_generation(prompt: str, kind: str, timeout: int,
                     reference_image: str | None = None,
                     reference_images: list[str] | None = None,
                     on_acquired=None, on_account=None, on_queue=None, on_error=None,
-                    queue_guard=None) -> tuple[dict, str | None]:
-    if queue_guard:
-        queue_guard()
-    if not any(a.get("enabled", True) and a.get("cookies") for a in store.accounts):
+                    queue_guard=None, allowed_accounts=None) -> tuple[dict, str | None]:
+    def check_queue():
+        if queue_guard:
+            queue_guard()
+        if allowed_accounts:
+            allowed_accounts()
+
+    check_queue()
+    if not allowed_accounts and not any(a.get("enabled", True) and a.get("cookies") for a in store.accounts):
         raise MuseGenerationError("没有可用的生成账号，请检查账号池")
     queue_timeout = QUEUE_POLICY.settings()["queue_timeout"]
     t0 = time.monotonic()
-    acquired = _wait_for_generation_slot(queue_timeout, queue_guard)
+    acquired = _wait_for_generation_slot(queue_timeout, check_queue if queue_guard or allowed_accounts else None)
     queued = time.monotonic() - t0
     _generation_callback(on_queue, queued)
     if not acquired:
@@ -1748,7 +1883,8 @@ def _run_generation(prompt: str, kind: str, timeout: int,
                                       on_progress, reference_image, reference_images,
                                       on_acquired=on_acquired, on_account=on_account,
                                       on_queue=on_queue, on_error=on_error,
-                                      queued=queued, queue_timeout=queue_timeout, queue_guard=queue_guard)
+                                      queued=queued, queue_timeout=queue_timeout, queue_guard=queue_guard,
+                                      **({"allowed_accounts": allowed_accounts} if allowed_accounts else {}))
     finally:
         GEN_LOCK.release()
 
@@ -1759,7 +1895,7 @@ def _run_generation_locked(prompt: str, kind: str, timeout: int,
                     reference_images: list[str] | None = None,
                     deadline=None, on_acquired=None, on_account=None,
                     on_queue=None, on_error=None, queued=0.0, queue_timeout=None,
-                    queue_guard=None) -> tuple[dict, str | None]:
+                    queue_guard=None, allowed_accounts=None) -> tuple[dict, str | None]:
     if queue_timeout is None:
         queue_timeout = QUEUE_POLICY.settings()["queue_timeout"]
 
@@ -1768,7 +1904,8 @@ def _run_generation_locked(prompt: str, kind: str, timeout: int,
         remaining = max(0.001, queue_timeout - queued) if queue_timeout else None
         t0 = time.monotonic()
         try:
-            return ACCOUNT_POOL.acquire(timeout=remaining, **kwargs)
+            return ACCOUNT_POOL.acquire(timeout=remaining, **kwargs,
+                                        **({"allowed_accounts": allowed_accounts} if allowed_accounts else {}))
         finally:
             waited = time.monotonic() - t0
             queued += waited
@@ -1799,12 +1936,18 @@ def _run_generation_locked(prompt: str, kind: str, timeout: int,
                 finally:
                     ACCOUNT_POOL.release(old_id)
                 try:
-                    alt = lease(rotate=True, force_rotate=True)
+                    alt = lease(rotate=True, force_rotate=True,
+                                **({"omit_id": old_id} if allowed_accounts else {}))
+                except HTTPException as exc:
+                    if exc.status_code != 503:
+                        raise
+                    raise last_exc
                 except (MuseAuthError, MuseGenerationError):
                     raise last_exc
                 cur_acc = alt
                 if not alt or (old_id and alt["id"] == old_id):
                     break
+            _check_dispatch(allowed_accounts, cur_acc["id"])
             _generation_callback(on_account, cur_acc["id"], attempt + 1)
             try:
                 _bind_account_proxy(cur_acc)
@@ -1817,6 +1960,8 @@ def _run_generation_locked(prompt: str, kind: str, timeout: int,
                     raise MuseGenerationError("生成准备超时（不含排队时间），尚未发送本次提示词")
                 refs = list(reference_images or [])
                 engine_kwargs = {}
+                if allowed_accounts:
+                    engine_kwargs["before_submit"] = lambda: _check_dispatch(allowed_accounts, cur_acc["id"])
                 if len(refs) == 1 and not reference_image:
                     reference_image = refs[0]
                 elif len(refs) > 1:
@@ -1839,15 +1984,17 @@ def _run_generation_locked(prompt: str, kind: str, timeout: int,
             except MusePageUnavailable as exc:
                 last_exc = exc
                 store.touch_keepalive(cur_acc["id"], None, f"Lỗi tác vụ: {exc}")
-            except (MuseReferenceUploadError, MusePostSendError):
+            except (HTTPException, MuseReferenceUploadError, MusePostSendError):
                 raise
             except MuseModelRefusalError as exc:
-                _generation_callback(store.mark, cur_acc["id"], True, f"Lỗi tác vụ: {_redact_task_error(str(exc))[:200]}")
-                _generation_callback(on_error, str(exc))
+                message = _usage_error(exc)[1] if allowed_accounts else _redact_task_error(str(exc))[:200]
+                _generation_callback(store.mark, cur_acc["id"], True, f"Lỗi tác vụ: {message}")
+                _generation_callback(on_error, message)
                 raise
             except MuseGenerationError as exc:
                 last_exc = exc
-                store.mark(cur_acc["id"], True, f"任务异常: {str(exc)[:200]}")
+                message = _usage_error(exc)[1] if allowed_accounts else str(exc)[:200]
+                store.mark(cur_acc["id"], True, f"Lỗi tác vụ: {message}")
                 try:
                     engine.reset_thread()
                 except Exception:
@@ -1888,26 +2035,49 @@ def readyz():
 def models(_=Depends(api_auth), request: Request = None):
     provider = _path_provider(request)
     external = [] if provider else [
-        {"id": item["model_id"], "object": "model", "owned_by": item["id"]}
+        {"id": model, "object": "model", "owned_by": item["id"]}
         for item in chat_providers.status() if item["configured"]
+        for model in _official_model_ids(_, item)
     ]
     modules = [
         {"id": model, "object": "model", "owned_by": provider, "type": kind}
         for model, (provider, kind) in MODULES.items()
-        if provider == "muse" or _web_provider_ready(provider)
+        if provider == "muse" or (isinstance(_, dict) and _.get("rules") is not None)
+        or _web_provider_ready(provider)
     ]
     data = [*MODELS, *modules, *external]
     if provider:
         data = [model for model in data if model["owned_by"] == provider]
     if isinstance(_, dict):
-        data = [model for model in data if model["owned_by"] in _["providers"]]
+        data = [model for model in data if _catalog_allowed(_, model["id"], model["owned_by"],
+                 model.get("type") or next((kind for kind, alias in MUSE_MODELS_BY_KIND.items()
+                                            if alias == model["id"]), "text"))]
     return {"object": "list", "data": data}
 
 
-def _muse_capability_state():
+def _official_model_ids(client, item):
+    rules = client.get("rules") if isinstance(client, dict) else None
+    if rules is None:
+        return [item["model_id"]]
+    return [model for model in rules if model.startswith(item["id"] + "/")]
+
+
+def _catalog_allowed(client, model, provider, kind):
+    rules = client.get("rules")
+    canonical = f"muse/{kind}" if provider == "muse" else model
+    return provider in client["providers"] and (rules is None or canonical in rules)
+
+
+def _catalog_accounts(client, model):
+    rules = client.get("rules") if isinstance(client, dict) else None
+    return set(rules.get(model, {}).get("accounts", [])) if rules is not None else None
+
+
+def _muse_capability_state(allowed_ids=None):
     now = time.time()
     accounts = [account for account in store.accounts if account.get("enabled", True)
-                and all((account.get("cookies") or {}).get(key) for key in ESSENTIAL_COOKIES)]
+                and all((account.get("cookies") or {}).get(key) for key in ESSENTIAL_COOKIES)
+                and (allowed_ids is None or account["id"] in allowed_ids)]
     verified = [account for account in accounts if account.get("ok") is True
                 and (not account.get("expires_at") or account["expires_at"] > now)]
     connected = bool(engine.proc and engine.proc.poll() is None)
@@ -1937,9 +2107,10 @@ def capabilities(request: Request, client=Depends(contract_auth)):
     scope = _path_provider(request)
     allowed = {scope} if scope else set(client["providers"])
     states = {}
+    rules = client.get("rules")
     if "muse" in allowed:
-        states["muse"] = _muse_capability_state()
-    if allowed.intersection(WEB_PROVIDERS):
+        states["muse"] = _muse_capability_state() if rules is None else None
+    if rules is None and allowed.intersection(WEB_PROVIDERS):
         lease = GEN_LOCK.acquire(blocking=False)
         try:
             web_states = web_providers.capability_states(inspect=lease)
@@ -1952,6 +2123,8 @@ def capabilities(request: Request, client=Depends(contract_auth)):
                 state = managed_web.state(provider) or state
                 states[provider] = {**state, "busy": busy or state.get("busy", False),
                                     "reason": "busy" if busy and state["ready"] else state["reason"]}
+    if rules is not None:
+        states.update({provider: None for provider in allowed.intersection(WEB_PROVIDERS)})
     model_routes = {**MODULES, "muse-spark": ("muse", "text"),
                     "muse-image": ("muse", "image"), "muse-video": ("muse", "video")}
     for provider in chat_providers.status() if allowed.intersection(("openai", "gemini")) else ():
@@ -1960,20 +2133,33 @@ def capabilities(request: Request, client=Depends(contract_auth)):
             configured = provider["configured"]
             states[provider_id] = {"configured": configured, "connected": False, "ready": False, "busy": False,
                                    "reason": "credentials_unverified" if configured else "not_configured"}
-            if configured:
-                model_routes[provider["model_id"]] = (provider_id, "text")
+            if configured or rules is not None:
+                model_routes.update((model, (provider_id, "text")) for model in _official_model_ids(client, provider))
     models = []
     for model_id, (provider, kind) in model_routes.items():
-        if provider not in states:
+        if provider not in states or not _catalog_allowed(client, model_id, provider, kind):
             continue
+        state = states[provider]
+        if rules is not None and provider == "muse":
+            state = _muse_capability_state(_catalog_accounts(client, f"muse/{kind}"))
+        elif rules is not None and provider in WEB_PROVIDERS:
+            state = managed_web.state(provider, _catalog_accounts(client, model_id))
+            if state["ready"] and GEN_LOCK.full():
+                state.update(busy=True, reason="busy")
         references = provider == "muse" and kind in ("image", "video")
         modes = ["text", "singleImage"] if references else ["text"]
         if references and kind == "image":
             modes.append("multiReference")
-        models.append({"id": model_id, "provider": provider, "type": kind, **states[provider],
+        models.append({"id": model_id, "provider": provider, "type": kind, **state,
                        "modes": modes, "maxReferences": (1 if kind == "video" else MAX_REFERENCE_IMAGES) if references else 0,
                        "allowedMimeTypes": [mime for mime in REFERENCE_MIME_EXT if mime.startswith("image/")] if references else [],
                        "maxReferenceBytes": MAX_REFERENCE_IMAGE_BYTES if references else 0})
+    if rules is not None:
+        for provider, state in list(states.items()):
+            if state is None:
+                entries = [m for m in models if m["provider"] == provider]
+                best = max(entries, key=lambda m: (m["ready"], not m["busy"], m["configured"]))
+                states[provider] = {k: best[k] for k in ("ready", "busy", "configured", "connected", "reason")}
     return JSONResponse({
         "contractVersion": 1,
         "serverVersion": _read_local_version()["version"],
@@ -2085,7 +2271,7 @@ def lookup_task_by_request(request: Request, idempotency_key: Annotated[str | No
     matches = []
     for task in store.tasks.values():
         provider = task.get("provider") or "muse"
-        if (task.get("owner") == client["id"] and provider in client["providers"]
+        if (task.get("owner") == client["id"]
                 and (not scope or provider == scope)
                 and digest in (task.get("request_key"), task.get("image_request_key"))):
             matches.append(task)
@@ -2108,13 +2294,14 @@ def cancel_media_task(task_id: str, request: Request, client=Depends(contract_au
     task = store.get_task(task_id)
     provider = (task or {}).get("provider") or "muse"
     if (not task or task.get("kind") != kind or task.get("owner") != client["id"]
-            or provider not in client["providers"] or (scope and scope != provider)):
+            or (scope and scope != provider)):
         raise HTTPException(404, "Không tìm thấy tác vụ.", headers=NO_STORE)
     try:
         cancelled = store.transition_task(task_id, "queued", status="cancelled")
     except OSError as exc:
         raise HTTPException(507, "Không lưu được trạng thái hủy.", headers=NO_STORE) from exc
     if cancelled:
+        ClientJob(client_usage, task_id, False).record("finish", "cancelled")
         return JSONResponse({"task_id": task_id, "status": "cancelled", "cancelled": True},
                             headers=NO_STORE)
     task = store.get_task(task_id)
@@ -2134,11 +2321,132 @@ def _create_media_task(kind, prompt, **metadata):
         raise HTTPException(507, "Không lưu được tác vụ mới. Hãy kiểm tra dung lượng và quyền ghi thư mục dữ liệu.") from exc
 
 
-def _start_media_worker(task, owner, worker):
+def _media_parameters(req):
+    fields = ("size", "aspect_ratio", "resolution", "duration", "quality", "n", "response_format")
+    return {key: (redact_content(value)[:100] if isinstance(value, str) and value else value)
+            for key in fields if (value := getattr(req, key, None)) is not None}
+
+
+def _admit_media_task(kind, req, prompt, route, owner, references, **metadata):
+    task_id = "task_" + uuid.uuid4().hex[:20]
+    job = _begin_client_job(owner, req.model, kind, route, job_id=task_id, prompt=req.prompt,
+                            references=references, parameters=_media_parameters(req))
+    private = bool(job and job.private)
+    try:
+        task = _create_media_task(kind, "" if private else req.prompt, task_id=task_id, owner=owner,
+                                  reference_count=references, private_content=private,
+                                  **({} if private else {"api_prompt": prompt}),
+                                  **metadata)
+    except BaseException:
+        if job:
+            job.record("discard")
+        raise
+    return task, job
+
+
+def _generation_access(owner, model, kind):
+    return {"allowed_accounts": _account_permissions(owner, model, kind)} if owner else {}
+
+
+def _asset_usage(result):
+    if result["kind"] == "image":
+        return {"images": 1}
+    filename = result["filename"]
+    fmt = VIDEO_FORMATS.get(os.path.splitext(filename)[1].lower())
+    if not fmt or os.path.basename(filename) != filename:
+        return {}
+    path = os.path.join(CFG.media_dir, filename)
+    if os.path.islink(path):
+        return {}
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-protocol_whitelist", "file", "-f", fmt,
+             "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", path],
+            capture_output=True, check=True, timeout=5,
+        )
+        duration = float(result.stdout)
+        if 0 < duration <= 86400:
+            return {"video_seconds": round(duration, 3)}
+    except (ValueError, OSError, subprocess.SubprocessError):
+        pass
+    return {}
+
+
+def _usage_error(exc):
+    if isinstance(exc, MusePostSendError) or isinstance(getattr(exc, "__cause__", None),
+                                                         (MusePostSendError, WebPostSendError)):
+        return "DELIVERY_UNKNOWN", "Chưa xác định kết quả sau khi gửi. Cần đối chiếu tác vụ."
+    detail = exc.detail if isinstance(exc, HTTPException) else None
+    if isinstance(detail, dict):
+        return str(detail.get("code") or "REQUEST_FAILED"), _redact_task_error(str(detail.get("message") or ""))
+    if isinstance(exc, HTTPException):
+        return f"HTTP_{exc.status_code}", _redact_task_error(str(detail))
+    if isinstance(exc, MuseModelRefusalError):
+        return exc.code or "MUSE_TEXT_ONLY", "Muse trả văn bản hoặc yêu cầu thêm thông tin."
+    if isinstance(exc, MusePageUnavailable):
+        return exc.code, _redact_task_error(str(exc))
+    if isinstance(exc, MuseReferenceUploadError):
+        return "MUSE_REFERENCE_UPLOAD_UNCONFIRMED", _redact_task_error(str(exc))
+    return "REQUEST_FAILED", "Dịch vụ chưa hoàn tất yêu cầu."
+
+
+def _finish_job_error(job, exc):
+    if job:
+        code, message = _usage_error(exc)
+        job.record("finish", "interrupted" if code == "DELIVERY_UNKNOWN" else "failed",
+                   code=code, error=message,
+                   output=str(exc) if job.capture and isinstance(exc, MuseModelRefusalError) else None)
+
+
+def _media_account(timing, job, aid, attempt=1, label=None):
+    timing.account(aid, attempt)
+    _record_account(job, aid, label or _muse_account_name(aid))
+
+
+async def _sync_image(req, prompt, reference_images, owner, route):
+    provider = _image_module(req)
+    timeout = req.timeout or CFG.image_timeout
+
+    def run():
+        job = _begin_client_job(owner, req.model, "image", route, prompt=req.prompt,
+                                references=len(reference_images), parameters=_media_parameters(req))
+        options = _generation_access(owner, req.model, "image")
+        if job:
+            options["on_acquired"] = lambda: job.record("started")
+        try:
+            if provider:
+                if job:
+                    options["on_account"] = lambda aid, label: _record_account(job, aid, label)
+                res = _generate_owned(owner, _run_web_image, provider, prompt, timeout, **options)
+            else:
+                if job:
+                    options["on_account"] = lambda aid, attempt: _record_account(job, aid, _muse_account_name(aid))
+                res, _ = _generate_owned(owner, _run_generation, prompt, "image", timeout,
+                                         reference_images=reference_images, **options)
+            reply = _image_response(req, res)
+            if job:
+                job.record("finish", "completed", usage={"images": 1}, asset=res["filename"])
+                return JSONResponse(reply, headers={"X-Mac2API-Usage-Id": job.id})
+            return reply
+        except Exception as exc:
+            _finish_job_error(job, exc)
+            raise
+
+    try:
+        return await asyncio.to_thread(run)
+    except MuseAuthError as exc:
+        raise HTTPException(401, str(exc)) from exc
+    except MuseGenerationError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+def _start_media_worker(task, owner, worker, job=None):
     try:
         threading.Thread(target=_generate_owned, args=(owner, worker), daemon=True).start()
     except (OSError, RuntimeError):
-        return _fail_media_task(TaskTiming(store, task["id"]), RuntimeError("Không thể khởi động tác vụ trên máy chủ.")) or task
+        error = RuntimeError("Không thể khởi động tác vụ trên máy chủ.")
+        _finish_job_error(job, error)
+        return _fail_media_task(TaskTiming(store, task["id"]), error) or task
     return task
 
 
@@ -2152,6 +2460,9 @@ def _fail_media_task(timing, exc):
     detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
     error = str(detail.get("message") or "") if isinstance(detail, dict) else detail
     uncertain = isinstance(exc, MusePostSendError) or isinstance(getattr(exc, "__cause__", None), WebPostSendError)
+    private = bool((store.get_task(timing.task_id) or {}).get("private_content"))
+    if private:
+        error = _usage_error(exc)[1]
     changes = {"status": "interrupted" if uncertain else "failed", "needs_reconcile": uncertain,
                "error": _redact_task_error(error), **timing.finish()}
     if isinstance(exc, MuseModelRefusalError):
@@ -2169,6 +2480,8 @@ def _fail_media_task(timing, exc):
         changes["error_stage"] = "delivery_unknown"
     elif isinstance(detail, dict) and detail.get("code"):
         changes["error_code"] = detail["code"]
+        if detail["code"].startswith("CLIENT_"):
+            changes["error_stage"] = "before_send"
     try:
         store.transition_task(timing.task_id, expected, **changes)
     except OSError:
@@ -2177,7 +2490,8 @@ def _fail_media_task(timing, exc):
     return store.get_task(timing.task_id)
 
 
-def _queue_image(req: ImageRequest, prompt: str, reference_images: list[str], *, owner=None, submission=None):
+def _queue_image(req: ImageRequest, prompt: str, reference_images: list[str], *, owner=None, submission=None,
+                 route="/v1/images/tasks"):
     web_provider = _image_module(req)
     provider = web_provider or "muse"
     with MEDIA_ADMISSION_LOCK:
@@ -2186,43 +2500,50 @@ def _queue_image(req: ImageRequest, prompt: str, reference_images: list[str], *,
         if existing:
             return JSONResponse(status_code=202, content=_task_receipt(existing))
         _check_media_admission(tasks, "image", owner)
-        task = _create_media_task(
-            "image", req.prompt, api_prompt=prompt, size=req.size, provider=provider, owner=owner,
-            response_format=req.response_format, progress=0, queue_elapsed=0.0,
-            reference_count=len(reference_images),
-            **(submission or {}))
+        task, job = _admit_media_task(
+            "image", req, prompt, route, owner, len(reference_images),
+            size=req.size, provider=provider, response_format=req.response_format,
+            progress=0, queue_elapsed=0.0, **(submission or {}))
         tid = task["id"]
 
     def worker():
         timing = TaskTiming(store, tid)
-        def _on_acquired():
+        access = _generation_access(owner, req.model, "image")
+
+        def acquired():
             timing.acquired()
+            if job:
+                job.record("started")
             store.update_task(tid, progress=5)
+
         try:
             timing.check_queued()
             if web_provider:
                 res = _run_web_image(web_provider, prompt, req.timeout or CFG.image_timeout,
-                                     on_acquired=_on_acquired, on_queue=timing.queued,
-                                     queue_guard=timing.check_queued)
-                acc_id = None
+                                     on_acquired=acquired, on_queue=timing.queued,
+                                     on_account=lambda aid, label: _media_account(timing, job, aid, label=label),
+                                     queue_guard=timing.check_queued, **access)
+                acc_id = (store.get_task(tid) or {}).get("account")
             else:
                 res, acc_id = _run_generation(
-                    prompt, "image", req.timeout or CFG.image_timeout,
-                    reference_images=reference_images,
+                    prompt, "image", req.timeout or CFG.image_timeout, reference_images=reference_images,
                     on_progress=lambda p: store.update_task(tid, progress=p),
-                    on_acquired=_on_acquired, on_account=timing.account,
-                    on_queue=timing.queued, on_error=lambda message: timing.error(_redact_task_error(message)),
-                    queue_guard=timing.check_queued)
-            # Store only media metadata, not large base64 payloads or reference credentials.
-            store.update_task(tid, status="completed", progress=100, account=acc_id,
-                              **timing.finish(),
-                              result={k: res[k] for k in ("filename", "size", "kind")})
+                    on_acquired=acquired, on_account=lambda aid, attempt: _media_account(timing, job, aid, attempt),
+                    on_queue=timing.queued,
+                    on_error=None if task.get("private_content") else lambda message: timing.error(_redact_task_error(message)),
+                    queue_guard=timing.check_queued, **access)
+            usage = {"images": 1}
+            store.update_task(tid, status="completed", progress=100, account=acc_id, usage=usage,
+                              **timing.finish(), result={k: res[k] for k in ("filename", "size", "kind")})
+            if job:
+                job.record("finish", "completed", usage=usage, asset=res["filename"])
         except TaskNotQueued:
             return
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _fail_media_task(timing, exc)
+            _finish_job_error(job, exc)
 
-    return JSONResponse(status_code=202, content=_task_receipt(_start_media_worker(task, owner, worker)))
+    return JSONResponse(status_code=202, content=_task_receipt(_start_media_worker(task, owner, worker, job)))
 
 
 @app.post("/muse/v1/images/tasks")
@@ -2241,7 +2562,8 @@ def create_image_task(req: ImageRequest,
     if existing:
         return JSONResponse(status_code=202, content=_task_receipt(existing))
     _check_media_admission(store.tasks.values(), "image", owner)
-    options = {"owner": owner, "submission": submission}
+    options = {"owner": owner, "submission": submission,
+               "route": request.url.path if request else "/v1/images/tasks"}
     if provider:
         return _queue_image(req, _web_image_prompt(req), [], **options)
     refs = _prepare_reference_images(_image_references(req), **({"public_only": True} if owner else {}))
@@ -2264,7 +2586,7 @@ def get_image_task(task_id: str, _=Depends(api_auth), request: Request = None):
     _require_task_owner(task, _)
     out = _public_task(task, _)
     if out.get("status") == "completed":
-        req = ImageRequest(prompt=out["prompt"], size=out.get("size"),
+        req = ImageRequest(prompt=out.get("prompt") or "", size=out.get("size"),
                            response_format=out.get("response_format") or "url")
         out.update(_image_response(req, out["result"], admin=not _client_id(_)))
     return out
@@ -2278,31 +2600,21 @@ async def images_generations(req: ImageRequest, _=Depends(api_auth), request: Re
     req = _scope_request_model(request, "image", req)
     _authorize_model(_, req.model, "image")
     owner = _client_id(_)
-    options = {"owner": owner} if owner else {}
+    route = request.url.path if request else "/v1/images/generations"
     provider = _image_module(req)
     if provider:
         prompt = _web_image_prompt(req)
         if req.async_:
-            return _queue_image(req, prompt, [], **options)
-        res = await asyncio.to_thread(_generate_owned, owner, _run_web_image, provider, prompt, req.timeout or CFG.image_timeout)
-        return _image_response(req, res)
+            return _queue_image(req, prompt, [], owner=owner, route=route)
+        return await _sync_image(req, prompt, [], owner, route)
     ref_images = await asyncio.to_thread(
         _prepare_reference_images, _image_references(req), **({"public_only": True} if owner else {}))
-
     kinds = _reference_kinds(ref_images)
     _validate_muse_references(req.prompt, kinds)
     prompt = build_image_prompt(req, kinds, language=store.muse_prompt_language())
-    timeout = req.timeout or CFG.image_timeout
     if req.async_:
-        return _queue_image(req, prompt, ref_images, **options)
-    try:
-        res, _acc = await asyncio.to_thread(
-            _generate_owned, owner, _run_generation, prompt, "image", timeout, reference_images=ref_images)
-    except MuseAuthError as exc:
-        raise HTTPException(401, str(exc)) from exc
-    except MuseGenerationError as exc:
-        raise HTTPException(502, str(exc)) from exc
-    return _image_response(req, res)
+        return _queue_image(req, prompt, ref_images, owner=owner, route=route)
+    return await _sync_image(req, prompt, ref_images, owner, route)
 
 
 @app.post("/muse/v1/images/edits")
@@ -2397,19 +2709,10 @@ async def images_edits(request: Request, _=Depends(api_auth)):
     kinds = _reference_kinds(ref_image_data)
     _validate_muse_references(req_obj.prompt, kinds)
     full_prompt = build_image_prompt(req_obj, kinds, language=store.muse_prompt_language())
-    gen_timeout = timeout or CFG.image_timeout
+    route = getattr(getattr(request, "url", None), "path", "/v1/images/edits")
     if req_obj.async_:
-        return _queue_image(req_obj, full_prompt, ref_image_data, **({"owner": owner} if owner else {}))
-    try:
-        res, _acc = await asyncio.to_thread(
-            _generate_owned, owner, _run_generation, full_prompt, "image", gen_timeout,
-            reference_images=ref_image_data)
-    except MuseAuthError as exc:
-        raise HTTPException(401, str(exc)) from exc
-    except MuseGenerationError as exc:
-        raise HTTPException(502, str(exc)) from exc
-
-    return _image_response(req_obj, res)
+        return _queue_image(req_obj, full_prompt, ref_image_data, owner=owner, route=route)
+    return await _sync_image(req_obj, full_prompt, ref_image_data, owner, route)
 
 
 # ------------------------- 生视频（异步任务） -------------------------
@@ -2452,33 +2755,43 @@ async def create_video(req: VideoRequest, _=Depends(api_auth), request: Request 
         if existing:
             return _task_receipt(existing)
         _check_media_admission(tasks, "video", owner)
-        task = _create_media_task("video", req.prompt, owner=owner, provider="muse",
-                                  api_prompt=prompt, queue_elapsed=0.0, progress=10,
-                                  reference_count=len(ref_images), **submission)
+        task, job = _admit_media_task(
+            "video", req, prompt, request.url.path if request else "/v1/videos", owner, len(ref_images),
+            provider="muse", queue_elapsed=0.0, progress=10, **submission)
+    tid = task["id"]
 
     def worker():
-        timing = TaskTiming(store, task["id"])
-        def _on_acquired():
+        timing = TaskTiming(store, tid)
+
+        def acquired():
             timing.acquired()
-            store.update_task(task["id"], progress=15)
+            if job:
+                job.record("started")
+            store.update_task(tid, progress=15)
+
         try:
             timing.check_queued()
-            def prog_cb(p):
-                store.update_task(task["id"], progress=p)
-            res, acc_id = _run_generation(prompt, "video", timeout, on_progress=prog_cb,
-                                          reference_images=ref_images, on_acquired=_on_acquired, on_account=timing.account,
-                on_queue=timing.queued, on_error=lambda message: timing.error(_redact_task_error(message)),
-                queue_guard=timing.check_queued)
-            store.update_task(task["id"], status="completed", progress=100, account=acc_id,
-                              **timing.finish(),
-                              result={"filename": res["filename"],
-                                      "bytes": res["size"], "kind": res["kind"]})
+            res, acc_id = _run_generation(
+                prompt, "video", timeout,
+                on_progress=lambda p: store.update_task(tid, progress=p),
+                reference_images=ref_images, on_acquired=acquired,
+                on_account=lambda aid, attempt: _media_account(timing, job, aid, attempt),
+                on_queue=timing.queued,
+                on_error=None if task.get("private_content") else lambda message: timing.error(_redact_task_error(message)),
+                queue_guard=timing.check_queued, **_generation_access(owner, req.model, "video"))
+            usage = _asset_usage(res) if job else {}
+            store.update_task(tid, status="completed", progress=100, account=acc_id, usage=usage,
+                              **timing.finish(), result={"filename": res["filename"],
+                                                         "bytes": res["size"], "kind": res["kind"]})
+            if job:
+                job.record("finish", "completed", usage=usage, asset=res["filename"])
         except TaskNotQueued:
             return
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _fail_media_task(timing, exc)
+            _finish_job_error(job, exc)
 
-    return _task_receipt(_start_media_worker(task, owner, worker))
+    return _task_receipt(_start_media_worker(task, owner, worker, job))
 
 
 @app.get("/muse/v1/videos/{task_id}")
@@ -2553,24 +2866,76 @@ _SSE_HEADERS = {
 }
 
 
+async def _tracked_text(job, invoke, *, report_tokens=False):
+    try:
+        reply = await invoke()
+    except Exception as exc:
+        _finish_job_error(job, exc)
+        raise
+    except asyncio.CancelledError:
+        if job:
+            job.record("finish", "interrupted", code="CLIENT_DISCONNECTED",
+                       error="Kết nối với ứng dụng khách bị gián đoạn.")
+        raise
+    if not job:
+        return reply
+
+    outcome = TextOutcome(job.capture, report_tokens)
+    if isinstance(reply, StreamingResponse):
+        source = reply.body_iterator
+
+        async def stream():
+            try:
+                async for chunk in source:
+                    outcome.feed(chunk)
+                    yield chunk
+            finally:
+                try:
+                    if close := getattr(source, "aclose", None):
+                        await close()
+                finally:
+                    outcome.finish(job)
+
+        reply.body_iterator = stream()
+    else:
+        if isinstance(reply, dict):
+            data = reply
+            reply = JSONResponse(reply)
+        else:
+            data = json.loads(reply.body)
+        outcome.observe(data)
+        outcome.terminal = reply.status_code < 400
+        outcome.finish(job)
+    reply.headers["X-Mac2API-Usage-Id"] = job.id
+    return reply
+
+
+def _text_browser_options(owner, model, job):
+    options = _generation_access(owner, model, "text")
+    if job:
+        options.update(on_acquired=lambda: job.record("started"),
+                       on_account=lambda aid, label: _record_account(job, aid, label))
+    return options
+
+
 @app.post("/muse/v1/chat/completions")
 @app.post("/chatgpt/v1/chat/completions")
 @app.post("/gemini/v1/chat/completions")
 @app.post("/v1/chat/completions")
 async def chat_completions(req: ChatRequest, request: Request, _=Depends(api_auth)):
-    """OpenAI 兼容的对话接口 —— 各类智能体客户端都能接。
-
-    说明：muse.ai 网页是**自动路由**的 agent，界面上没有模型选择器，所有请求
-    都会落到同一个网页助手（自称 Koda，底层是 Muse 系列语言模型）。所以
-    `model` 字段只用于兼容下游，不影响路由结果。
-
-    请求带 `tools` 时，会注入【工具调用协议】并把模型输出的 JSON 解析回
-    `tool_calls`（muse.ai 没有原生 function calling，这层属于协议适配）。
-
-    对话与生图/生视频共用同一个浏览器实例，靠 `GEN_LOCK` 串行。
-    """
     req = _scope_request_model(request, "text", req)
     _authorize_model(_, req.model, "text")
+    owner = _client_id(_)
+    provider_route = chat_providers.route(req.model)
+    job = _begin_client_job(owner, req.model, "text", request.url.path,
+                            prompt=build_chat_prompt(req.messages, language="vi") or req.prompt,
+                            parameters={"stream": req.stream})
+    return await _tracked_text(job, lambda: _chat_completions(req, request, owner, job, provider_route),
+                               report_tokens=bool(provider_route))
+
+
+async def _chat_completions(req, request, owner, job, provider_route):
+    options = _text_browser_options(owner, req.model, job)
     web_provider = _module_provider(req.model, "text")
     if web_provider:
         if req.tools or any(isinstance(msg.content, list) and any(
@@ -2583,7 +2948,7 @@ async def chat_completions(req: ChatRequest, request: Request, _=Depends(api_aut
             raise HTTPException(400, "Hãy nhập nội dung chat.")
         timeout = max(1, min(req.timeout or CFG.chat_timeout, 600))
         text = await asyncio.to_thread(_run_web_generation, web_provider, prompt,
-                                       image=False, timeout=timeout)
+                                       image=False, timeout=timeout, **options)
         cid, created = "chatcmpl-" + uuid.uuid4().hex, int(time.time())
         if req.stream:
             return StreamingResponse(iter((
@@ -2595,12 +2960,16 @@ async def chat_completions(req: ChatRequest, request: Request, _=Depends(api_aut
                 "choices": [{"index": 0, "finish_reason": "stop",
                              "message": {"role": "assistant", "content": text}}]}
 
-    provider_route = chat_providers.route(req.model)
     if provider_route:
         provider, model_id = provider_route
         payload = await request.json()
         payload["stream"] = req.stream
         timeout = max(1, min(req.timeout or CFG.chat_timeout, 600))
+        if job:
+            client = _active_client(owner)
+            _authorize_model(client, req.model, "text")
+            job.record("started")
+            _record_account(job, provider + ":api", provider + " API")
         return await chat_providers.chat(provider, model_id, payload, timeout)
 
     language = store.muse_prompt_language()
@@ -2618,14 +2987,14 @@ async def chat_completions(req: ChatRequest, request: Request, _=Depends(api_aut
 
     model = "muse/text" if req.model == "muse/text" else resolve_model(req.model.removeprefix("muse/"), default="muse-spark")
     timeout = int(req.timeout or CFG.chat_timeout)
-    acc = store.pick_account(rotate=True)
-    if not acc:
+    acc = store.pick_account(rotate=True) if not owner else {}
+    if acc is None:
         raise HTTPException(400, "没有可用账号，请先在管理页面导入 cookie")
 
     cid = "chatcmpl-" + uuid.uuid4().hex[:24]
     created = int(time.time())
-    acc_id = acc["id"]
-    cookies = acc["cookies"]
+    acc_id = acc.get("id")
+    cookies = acc.get("cookies") or {}
     expires = acc.get("cookies_exp")
 
     def tool_call_deltas(calls: list[dict]) -> list[list[dict]]:
@@ -2643,7 +3012,7 @@ async def chat_completions(req: ChatRequest, request: Request, _=Depends(api_aut
                 # 握手建立瞬间立即发送 role: assistant 首包，让下游客户端秒级捕获光标
                 yield _sse(_chat_chunk(cid, created, model, {"role": "assistant"}))
 
-                stream_gen = safe_chat_stream(cookies, prompt, expires, timeout, account_id=acc_id)
+                stream_gen = safe_chat_stream(cookies, prompt, expires, timeout, account_id=acc_id, **options)
                 if not tool_note:
                     for chunk in stream_gen:
                         for piece in _pace_text(chunk):
@@ -2689,30 +3058,29 @@ async def chat_completions(req: ChatRequest, request: Request, _=Depends(api_aut
                                 "choices": [],
                                 "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}})
                 yield "data: [DONE]\n\n"
-                store.mark(acc_id, True, "")
+            except HTTPException as exc:
+                code, message = _usage_error(exc)
+                yield _sse({"error": {"message": message, "type": "server_error", "code": code}})
             except MuseAuthError as exc:
-                store.mark(acc_id, False, str(exc))
                 yield _sse({"error": {"message": str(exc), "type": "auth_error", "code": 401}})
+            except MusePostSendError as exc:
+                code, message = _usage_error(exc)
+                yield _sse({"error": {"message": message, "type": "server_error", "code": code}})
             except MuseGenerationError as exc:
-                store.mark(acc_id, True, f"助手超时: {str(exc)[:60]}")
-                try:
-                    engine.reset_thread()
-                except Exception:
-                    pass
                 yield _sse({"error": {"message": str(exc), "type": "server_error", "code": 502}})
             except Exception as exc:
                 yield _sse({"error": {"message": f"内部错误: {exc}", "type": "server_error", "code": 500}})
         return StreamingResponse(sync_stream(), media_type="text/event-stream", headers=_SSE_HEADERS)
 
     def run() -> str:
-        return "".join(safe_chat_stream(cookies, prompt, expires, timeout, account_id=acc_id))
+        return "".join(safe_chat_stream(cookies, prompt, expires, timeout, account_id=acc_id, **options))
 
     try:
         text = await asyncio.to_thread(run)
     except MuseAuthError as exc:
         raise HTTPException(401, str(exc))
     except MuseGenerationError as exc:
-        raise HTTPException(502, str(exc))
+        raise HTTPException(502, str(exc)) from exc
 
     usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     if tool_note:
@@ -2783,16 +3151,24 @@ async def responses_api(req: ResponsesRequest, _=Depends(api_auth), request: Req
     if not prompt:
         raise HTTPException(400, "input 为空")
 
+    owner = _client_id(_)
+    job = _begin_client_job(owner, req.model, "text", request.url.path if request else "/v1/responses",
+                            prompt=prompt, parameters={"stream": req.stream})
+    return await _tracked_text(job, lambda: _responses_api(req, prompt, owner, job))
+
+
+async def _responses_api(req, prompt, owner, job):
+    options = _text_browser_options(owner, req.model, job)
     model = resolve_model(req.model.removeprefix("muse/"), default="muse-spark")
     timeout = int(req.timeout or CFG.chat_timeout)
-    acc = store.pick_account(rotate=True)
-    if not acc:
+    acc = store.pick_account(rotate=True) if not owner else {}
+    if acc is None:
         raise HTTPException(400, "没有可用账号，请先在管理页面导入 cookie")
 
     rid = "resp_" + uuid.uuid4().hex[:24]
     mid = "msg_" + uuid.uuid4().hex[:24]
     created = int(time.time())
-    acc_id, cookies, expires = acc["id"], acc["cookies"], acc.get("cookies_exp")
+    acc_id, cookies, expires = acc.get("id"), acc.get("cookies") or {}, acc.get("cookies_exp")
 
     def envelope(status: str, text: str = "") -> dict:
         done = status == "completed"
@@ -2821,7 +3197,7 @@ async def responses_api(req: ResponsesRequest, _=Depends(api_auth), request: Req
                     "part": {"type": "output_text", "text": "",
                              "annotations": []}})
                 full = ""
-                for chunk in safe_chat_stream(cookies, prompt, expires, timeout, account_id=acc_id):
+                for chunk in safe_chat_stream(cookies, prompt, expires, timeout, account_id=acc_id, **options):
                     full += chunk
                     yield _sse_event("response.output_text.delta", {
                         "type": "response.output_text.delta", "item_id": mid,
@@ -2839,21 +3215,22 @@ async def responses_api(req: ResponsesRequest, _=Depends(api_auth), request: Req
                     "type": "response.completed",
                     "response": envelope("completed", full)})
             except Exception as exc:  # noqa: BLE001
-                log.warning("responses 流式失败: %s", exc)
+                code, message = _usage_error(exc)
+                log.warning("Luồng Responses thất bại (%s).", code)
                 yield _sse_event("response.failed", {
-                    "type": "response.failed",
+                    "type": "response.failed", "error": {"code": code, "message": message},
                     "response": envelope("failed")})
         return StreamingResponse(sync_stream(), media_type="text/event-stream", headers=_SSE_HEADERS)
 
     def run() -> str:
-        return "".join(safe_chat_stream(cookies, prompt, expires, timeout, account_id=acc_id))
+        return "".join(safe_chat_stream(cookies, prompt, expires, timeout, account_id=acc_id, **options))
 
     try:
         text = await asyncio.to_thread(run)
     except MuseAuthError as exc:
         raise HTTPException(401, str(exc))
     except MuseGenerationError as exc:
-        raise HTTPException(502, str(exc))
+        raise HTTPException(502, str(exc)) from exc
 
     return envelope("completed", text)
 
@@ -3056,23 +3433,111 @@ async def test_chat_provider(provider: ProviderName, _=Depends(auth)):
     return await chat_providers.test(provider)
 
 
+class ClientModelRule(BaseModel):
+    accounts: list[str] = Field(default_factory=list, max_length=500)
+    daily_limit: int | None = Field(default=None, ge=1, le=1_000_000)
+    charge: Price = Field(default_factory=Price)
+    upstream: Price = Field(default_factory=Price)
+
+
 class ClientKeyRequest(BaseModel):
-    label: str = Field(min_length=1, max_length=80)
-    providers: list[Literal["muse", "chatgpt", "gemini-web", "openai", "gemini"]] = Field(min_length=1, max_length=5)
+    label: str | None = Field(default=None, min_length=1, max_length=80)
+    providers: list[Literal["muse", "chatgpt", "gemini-web", "openai", "gemini"]] | None = Field(
+        default=None, min_length=1, max_length=5)
+    rules: dict[str, ClientModelRule] | None = Field(default=None, min_length=1, max_length=100)
+    enabled: bool | None = None
+    history_days: int | None = Field(default=None, ge=0, le=30)
+
+
+def _client_key_catalog():
+    accounts = {"muse": [{"id": account["id"], "label": account.get("label") or account["id"],
+                          "enabled": account.get("enabled", True), "verified": account.get("ok") is True}
+                         for account in store.accounts]}
+    for account in managed_web.list_accounts():
+        accounts.setdefault(account["provider"], []).append(
+            {key: account[key] for key in ("id", "label", "enabled", "verified")})
+    entries = [{"id": model, "provider": provider, "kind": kind, "accounts": accounts.get(provider, [])}
+               for model, (provider, kind) in MODULES.items()]
+    entries.extend({"id": item["model_id"], "provider": item["id"], "kind": "text", "accounts": [],
+                    "configured": item["configured"]} for item in chat_providers.status())
+    return entries
+
+
+def _client_key_settings(req, existing=None):
+    changes = req.model_dump(exclude_none=True, exclude={"rules"})
+    if "label" in changes:
+        changes["label"] = changes["label"].strip()
+    if ("label" in changes and not changes["label"]) or (existing is None and not changes.get("label")):
+        raise HTTPException(400, "Hãy nhập tên người dùng.")
+    if req.rules is None:
+        if changes.get("providers"):
+            if existing and existing.get("rules") is not None:
+                raise HTTPException(400, "Khóa này cần phân quyền theo mô hình.")
+            changes["providers"] = list(dict.fromkeys(changes["providers"]))
+        elif existing is None:
+            raise HTTPException(400, "Hãy chọn mô hình và tài khoản cho khóa.")
+        return changes
+
+    old_rules = (existing or {}).get("rules") or {}
+    catalog = {entry["id"]: entry for entry in _client_key_catalog()}
+    providers, rules = [], {}
+    for model, rule in req.rules.items():
+        entry = catalog.get(model)
+        old = old_rules.get(model) or {}
+        if entry is None and old and (official := chat_providers.route(model)):
+            entry = {"provider": official[0], "kind": "text"}
+        if entry is None or (not entry.get("configured", True) and not old):
+            raise HTTPException(400, f"Mô hình {model} chưa được cấu hình trong mac2API.")
+        provider, kind = entry["provider"], entry["kind"]
+        if provider in ("openai", "gemini"):
+            if rule.accounts:
+                raise HTTPException(400, f"{model} dùng cấu hình API chính thức của máy chủ.")
+        else:
+            known = {account["id"] for account in entry["accounts"]} | set(old.get("accounts", []))
+            if not rule.accounts or not set(rule.accounts) <= known:
+                raise HTTPException(400, f"Hãy chọn tài khoản hợp lệ cho {model}.")
+        token_units = ("input_1k_tokens", "output_1k_tokens") if provider in ("openai", "gemini") else ()
+        allowed_units = {"request", *{"text": token_units, "image": ("image",),
+                                      "video": ("video_second",)}[kind]}
+        for price in (rule.charge, rule.upstream):
+            if price.model_dump(exclude_none=True).keys() - allowed_units:
+                raise HTTPException(400, f"Đơn vị tính giá không áp dụng với {model}.")
+        rules[model] = rule.model_dump(exclude_none=True)
+        rules[model]["accounts"] = list(dict.fromkeys(rule.accounts))
+        providers.append(provider)
+    changes.update(providers=list(dict.fromkeys(providers)), rules=rules)
+    return changes
 
 
 @app.get("/admin/client-keys")
 def list_client_keys(_=Depends(auth)):
-    return {"clients": store.list_clients()}
+    summary = client_usage.month()
+    return {"clients": [{**client, "month": summary.get(client["id"])} for client in store.list_clients()],
+            "models": _client_key_catalog(), "currency": "VND"}
 
 
 @app.post("/admin/client-keys", status_code=201)
 def create_client_key(req: ClientKeyRequest, _=Depends(auth)):
-    label = req.label.strip()
-    if not label:
-        raise HTTPException(400, "Hãy nhập tên người dùng.")
-    client = store.create_client(label, list(dict.fromkeys(req.providers)))
-    return JSONResponse(status_code=201, content=client, headers={"Cache-Control": "no-store"})
+    return store.create_client(**_client_key_settings(req))
+
+
+@app.patch("/admin/client-keys/{client_id}")
+def update_client_key(client_id: str, req: ClientKeyRequest, _=Depends(auth)):
+    existing = store.get_client(client_id)
+    if not existing or existing.get("revoked_at"):
+        raise HTTPException(404, "Không tìm thấy khóa người dùng đang quản lý.")
+    changed = store.update_client(client_id, **_client_key_settings(req, existing))
+    if not changed:
+        raise HTTPException(404, "Không tìm thấy khóa người dùng đang quản lý.")
+    return changed
+
+
+@app.post("/admin/client-keys/{client_id}/rotate")
+def rotate_client_key(client_id: str, _=Depends(auth)):
+    client = store.update_client(client_id, rotate=True)
+    if not client:
+        raise HTTPException(404, "Không tìm thấy khóa người dùng đang quản lý.")
+    return client
 
 
 @app.delete("/admin/client-keys/{client_id}")
@@ -3080,6 +3545,47 @@ def revoke_client_key(client_id: str, _=Depends(auth)):
     if not store.revoke_client(client_id):
         raise HTTPException(404, "Không tìm thấy khóa người dùng.")
     return {"revoked": True}
+
+
+UsageState = Literal["queued", "processing", "completed", "failed", "interrupted", "cancelled"]
+
+
+@app.get("/admin/api-usage")
+def admin_api_usage(owner: str | None = None, model: str | None = None, status: UsageState | None = None,
+                    account: str | None = None, since: float | None = None, until: float | None = None,
+                    limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0), _=Depends(auth)):
+    return client_usage.list(admin=True, owner=owner, model=model, status=status, account=account,
+                             since=since, until=until, limit=limit, offset=offset)
+
+
+def _usage_detail(job_id, admin, owner=None):
+    detail = client_usage.detail(job_id, admin=admin, owner=owner)
+    if task := store.get_task(job_id):
+        for field in ("error_stage", "confirmed_reference_count"):
+            if task.get(field) is not None:
+                detail[field] = task[field]
+    if asset := detail.pop("asset", None):
+        if os.path.isfile(os.path.join(CFG.media_dir, asset)):
+            detail["result_url"] = media_url(asset, admin=admin)
+    return detail
+
+
+@app.get("/admin/api-usage/{job_id}")
+def admin_usage_detail(job_id: str, _=Depends(auth)):
+    return _usage_detail(job_id, True)
+
+
+@app.get("/v1/usage")
+def own_api_usage(model: str | None = None, status: UsageState | None = None, since: float | None = None,
+                  until: float | None = None, limit: int = Query(50, ge=1, le=100),
+                  offset: int = Query(0, ge=0), client=Depends(contract_auth)):
+    return client_usage.list(admin=False, owner=client["id"], model=model, status=status,
+                             since=since, until=until, limit=limit, offset=offset)
+
+
+@app.get("/v1/usage/{job_id}")
+def own_usage_detail(job_id: str, client=Depends(contract_auth)):
+    return _usage_detail(job_id, False, client["id"])
 
 
 @app.get("/admin/status")
@@ -3809,7 +4315,8 @@ MANAGED_DEPLOYMENT = (
 )
 TRACKED_REPO_PATHS = [
     "app.py", "engine.py", "store.py", "cdp.py", "config.py", "proxy.py",
-    "generation_timing.py", "thumbnails.py", "media_storage.py", "chat_providers.py", "web_providers.py", "managed_web.py", "GENERATION_QUEUE.md", "VERSION_REPORTING.md",
+    "generation_timing.py", "thumbnails.py", "media_storage.py", "chat_providers.py", "web_providers.py",
+    "managed_web.py", "client_usage.py", "GENERATION_QUEUE.md", "VERSION_REPORTING.md",
     "admin.html", "start-mac2api.command", "README.md", "AGENTS.md", "CHANGELOG.md", "version.json", "requirements.txt",
     "MAC2API_API_CONTRACT_TESTS.md",
     "Dockerfile", "docker-compose.yml", ".env.example", ".gitignore",
@@ -4103,6 +4610,15 @@ async def _chromium_idle_loop():
             log.exception("Không thể tắt Chromium khi rảnh")
 
 
+async def _usage_retention_loop():
+    while True:
+        try:
+            await asyncio.to_thread(client_usage.prune)
+        except (OSError, sqlite3.Error):
+            log.exception("Không dọn được nội dung lịch sử API đã hết hạn.")
+        await asyncio.sleep(3600)
+
+
 @app.on_event("startup")
 async def _startup():
     for task in list(store.tasks.values()):
@@ -4115,6 +4631,14 @@ async def _startup():
         _persist_env("MUSE2API_KEY", new_key)
         CFG.api_key = new_key
         log.info("Đã tạo khóa quản trị trong tệp .env của dịch vụ.")
+    try:
+        await asyncio.to_thread(client_usage.reconcile, store.tasks)
+        labels = {account["id"]: account.get("label") or account["id"] for account in store.accounts}
+        labels.update({account["id"]: account["label"] for account in managed_web.list_accounts()})
+        await asyncio.to_thread(client_usage.import_media, list(store.tasks.values()), labels)
+    except (OSError, sqlite3.Error):
+        log.exception("Không đối chiếu được lịch sử API khi khởi động.")
+    app.state.usage_retention_task = asyncio.create_task(_usage_retention_loop())
     app.state.keepalive_task = asyncio.create_task(_keepalive_loop())
     if CFG.chromium_idle_seconds:
         app.state.chromium_idle_task = asyncio.create_task(_chromium_idle_loop())
@@ -4122,7 +4646,7 @@ async def _startup():
 
 @app.on_event("shutdown")
 async def _shutdown():
-    loops = [task for name in ("chromium_idle_task", "keepalive_task")
+    loops = [task for name in ("chromium_idle_task", "keepalive_task", "usage_retention_task")
              if (task := getattr(app.state, name, None)) is not None]
     for loop in loops:
         loop.cancel()

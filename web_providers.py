@@ -460,7 +460,8 @@ class WebProviders:
                 continue
         raise WebProviderError("Tab này không thuộc Chrome mà mac2API đang kết nối. Hãy mở tiện ích trong đúng Chrome trên cùng máy.", 409)
 
-    def generate(self, provider_id: str, prompt: str, *, image: bool, timeout: int, managed_page=None):
+    def generate(self, provider_id: str, prompt: str, *, image: bool, timeout: int, managed_page=None,
+                 before_submit=None):
         provider = PROVIDERS[provider_id]
         deadline = time.monotonic() + timeout
         with (managed_page() if managed_page else self._page(provider_id)) as page:
@@ -473,6 +474,8 @@ class WebProviders:
             if image:
                 prompt = "Hãy tạo một ảnh mới dựa trên yêu cầu sau và trả ảnh trong câu trả lời.\n" + prompt
             page.send("Input.insertText", {"text": prompt}, timeout=_remaining(deadline, 5))
+            if before_submit:
+                before_submit()
             try:
                 self._send(page, provider, min(deadline, time.monotonic() + 10))
                 return self._wait_result(page, provider, deadline, image)

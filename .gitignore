@@ -77,3 +77,5 @@ data/web-chrome.json
 
 # Per-user API key digests and permissions
 data/api-clients.json
+
+data/api-usage.sqlite3*
