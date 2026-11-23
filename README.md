@@ -177,6 +177,10 @@ Giữ Chrome mở trong khi chạy tác vụ. Nếu Chrome hoặc mac2API khởi
 
 Các mô-đun web tạo một ảnh từ mô tả, tùy quyền của tài khoản. Chat web lấy câu trả lời hoàn chỉnh rồi mới trả về, kể cả khi client yêu cầu SSE. Mỗi yêu cầu mở và đóng tab riêng. mac2API xóa bản nháp và kiểm tra ô nhập trước khi gửi. Muse thử mở một phiên riêng mới nếu vẫn còn tệp hoặc nội dung cũ. Nếu còn bị kẹt, tác vụ dừng và giải thích trong phần **Chi tiết lỗi**. Chỉ các tệp trong ô nhập của tác vụ mới được dọn.
 
+Để dùng nhiều tài khoản trên máy có giao diện, mở **ChatGPT Web** hoặc **Gemini Web** rồi dùng mục **Tài khoản Chromium**. Tạo hồ sơ bằng tên của bạn, bấm **Đăng nhập** và đăng nhập trực tiếp trong cửa sổ vừa mở. **Kiểm tra** xác minh phiên và đóng cửa sổ thiết lập. **Bật** đưa hồ sơ vào kho chạy tác vụ của dịch vụ đó. Phiên được giữ trong thư mục `web-accounts` dưới `MUSE2API_PROFILE_ROOT`.
+
+Mục **Proxy** trên mỗi dòng lưu cấu hình kết nối của hồ sơ tương ứng. Sau khi đổi proxy, kiểm tra lại phiên trước khi dùng. Các hồ sơ đã bật và xác minh được chọn lần lượt. Khi tắt hết hồ sơ trong kho, dịch vụ dùng kết nối Chrome đã liên kết. Cửa sổ đăng nhập mở trên chính máy chạy mac2API.
+
 Để thêm media trong MacFlow/Toonflow, nhập từng tệp trong [bộ adapter theo hợp đồng v1](adapters/2.0.7/). Tệp [mac2Api.ts](adapters/mac2Api.ts) dùng cho cấu hình tổng hợp cũ. Các mô-đun chat dùng cấu hình nhà cung cấp văn bản với giao thức OpenAI Chat Completions.
 
 ## Tương thích với kết nối API chính thức đã có

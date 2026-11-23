@@ -61,9 +61,11 @@ from engine import (ESSENTIAL_COOKIES, MAX_REFERENCE_IMAGE_BYTES,
 from engine import MusePageUnavailable, MuseProxyError, MuseReferenceUploadError, MuseSessionUnavailable
 from store import Store, account_expiry, min_expiry
 from generation_timing import QueuePolicy, QueueSettings, TaskNotQueued, TaskTiming
+from managed_web import ManagedWebAccounts, visible_chrome_available
 from proxy import normalize_server, request_proxy_context, split_proxy_url
 from media_storage import CAPACITY_BYTES, CLEANUP_BYTES, delete_media_file, media_entries, media_owner, new_media_name, save_media
-from web_providers import DEFAULT_WEB_CDP_PORT, PROVIDERS as WEB_PROVIDERS, WebPostSendError, WebProviderError, WebProviders
+from web_providers import (DEFAULT_WEB_CDP_PORT, PROVIDERS as WEB_PROVIDERS, WebPostSendError,
+                           WebProviderError, WebProviders, WebSessionUnavailable)
 from thumbnails import (VIDEO_FORMATS, ThumbnailUnavailable,
                         source_version, video_thumbnail)
 
@@ -144,6 +146,7 @@ web_port = CFG.web_cdp_port
 if not web_port and CFG.cdp_port != DEFAULT_WEB_CDP_PORT and store.web_chrome_enabled():
     web_port = DEFAULT_WEB_CDP_PORT
 web_providers = WebProviders(web_port, profile_preferred=store.web_chrome_profile_preferred())
+managed_web = ManagedWebAccounts(CFG)
 MODULES = {f"muse/{kind}": ("muse", kind) for kind in ("text", "image", "video")}
 MODULES.update({f"{provider}/{kind}": (provider, kind)
                 for provider in WEB_PROVIDERS for kind in ("text", "image")})
@@ -196,9 +199,14 @@ def _module_provider(model: str, kind: str) -> str | None:
     return provider if provider in WEB_PROVIDERS else None
 
 
-def _web_call(fn, *args, on_acquired=None, on_queue=None, queue_guard=None, **kwargs):
-    queued_at = time.monotonic()
-    acquired = _wait_for_generation_slot(QUEUE_POLICY.settings()["queue_timeout"], queue_guard)
+def _web_call(fn, *args, on_acquired=None, on_queue=None, queue_guard=None,
+              queued_at=None, queue_timeout=None, **kwargs):
+    if queued_at is None:
+        queued_at = time.monotonic()
+    if queue_timeout is None:
+        queue_timeout = QUEUE_POLICY.settings()["queue_timeout"]
+    remaining = queue_timeout - (time.monotonic() - queued_at) if queue_timeout else 0
+    acquired = (not queue_timeout or remaining > 0) and _wait_for_generation_slot(remaining, queue_guard)
     try:
         if on_queue:
             on_queue(time.monotonic() - queued_at)
@@ -214,9 +222,32 @@ def _web_call(fn, *args, on_acquired=None, on_queue=None, queue_guard=None, **kw
             GEN_LOCK.release()
 
 
+def _run_web_generation(provider, prompt, *, image, timeout, on_acquired=None, on_queue=None, queue_guard=None):
+    queued_at = time.monotonic()
+    queue_timeout = QUEUE_POLICY.settings()["queue_timeout"]
+    deadline = queued_at + queue_timeout if queue_timeout else None
+    try:
+        with managed_web.reserve(provider, deadline, queue_guard) as account:
+            def generate():
+                if not account:
+                    return web_providers.generate(provider, prompt, image=image, timeout=timeout)
+                try:
+                    return web_providers.generate(provider, prompt, image=image, timeout=timeout,
+                                                  managed_page=lambda: managed_web.page(account, WEB_PROVIDERS[provider].url))
+                except WebSessionUnavailable:
+                    managed_web.update(account, verified=False)
+                    raise
+
+            return _web_call(generate, queued_at=queued_at, queue_timeout=queue_timeout,
+                             on_acquired=on_acquired, on_queue=on_queue, queue_guard=queue_guard)
+    except WebProviderError as error:
+        if on_queue:
+            on_queue(time.monotonic() - queued_at)
+        raise HTTPException(error.status, str(error)) from error
+
+
 def _run_web_image(provider, prompt, timeout, **callbacks):
-    data, ext = _web_call(web_providers.generate, provider, prompt, image=True,
-                          timeout=timeout, **callbacks)
+    data, ext = _run_web_generation(provider, prompt, image=True, timeout=timeout, **callbacks)
     name = new_media_name(ext)
     try:
         path, size = save_media(CFG.media_dir, name, data=data)
@@ -463,6 +494,11 @@ async def _validation_exc(request: Request, exc: RequestValidationError):
             "message": "请求参数校验失败：" + str(errors)[:400],
             "type": "invalid_request_error", "param": None, "code": 422}})
     return JSONResponse(status_code=422, content={"detail": errors})
+
+
+@app.exception_handler(WebProviderError)
+async def _web_provider_exc(request: Request, exc: WebProviderError):
+    return await _http_exc(request, HTTPException(exc.status, str(exc)))
 
 MODELS = [
     {"id": "muse-spark", "object": "model", "owned_by": "muse",
@@ -1858,7 +1894,7 @@ def models(_=Depends(api_auth), request: Request = None):
     modules = [
         {"id": model, "object": "model", "owned_by": provider, "type": kind}
         for model, (provider, kind) in MODULES.items()
-        if provider == "muse" or web_providers.ready(provider)
+        if provider == "muse" or _web_provider_ready(provider)
     ]
     data = [*MODELS, *modules, *external]
     if provider:
@@ -1888,6 +1924,11 @@ def _muse_capability_state():
             "busy": busy, "reason": reason}
 
 
+def _web_provider_ready(provider):
+    state = managed_web.state(provider)
+    return state["ready"] if state is not None else web_providers.ready(provider)
+
+
 @app.get("/muse/v1/capabilities")
 @app.get("/chatgpt/v1/capabilities")
 @app.get("/gemini/v1/capabilities")
@@ -1908,7 +1949,8 @@ def capabilities(request: Request, client=Depends(contract_auth)):
         busy = not lease or GEN_LOCK.full()
         for provider, state in web_states.items():
             if provider in allowed:
-                states[provider] = {**state, "busy": busy,
+                state = managed_web.state(provider) or state
+                states[provider] = {**state, "busy": busy or state.get("busy", False),
                                     "reason": "busy" if busy and state["ready"] else state["reason"]}
     model_routes = {**MODULES, "muse-spark": ("muse", "text"),
                     "muse-image": ("muse", "image"), "muse-video": ("muse", "video")}
@@ -2540,7 +2582,7 @@ async def chat_completions(req: ChatRequest, request: Request, _=Depends(api_aut
         if not prompt:
             raise HTTPException(400, "Hãy nhập nội dung chat.")
         timeout = max(1, min(req.timeout or CFG.chat_timeout, 600))
-        text = await asyncio.to_thread(_web_call, web_providers.generate, web_provider, prompt,
+        text = await asyncio.to_thread(_run_web_generation, web_provider, prompt,
                                        image=False, timeout=timeout)
         cid, created = "chatcmpl-" + uuid.uuid4().hex, int(time.time())
         if req.stream:
@@ -2876,7 +2918,9 @@ def list_web_providers(_=Depends(auth)):
     return {"configured": profile_connected if web_providers.profile_preferred else bool(web_providers.port),
             "port": web_providers.port,
             "profile_connected": profile_connected,
-            "ready": [provider for provider in WEB_PROVIDERS if web_providers.ready(provider)],
+            "ready": [provider for provider in WEB_PROVIDERS if _web_provider_ready(provider)],
+            "accounts": managed_web.list_accounts(),
+            "managed_login_available": visible_chrome_available(),
             "linked_at": dict(web_providers.linked_at),
             "local_setup": not (os.environ.get("RENDER", "").lower() == "true"
                                 or os.environ.get("RENDER_GIT_COMMIT"))}
@@ -2907,6 +2951,78 @@ async def connect_web_chrome_profile(_=Depends(auth)):
 
 class WebProviderLink(BaseModel):
     marker: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
+class WebAccountCreate(BaseModel):
+    label: str = Field(min_length=1, max_length=120)
+
+
+@app.post("/admin/web-providers/{provider}/accounts", status_code=201)
+def create_managed_web_account(provider: str, req: WebAccountCreate, _=Depends(auth)):
+    if provider not in WEB_PROVIDERS:
+        raise HTTPException(404, "Không tìm thấy nhà cung cấp web.")
+    if not (label := req.label.strip()):
+        raise HTTPException(400, "Hãy đặt tên hồ sơ.")
+    return managed_web.public(managed_web.create(provider, label))
+
+
+@app.patch("/admin/web-providers/{provider}/accounts/{aid}")
+def patch_managed_web_account(provider: str, aid: str, req: AccountPatch, _=Depends(auth)):
+    changes = {}
+    with managed_web.operation(provider, aid) as account:
+        if req.label is not None:
+            if not req.label.strip() or len(req.label.strip()) > 120:
+                raise HTTPException(400, "Tên hồ sơ phải có từ 1 đến 120 ký tự.")
+            changes["label"] = req.label.strip()
+        if "proxy" in req.model_fields_set:
+            proxy = req.proxy.configuration(account.get("proxy")) if req.proxy else None
+            if proxy != account.get("proxy"):
+                changes.update(proxy=proxy, verified=False)
+        if req.enabled is not None:
+            if req.enabled and not changes.get("verified", account["verified"]):
+                raise HTTPException(409, "Hãy kiểm tra phiên đăng nhập trước khi bật hồ sơ.")
+            changes["enabled"] = req.enabled
+        if changes:
+            if "proxy" in changes:
+                _web_call(managed_web.close_login, aid)
+            account = managed_web.update(account, **changes)
+    return managed_web.public(account)
+
+
+@app.post("/admin/web-providers/{provider}/accounts/{aid}/login")
+def open_managed_web_login(provider: str, aid: str, _=Depends(auth)):
+    with managed_web.operation(provider, aid) as account:
+        _web_call(managed_web.login, account, WEB_PROVIDERS[provider].url)
+    return {"ok": True}
+
+
+def _check_managed_session(provider, account):
+    try:
+        web_providers.check_managed(provider, lambda: managed_web.page(account, WEB_PROVIDERS[provider].url))
+    except WebSessionUnavailable:
+        managed_web.update(account, verified=False)
+        raise
+    managed_web.update(account, verified=True)
+    managed_web.close_login(account["id"])
+
+
+@app.post("/admin/web-providers/{provider}/accounts/{aid}/test")
+def test_managed_web_account(provider: str, aid: str, _=Depends(auth)):
+    with managed_web.operation(provider, aid) as account:
+        _web_call(_check_managed_session, provider, account)
+    return {"ok": True}
+
+
+@app.post("/admin/web-providers/{provider}/accounts/{aid}/proxy/test")
+def test_managed_web_proxy(provider: str, aid: str, req: ProxyTestRequest, _=Depends(auth)):
+    import requests
+    with managed_web.operation(provider, aid) as account:
+        proxy = req.proxy.configuration(account.get("proxy"))
+        try:
+            return {"ok": True, "proxy_reachable": True, "exit_ip": _proxy_exit_ip(proxy)}
+        except (MuseProxyError, requests.RequestException, ValueError, KeyError, TypeError):
+            return {"ok": False, "proxy_reachable": False,
+                    "message": "Không kiểm tra được proxy. Hãy kiểm tra địa chỉ và thông tin xác thực."}
 
 
 @app.post("/admin/web-providers/{provider}/link")
@@ -3044,6 +3160,19 @@ def _proxy_test_identity(proxy: dict, cookies: dict | None) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+def _proxy_exit_ip(proxy):
+    import requests
+    with request_proxy_context(proxy) as proxy_options, requests.Session() as session:
+        session.trust_env = False
+        response = session.get("https://api.ipify.org?format=json", timeout=(5, 10),
+                               allow_redirects=False, **proxy_options)
+    if response.status_code == 407:
+        raise MuseProxyError("Xác thực proxy thất bại (HTTP 407). Hãy kiểm tra tên đăng nhập và mật khẩu proxy.")
+    if response.status_code != 200:
+        raise MuseProxyError("代理出口检测未成功，请检查代理连接或认证")
+    return str(ipaddress.ip_address(response.json()["ip"]))
+
+
 @app.patch("/admin/accounts/{aid}")
 def patch_account(aid: str, req: AccountPatch, _=Depends(auth)):
     with ACCOUNT_POOL.cond:
@@ -3072,7 +3201,6 @@ def patch_account(aid: str, req: AccountPatch, _=Depends(auth)):
 
 @app.post("/admin/accounts/{aid}/proxy/test")
 def test_account_proxy(aid: str, req: ProxyTestRequest | None = None, _=Depends(auth)):
-    import ipaddress
     import requests
     with _account_operation(aid) as acc:
         proxy = req.proxy.configuration(acc.get("proxy")) if req is not None else _account_proxy(acc)
@@ -3083,17 +3211,7 @@ def test_account_proxy(aid: str, req: ProxyTestRequest | None = None, _=Depends(
                   "exit_ip": None, "session_ok": None, "workspace_status": None}
         authentication_failed = "Xác thực proxy thất bại (HTTP 407). Hãy kiểm tra tên đăng nhập và mật khẩu proxy."
         try:
-            # Fixed HTTPS endpoint receives no Muse cookies or proxy credentials.
-            with request_proxy_context(proxy) as proxy_options, requests.Session() as session:
-                session.trust_env = False
-                response = session.get("https://api.ipify.org?format=json",
-                                       timeout=(5, 10), allow_redirects=False,
-                                       **proxy_options)
-            if response.status_code == 407:
-                raise MuseProxyError(authentication_failed)
-            if response.status_code != 200:
-                raise MuseProxyError("代理出口检测未成功，请检查代理连接或认证")
-            result["exit_ip"] = str(ipaddress.ip_address(response.json()["ip"]))
+            result["exit_ip"] = _proxy_exit_ip(proxy)
             result["proxy_reachable"] = True
             checked = engine.renew_session_http(acc.get("cookies") or {}, acc.get("cookies_exp"),
                                                 wake_vm=False, proxy=proxy)
@@ -3691,7 +3809,7 @@ MANAGED_DEPLOYMENT = (
 )
 TRACKED_REPO_PATHS = [
     "app.py", "engine.py", "store.py", "cdp.py", "config.py", "proxy.py",
-    "generation_timing.py", "thumbnails.py", "media_storage.py", "chat_providers.py", "web_providers.py", "GENERATION_QUEUE.md", "VERSION_REPORTING.md",
+    "generation_timing.py", "thumbnails.py", "media_storage.py", "chat_providers.py", "web_providers.py", "managed_web.py", "GENERATION_QUEUE.md", "VERSION_REPORTING.md",
     "admin.html", "start-mac2api.command", "README.md", "AGENTS.md", "CHANGELOG.md", "version.json", "requirements.txt",
     "MAC2API_API_CONTRACT_TESTS.md",
     "Dockerfile", "docker-compose.yml", ".env.example", ".gitignore",
@@ -4009,5 +4127,6 @@ async def _shutdown():
     for loop in loops:
         loop.cancel()
     await asyncio.gather(*loops, return_exceptions=True)
+    await asyncio.to_thread(_web_call, managed_web.close)
     await asyncio.to_thread(web_providers.close)
     await asyncio.to_thread(engine.stop)

@@ -5,6 +5,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
 import shutil
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -25,6 +26,14 @@ PAGE = """<!doctype html><form><textarea id="prompt-textarea">Old draft</textare
 <div data-test-id="attachment-card">old.mp3 <button type="button" title="Remove audio">Remove</button></div>
 <button type="button" class="send-button">Send</button></input-container><main></main>
 <script>
+if (location.search === '?fixture-login') localStorage.fixtureSignedIn = 'yes';
+if (localStorage.fixtureSignedIn) {
+  const account = document.createElement('button');
+  account.dataset.testid = 'accounts-profile-button';
+  account.setAttribute('aria-label', 'Google Account');
+  account.textContent = 'Fixture account';
+  document.body.append(account);
+}
 for (const card of document.querySelectorAll('[data-testid="attachment-card"],[data-test-id="attachment-card"]')) {
   card.querySelector('button').onclick = () => card.remove();
 }
@@ -59,6 +68,8 @@ for (const button of document.querySelectorAll('[data-testid="send-button"], .se
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path.startswith(f"http://127.0.0.1:{self.server.server_port}/"):
+            self.server.proxied_requests += 1
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.end_headers()
@@ -254,8 +265,78 @@ async def check_existing_profile(port_file):
         app.web_providers.close()
 
 
+async def check_managed_profile(tmp, chromium, server):
+    import app
+    from managed_web import ManagedBrowser, ManagedWebAccounts
+    from web_providers import ChromeProfileConnection
+
+    launcher = Path(tmp) / "chromium-fixture"
+    launcher.write_text(f'#!/bin/sh\nexec {shlex.quote(chromium)} --no-sandbox --disable-background-networking "$@"\n')
+    launcher.chmod(0o700)
+
+    def launch(cfg, account, *, visible, url="about:blank"):
+        # Drive the same dedicated browser in headless mode on the fixture machine.
+        return ManagedBrowser(cfg, account, visible=False, url=url + "?fixture-login" if visible else url)
+
+    admin = {"Authorization": "Bearer fixture"}
+    endpoint = "/admin/web-providers/chatgpt/accounts"
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app.app), base_url="http://test") as client:
+        with patch.object(app.CFG, "chromium", str(launcher)), \
+             patch("managed_web.ManagedBrowser", side_effect=launch), \
+             patch("managed_web.visible_chrome_available", return_value=True):
+            assert (await client.post(endpoint, json={"label": "Fixture"})).status_code == 401
+            added = await client.post(endpoint, headers=admin, json={"label": "Fixture"})
+            assert added.status_code == 201, added.text
+            aid = added.json()["id"]
+            path = f"{endpoint}/{aid}"
+            assert (await client.patch(path, headers=admin, json={"enabled": True})).status_code == 409
+            assert (await client.post(path.replace("chatgpt", "gemini-web") + "/test", headers=admin)).status_code == 404
+            logged = await client.post(path + "/login", headers=admin)
+            assert logged.status_code == 200, logged.text
+            browser = app.managed_web.login_windows[aid].browser
+            for _ in range(30):
+                pages = browser.send("Target.getTargets")["result"]["targetInfos"]
+                login_tab = next((tab for tab in pages if tab["url"].endswith("?fixture-login")), None)
+                if login_tab:
+                    with ChromeProfileConnection(browser).attach(login_tab["targetId"]) as page:
+                        if page.js("Boolean(document.querySelector('[data-testid=accounts-profile-button]'))") is True:
+                            break
+                await asyncio.sleep(0.2)
+            else:
+                raise AssertionError(f"Fixture sign-in page did not initialize: {pages}")
+            checked = await client.post(path + "/test", headers=admin)
+            assert checked.status_code == 200, checked.text
+            assert not app.managed_web.login_windows
+            assert (await client.patch(path, headers=admin, json={"enabled": True})).status_code == 200
+
+            restarted = ManagedWebAccounts(app.CFG)
+            with patch.object(app, "managed_web", restarted):
+                reply = await client.post("/chatgpt/v1/chat/completions", headers=admin, json={"prompt": "Hello"})
+                assert reply.status_code == 200, reply.text
+                assert reply.json()["choices"][0]["message"]["content"] == "Test answer: Hello"
+                assert not restarted.login_windows
+                stored_proxy = await client.patch(path, headers=admin, json={
+                    "proxy": {"server": f"http://127.0.0.1:{server.server_port}",
+                              "username": "fixture", "password": "fixture-secret"},
+                })
+                assert stored_proxy.status_code == 200 and not stored_proxy.json()["verified"], stored_proxy.text
+                assert "fixture-secret" not in stored_proxy.text and stored_proxy.json()["proxy"]["has_password"]
+                # An enabled profile that needs checking must never fall back to the old Chrome path.
+                with patch.object(app.web_providers, "generate", side_effect=AssertionError("unexpected fallback")):
+                    reply = await client.post("/chatgpt/v1/chat/completions", headers=admin, json={"prompt": "Hello"})
+                assert reply.status_code == 503, reply.text
+                proxied_before = server.proxied_requests
+                checked = await client.post(path + "/test", headers=admin)
+                assert checked.status_code == 200, checked.text
+                assert server.proxied_requests > proxied_before
+                proxied_before = server.proxied_requests
+                reply = await client.post("/chatgpt/v1/chat/completions", headers=admin, json={"prompt": "Hello"})
+                assert reply.status_code == 200 and server.proxied_requests > proxied_before, reply.text
+
+
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as tmp, ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+        server.proxied_requests = 0
         threading.Thread(target=server.serve_forever, daemon=True).start()
         chromium = shutil.which("chromium") or shutil.which("google-chrome")
         assert chromium, "Chromium is required for this test"
@@ -279,8 +360,10 @@ if __name__ == "__main__":
             with patch.dict(web_providers.PROVIDERS, fixtures):
                 asyncio.run(check())
                 asyncio.run(check_existing_profile(port_file))
+                asyncio.run(check_managed_profile(tmp, chromium, server))
             print("PASS: ChatGPT and Gemini module routes, real CDP transport, image polling, media and input validation")
             print("PASS: existing Chrome profile linkage, correct session storage, original tab retained")
+            print("PASS: managed profile persists across restart, starts from idle and uses the saved proxy after recheck")
         finally:
             proc.terminate()
             proc.wait(timeout=10)

@@ -350,6 +350,15 @@
       <p class="hint" data-web-remote hidden>Chrome phải chạy cùng máy với mac2API. Bản trên Render không truy cập Chrome đang mở trên máy Mac của bạn.</p>
       <button type="button" class="ghost" data-provider-test>Kiểm tra phiên trình duyệt</button>
     </div>
+    <div class="card" data-web-accounts-panel hidden>
+      <h3>Tài khoản Chromium</h3>
+      <form data-web-account-create hidden>
+        <label>Tên tài khoản <input name="label" maxlength="120" required></label>
+        <button type="submit">Thêm hồ sơ</button>
+      </form>
+      <div data-web-accounts></div>
+      <p class="hint" data-web-accounts-status role="status"></p>
+    </div>
     <div class="card">
       <h3>Thử chat</h3>
       <form data-provider-chat>
@@ -2327,8 +2336,73 @@ const chatProviderPanels = new Map([
   const output = panel.querySelector('[data-provider-output]');
   const setup = panel.querySelector('[data-web-setup]');
   const connect = panel.querySelector('[data-web-connect]');
+  const accountPanel = panel.querySelector('[data-web-accounts-panel]');
+  const accountsList = panel.querySelector('[data-web-accounts]');
+  const accountStatus = panel.querySelector('[data-web-accounts-status]');
+  const accountForm = panel.querySelector('[data-web-account-create]');
+  const accountsPath = '/admin/web-providers/' + id + '/accounts';
   panel.querySelector('[data-web-extension-button]').textContent = id === 'chatgpt' ? 'ChatGPT' : 'Gemini';
   panel.querySelector('[data-web-copy]').onclick = () => copyText('chrome://inspect/#remote-debugging');
+
+  async function accountAction(path, options, message) {
+    try {
+      await api(path, options);
+      render(await api('/admin/web-providers'));
+      accountStatus.textContent = message;
+      return true;
+    } catch (error) {
+      accountStatus.textContent = error.message;
+      return false;
+    }
+  }
+
+  accountForm.onsubmit = async event => {
+    event.preventDefault();
+    const button = accountForm.querySelector('button');
+    button.disabled = true;
+    try {
+      if (await accountAction(accountsPath, {method: 'POST', body: JSON.stringify({label: accountForm.elements.label.value.trim()})},
+                              'Đã thêm hồ sơ. Bấm Đăng nhập để mở cửa sổ.')) accountForm.reset();
+    } finally { button.disabled = false; }
+  };
+
+  function renderAccounts(data) {
+    const entries = (data.accounts || []).filter(account => account.provider === id);
+    accountPanel.hidden = !data.managed_login_available && !entries.length;
+    accountForm.hidden = !data.managed_login_available;
+    accountsList.replaceChildren();
+    for (const account of entries) {
+      const row = document.createElement('div');
+      row.className = 'row';
+      const description = document.createElement('span');
+      const details = account.busy ? 'Đang dùng' : !account.verified ? 'Chờ kiểm tra' : account.enabled ? 'Đang bật' : 'Đã tắt';
+      description.textContent = `${account.label} · ${details}${account.proxy ? ' · ' + account.proxy.server : ''}`;
+      row.append(description);
+      const path = accountsPath + '/' + encodeURIComponent(account.id);
+      const actions = [
+        ['Đăng nhập', () => accountAction(path + '/login', {method: 'POST'}, 'Đăng nhập trong cửa sổ Chromium rồi bấm Kiểm tra.'), !data.managed_login_available],
+        ['Kiểm tra', () => accountAction(path + '/test', {method: 'POST'}, 'Phiên đăng nhập đã được xác minh.'), false],
+        ['Proxy', () => openProxy(account.id, account), false],
+        [account.enabled ? 'Tắt' : 'Bật', () => accountAction(path, {method: 'PATCH', body: JSON.stringify({enabled: !account.enabled})},
+          account.enabled ? 'Đã tắt hồ sơ.' : 'Đã bật hồ sơ.'), !account.verified && !account.enabled],
+      ];
+      for (const [label, action, disabled] of actions) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'ghost mini';
+        button.textContent = label;
+        button.disabled = disabled || account.busy;
+        button.onclick = async () => {
+          const buttons = [...row.querySelectorAll('button')].map(button => [button, button.disabled]);
+          for (const [sibling] of buttons) sibling.disabled = true;
+          try { await action(); }
+          finally { for (const [sibling, wasDisabled] of buttons) sibling.disabled = wasDisabled; }
+        };
+        row.append(button);
+      }
+      accountsList.append(row);
+    }
+  }
 
   connect.onclick = async () => {
     connect.disabled = true;
@@ -2341,6 +2415,7 @@ const chatProviderPanels = new Map([
 
   function render(data) {
     const ready = data.ready?.includes(id) ?? Boolean(data.configured);
+    const managed = data.accounts?.some(account => account.provider === id && account.enabled);
     status.textContent = data.profile_connected ? 'Đã kết nối Chrome. Mở tab đã đăng nhập và chọn dịch vụ trong tiện ích.'
       : data.configured ? 'Đang dùng cổng Chrome đã cấu hình. Bạn cũng có thể kết nối hồ sơ đang đăng nhập bên dưới.'
         : 'Chưa kết nối Chrome Web. Làm theo phần thiết lập bên dưới.';
@@ -2348,7 +2423,10 @@ const chatProviderPanels = new Map([
     setup.open = !ready && !setup.hidden;
     panel.querySelector('[data-web-remote]').hidden = data.local_setup !== false;
     if (ready && data.linked_at?.[id]) status.textContent = 'Đã xác minh tab qua tiện ích lúc ' + fmtTime(data.linked_at[id]) + '.';
-    test.disabled = send.disabled = !ready;
+    if (managed) status.textContent = ready ? 'Đang dùng kho hồ sơ Chromium.' : 'Hãy kiểm tra phiên của hồ sơ Chromium đã bật.';
+    send.disabled = !ready;
+    test.disabled = managed || !ready;
+    renderAccounts(data);
   }
   test.disabled = send.disabled = true;
   test.onclick = async () => {
@@ -2643,7 +2721,7 @@ async function testAcc(id){
   }catch(e){ toast('测试失败：' + e.message, 'bad'); }
 }
 
-let proxyAccountId = null;
+let proxyTarget = null;
 let proxyBusy = false;
 function updateProxyMode(){
   const enabled = $('proxyMode').value === 'proxy';
@@ -2652,22 +2730,20 @@ function updateProxyMode(){
   $('proxyServer').required = enabled;
   $('proxyMode').disabled = proxyBusy;
   $('proxySave').disabled = proxyBusy;
-  const saved = accounts.find(a => a.id === proxyAccountId)?.proxy;
+  const saved = proxyTarget?.account.proxy;
   $('proxyRemove').disabled = proxyBusy || !saved;
   $('proxyTest').disabled = proxyBusy || !enabled || !$('proxyServer').value.trim();
 }
-function proxyHasChanges(){
-  const saved = accounts.find(a => a.id === proxyAccountId)?.proxy;
-  if ($('proxyMode').value !== (saved ? 'proxy' : 'default')) return true;
-  return !!saved && ($('proxyServer').value.trim() !== saved.server
-    || $('proxyUsername').value !== (saved.username || '') || !!$('proxyPassword').value);
-}
-function openProxy(id){
-  const account = accounts.find(a => a.id === id);
+function openProxy(id, webAccount){
+  const account = webAccount || accounts.find(a => a.id === id);
   if (!account) return;
-  proxyAccountId = id;
+  const path = webAccount ? '/admin/web-providers/' + account.provider + '/accounts/' : '/admin/accounts/';
+  proxyTarget = {account, path: path + encodeURIComponent(id)};
   proxyBusy = false;
   $('proxyForm').reset();
+  $('proxyHelp').textContent = webAccount
+    ? 'Hồ sơ dùng proxy khi đăng nhập, kiểm tra và tạo nội dung. Sau khi đổi proxy, hãy kiểm tra lại phiên.'
+    : t('该账号的浏览器、会话检测与保活使用同一代理。代理失败会报告错误，不会自动直连。');
   $('proxyMode').value = account.proxy ? 'proxy' : 'default';
   $('proxyServer').value = account.proxy?.server || '';
   $('proxyUsername').value = account.proxy?.username || '';
@@ -2679,7 +2755,7 @@ function openProxy(id){
 }
 $('proxyDialog').addEventListener('close', () => {
   $('proxyForm').reset();
-  proxyAccountId = null;
+  proxyTarget = null;
   proxyBusy = false;
 });
 $('proxyMode').addEventListener('change', updateProxyMode);
@@ -2689,8 +2765,8 @@ $('proxyForm').addEventListener('input', () => {
   updateProxyMode();
 });
 async function saveProxy(remove){
-  const id = proxyAccountId;
-  if (!id || proxyBusy) return;
+  const target = proxyTarget;
+  if (!target || proxyBusy) return;
   let proxy = null;
   if (!remove && $('proxyMode').value === 'proxy'){
     proxy = {server: $('proxyServer').value.trim(), username: $('proxyUsername').value};
@@ -2701,19 +2777,20 @@ async function saveProxy(remove){
   $('proxyError').textContent = '';
   $('proxyResult').textContent = '';
   try{
-    await api('/admin/accounts/' + encodeURIComponent(id), {method:'PATCH', body:JSON.stringify({proxy})});
-    if (proxyAccountId === id) $('proxyDialog').close();
+    await api(target.path, {method:'PATCH', body:JSON.stringify({proxy})});
+    if (proxyTarget === target) $('proxyDialog').close();
     toast(proxy ? '代理已保存，下次请求生效' : '代理已移除，恢复默认网络', 'ok');
-    await loadPool();
+    if (target.account.provider) await loadChatProvider(target.account.provider === 'chatgpt' ? 'openai' : 'gemini');
+    else await loadPool();
   }catch(e){
-    if (proxyAccountId === id) $('proxyError').textContent = e.message;
+    if (proxyTarget === target) $('proxyError').textContent = e.message;
   }finally{
-    if (proxyAccountId === id) { proxyBusy = false; updateProxyMode(); }
+    if (proxyTarget === target) { proxyBusy = false; updateProxyMode(); }
   }
 }
 async function testProxy(){
-  const id = proxyAccountId;
-  if (!id || proxyBusy) return;
+  const target = proxyTarget;
+  if (!target || proxyBusy) return;
   $('proxyError').textContent = '';
   if (!$('proxyServer').value.trim()) {
     $('proxyError').textContent = '请输入代理链接';
@@ -2723,27 +2800,27 @@ async function testProxy(){
   if ($('proxyPassword').value) proxy.password = $('proxyPassword').value;
   proxyBusy = true;
   updateProxyMode();
-  $('proxyResult').textContent = '正在通过当前输入的代理检测出口与 Muse 会话…';
+  $('proxyResult').textContent = target.account.provider ? 'Đang kiểm tra kết nối proxy…' : '正在通过当前输入的代理检测出口与 Muse 会话…';
   try{
-    const r = await api('/admin/accounts/' + encodeURIComponent(id) + '/proxy/test', {method:'POST', body:JSON.stringify({proxy})});
+    const r = await api(target.path + '/proxy/test', {method:'POST', body:JSON.stringify({proxy})});
     const label = value => value === true ? '已确认' : value === false ? '未通过' : '未确认';
     const lines = ['代理连通：' + label(r.proxy_reachable)];
     if (r.exit_ip) lines.push('出口 IP：' + r.exit_ip);
     if ('session_ok' in r) lines.push('Muse 会话：' + label(r.session_ok));
     if (r.workspace_status) lines.push('工作区状态：' + r.workspace_status);
     if (r.message) lines.push(r.message);
-    if (proxyAccountId === id) {
+    if (proxyTarget === target) {
       $('proxyResult').textContent = lines.join('\n');
       $('proxyResult').style.color = r.ok ? 'var(--ok)' : 'var(--warn)';
     }
-    await loadPool();
+    if (!target.account.provider) await loadPool();
   }catch(e){
-    if (proxyAccountId === id) {
+    if (proxyTarget === target) {
       $('proxyResult').textContent = '';
       $('proxyError').textContent = e.message;
     }
   }finally{
-    if (proxyAccountId === id) { proxyBusy = false; updateProxyMode(); }
+    if (proxyTarget === target) { proxyBusy = false; updateProxyMode(); }
   }
 }
 $('proxyForm').addEventListener('submit', event => { event.preventDefault(); saveProxy(false); });

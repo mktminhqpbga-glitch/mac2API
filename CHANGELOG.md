@@ -1,5 +1,10 @@
 # Nhật ký và bàn giao mac2API
 
+## Kho hồ sơ web và proxy theo tài khoản
+
+- ChatGPT Web và Gemini Web có kho hồ sơ Chromium riêng, đăng nhập trực tiếp và kiểm tra trong bảng quản trị. Mỗi hồ sơ có nút bật, tắt và cấu hình proxy.
+- Tác vụ chờ hồ sơ khả dụng trước khi lấy khe Chromium. Các hồ sơ có proxy dùng cấu hình đã lưu khi mở Chromium.
+
 ## Hàng đợi ChatGPT Web và Gemini Web
 
 - Khi hết khe Chromium, `/capabilities` dùng lần xác minh gần nhất của kết nối hiện tại. Adapter ảnh có thể đưa tác vụ vào hàng đợi khi phiên hợp lệ và còn chỗ, giống luồng Muse.

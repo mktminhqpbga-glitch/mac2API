@@ -71,6 +71,11 @@ class WebPostSendError(WebProviderError):
     """The browser may already have submitted the request."""
 
 
+class WebSessionUnavailable(WebProviderError):
+    def __init__(self):
+        super().__init__("Chưa xác nhận được tài khoản đã đăng nhập. Hãy mở hồ sơ, đăng nhập và kiểm tra lại.", 409)
+
+
 def chrome_debug_file():
     root = Path.home()
     if sys.platform == "darwin":
@@ -368,6 +373,29 @@ class WebProviders:
         with self._page(provider_id) as page:
             self._wait_composer(page, provider, time.monotonic() + 15)
 
+    def check_managed(self, provider_id, page_factory):
+        with page_factory() as page:
+            self._wait_managed_login(page, provider_id, time.monotonic() + 15)
+
+    def _wait_managed_login(self, page, provider_id, deadline):
+        provider = PROVIDERS[provider_id]
+        selectors = {
+            "chatgpt": '[data-testid="accounts-profile-button"], [data-testid="profile-button"]',
+            "gemini-web": 'a[href^="https://accounts.google.com/SignOutOptions"], button[aria-label^="Google Account"], '
+                          'button[aria-label^="Tài khoản Google"]',
+        }
+        while (remaining := deadline - time.monotonic()) > 0:
+            present = page.js(f"""(() => {{
+                if (location.origin !== {json.dumps(_origin(provider.url))}) return false;
+                const editor = document.querySelector({json.dumps(provider.composer)});
+                const account = document.querySelector({json.dumps(selectors[provider_id])});
+                return Boolean(editor?.getClientRects().length && account?.getClientRects().length);
+            }})()""", timeout=min(remaining, 3))
+            if present is True:
+                return
+            time.sleep(0.3)
+        raise WebSessionUnavailable()
+
     def _verify_marker(self, page, provider, origin, marker):
         matched = page.js(f"""(() => {{
             if (location.origin !== {json.dumps(origin)}) return false;
@@ -432,11 +460,15 @@ class WebProviders:
                 continue
         raise WebProviderError("Tab này không thuộc Chrome mà mac2API đang kết nối. Hãy mở tiện ích trong đúng Chrome trên cùng máy.", 409)
 
-    def generate(self, provider_id: str, prompt: str, *, image: bool, timeout: int):
+    def generate(self, provider_id: str, prompt: str, *, image: bool, timeout: int, managed_page=None):
         provider = PROVIDERS[provider_id]
         deadline = time.monotonic() + timeout
-        with self._page(provider_id) as page:
-            self._wait_composer(page, provider, min(deadline, time.monotonic() + 25))
+        with (managed_page() if managed_page else self._page(provider_id)) as page:
+            composer_deadline = min(deadline, time.monotonic() + 25)
+            if managed_page:
+                self._wait_managed_login(page, provider_id, composer_deadline)
+            else:
+                self._wait_composer(page, provider, composer_deadline)
             self._clean_composer(page, provider, min(deadline, time.monotonic() + 3))
             if image:
                 prompt = "Hãy tạo một ảnh mới dựa trên yêu cầu sau và trả ảnh trong câu trả lời.\n" + prompt
