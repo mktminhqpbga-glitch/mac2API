@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import threading
+import time
 from unittest.mock import patch as mock_patch
 
 import httpx
@@ -203,12 +204,56 @@ async def run():
                 info = await detail(response.headers["X-Mac2API-Usage-Id"])
                 assert info["charge"] == 55 and info["usage"]["output_tokens"] == 250
 
+            # Both older async image endpoints must reuse the receipt before normalizing references.
+            for suffix in ("generations", "edits"):
+                path = "/muse/v1/images/" + suffix
+                retry_headers = {**b, "Idempotency-Key": suffix}
+                request = {"prompt": "Ảnh dùng lại mã", "async": True}
+                accepted = await http.post(path, headers=retry_headers, json=request)
+                assert accepted.status_code == 202, accepted.text
+                replay_id = accepted.json()["id"]
+                with mock_patch.object(app, "_prepare_reference_images",
+                                       side_effect=AssertionError("replay fetched input")):
+                    replay = await http.post(path, headers=retry_headers, json=request)
+                    assert replay.json()["id"] == replay_id
+                    conflict = await http.post(path, headers=retry_headers, json={**request, "prompt": "khác"})
+                    assert conflict.status_code == 409
+                assert (await wait_for(replay_id))["charge"] == 15
+
+            # Keep an account busy and allow another tenant with a different account to proceed.
+            holding = app.ACCOUNT_POOL.acquire(account_id=ignored)
+            try:
+                pending = await http.post(endpoint, headers=b, json={"prompt": "Đang đợi tài khoản"})
+                assert pending.status_code == 202
+                pending_id = pending.json()["id"]
+                independent = await create("Independent", {"muse/image": image_rule(first, 16)})
+                response = await http.post(endpoint, headers=headers(independent["api_key"]),
+                                           json={"prompt": "Tài khoản khác đang rảnh"})
+                assert response.status_code == 202
+                assert (await wait_for(response.json()["id"]))["charge"] == 16
+                assert (await detail(pending_id))["status"] == "queued"
+            finally:
+                app.ACCOUNT_POOL.release(holding["id"])
+            assert (await wait_for(pending_id))["charge"] == 15
+
             reopened = ClientUsage(app.client_usage.path)
             assert reopened.detail(tid, admin=True)["charge"] == 25
             with reopened._database() as db:
                 db.execute("UPDATE usage SET expires_at=0 WHERE id=?", (tid,))
             reopened.prune()
             assert "input" not in reopened.detail(tid, admin=True)
+
+            ledger_owner = app.store.find_client(bob["api_key"])
+            recovered = reopened.begin("task_recovered", ledger_owner, "muse/image", "image", endpoint)
+            reopened.begin("use_still_running", ledger_owner, "muse/image", "image", endpoint)
+            ended_at = int(time.time()) - 10
+            reopened.reconcile({recovered.id: {"status": "completed", "kind": "image", "updated_at": ended_at}})
+            invoice = reopened.detail(recovered.id, admin=True)
+            assert invoice["charge"] == 15 and invoice["ended_at"] == ended_at
+            assert reopened.detail("use_still_running", admin=True)["status"] == "queued"
+            reopened.reconcile({}, restarting=True)
+            assert reopened.detail("use_still_running", admin=True)["error_code"] == "SERVICE_RESTARTED"
+
     print("PASS: scoped model/account routing, pending edits and final dispatch, daily quota, snapshots, history isolation and chat usage")
 
 

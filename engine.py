@@ -33,6 +33,7 @@ import time
 import uuid
 import unicodedata
 
+from starlette.exceptions import HTTPException
 from websocket import WebSocketException
 
 from cdp import CDP, CDPError, http_json
@@ -1286,9 +1287,11 @@ class MuseEngine:
         "return (ta.value||'').length;})(%s)"
     )
 
-    def _send(self, prompt: str, *, expected_references: int | None = None, deadline: float | None = None):
+    def _send(self, prompt: str, *, expected_references: int | None = None, deadline: float | None = None,
+              before_submit=None):
         if expected_references is not None:
-            return self._send_media_draft(prompt, expected_references, deadline if deadline is not None else float('inf'))
+            return self._send_media_draft(prompt, expected_references,
+                                          deadline if deadline is not None else float("inf"), before_submit)
 
         # 1. 确保 textarea 滚动到视口中央并获得真实焦点
         try:
@@ -1329,6 +1332,8 @@ class MuseEngine:
         clicked = "no-button"
         t_deadline = time.time() + 3.0
         while time.time() < t_deadline:
+            if before_submit:
+                before_submit()
             if self._click_send() == "clicked":
                 clicked = "clicked"
                 break
@@ -1337,6 +1342,8 @@ class MuseEngine:
         if clicked != "clicked":
             # 兜底：Ctrl+Enter 或普通 Enter
             for combo in ({"modifiers": 1}, {}):
+                if before_submit:
+                    before_submit()
                 for t in ("keyDown", "char", "keyUp"):
                     params = {"type": t, "key": "Enter", "code": "Enter",
                               "windowsVirtualKeyCode": 13, "nativeVirtualKeyCode": 13,
@@ -1355,7 +1362,7 @@ class MuseEngine:
         time.sleep(0.3)
         return clicked
 
-    def _send_media_draft(self, prompt: str, expected: int, deadline: float) -> str:
+    def _send_media_draft(self, prompt: str, expected: int, deadline: float, before_submit=None) -> str:
         # Recent uploads can keep Send disabled even after a preview is visible.
         deadline = min(deadline, time.monotonic() + 10)
         setter = self._SET_COMPOSER_DRAFT_JS % json.dumps(prompt)
@@ -1373,6 +1380,8 @@ class MuseEngine:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
+            if before_submit:
+                before_submit()
             result = self._click_media_send(expected, prompt, timeout=min(3, remaining))
             if result == "clicked":
                 return result
@@ -1796,10 +1805,10 @@ class MuseEngine:
         self.reset_thread(for_chat=True)
         self._ensure_clean_composer(cookies, expires, account_id)
         base_agent, base_text, _ = self._poll_chat()
-        if before_submit:
-            before_submit()
         try:
-            delivery = self._send(prompt)
+            delivery = self._send(prompt, **({"before_submit": before_submit} if before_submit else {}))
+        except HTTPException:
+            raise
         except Exception as exc:
             raise MusePostSendError("Mất kết nối khi gửi tin nhắn Muse. Yêu cầu không được gửi lại tự động.") from exc
         if delivery not in ("clicked", "enter-sent"):
@@ -2254,17 +2263,17 @@ class MuseEngine:
         base_agent_cnt = self._agent_count()
         if time.monotonic() >= deadline:
             raise MuseGenerationError("任务准备超时，已停止发送")
-        if before_submit:
-            before_submit()
         try:
             send_options = ({"expected_references": expected_references, "deadline": deadline}
                             if expected_references is not None else {})
+            if before_submit:
+                send_options["before_submit"] = before_submit
             if self._send(prompt, **send_options) not in ("clicked", "enter-sent"):
                 raise MusePostSendError("Chưa xác nhận gửi prompt. Yêu cầu không được gửi lại tự động.")
             return self._collect_generated_media(expect, deadline, on_progress, stop_event,
                                                  upload_hashes, baseline_sources, baseline_src,
                                                  base_agent_cnt, len(atts_before))
-        except (MuseModelRefusalError, MusePostSendError, MusePageUnavailable, MuseReferenceUploadError):
+        except (HTTPException, MuseModelRefusalError, MusePostSendError, MusePageUnavailable, MuseReferenceUploadError):
             raise
         except Exception as exc:
             raise MusePostSendError(str(exc)) from exc

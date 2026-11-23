@@ -372,48 +372,55 @@ class AccountPoolManager:
     def acquire(self, account_id: str | None = None, preferred_id: str | None = None,
                 rotate: bool = True, force_rotate: bool = False,
                 timeout: float | None = 60.0, record_use: bool = True, queue_guard=None,
-                allowed_accounts=None, omit_id=None) -> dict:
+                allowed_accounts=None, omit_id=None, with_slot=False) -> dict:
         deadline = None if timeout is None else time.monotonic() + timeout
         with self.cond:
             while True:
                 if queue_guard:
                     queue_guard()
-                allowed = allowed_accounts() if allowed_accounts else None
                 remaining = None if deadline is None else deadline - time.monotonic()
                 if remaining is not None and remaining <= 0:
-                    raise MuseGenerationError("等待空闲账号超时，当前所有账号均处于繁忙中")
+                    raise MuseGenerationError("Hết thời gian chờ tài khoản hoặc khe xử lý Muse.")
 
+                allowed = allowed_accounts() if allowed_accounts else None
+                if allowed is not None:
+                    allowed = allowed - {omit_id}
+                pinned = None
                 if account_id:
-                    acc = self.store.get_account(account_id)
-                    _check_dispatch(allowed_accounts, account_id)
-                    if not acc or not acc.get("enabled", True) or (allowed is not None and acc.get("ok") is False):
+                    pinned = self.store.get_account(account_id)
+                    if allowed is not None and account_id not in allowed:
+                        raise HTTPException(403, {"code": "CLIENT_ACCOUNT_DENIED",
+                                                  "message": "Khóa API không có quyền dùng tài khoản Muse này."})
+                    if not pinned or not pinned.get("enabled", True) or (allowed is not None and pinned.get("ok") is False):
                         raise MuseAuthError(f"指定账号 {account_id} 不存在或已禁用")
-                    if account_id not in self.busy_accounts:
-                        self.busy_accounts.add(account_id)
-                        return acc
+                    candidates = [pinned]
                 else:
-                    pref = preferred_id if preferred_id not in self.busy_accounts else None
-                    acc = self.store.pick_account(
-                        preferred_id=pref,
-                        rotate=rotate,
-                        force_rotate=force_rotate,
-                        exclude_ids=self.busy_accounts,
-                        record_use=record_use,
-                        **({"allowed_ids": allowed - {omit_id}} if allowed is not None else {}),
-                    )
-                    if acc:
-                        self.busy_accounts.add(acc["id"])
-                        return acc
-
-                live = [a for a in self.store.accounts if a.get("enabled", True) and a.get("cookies")]
-                if allowed is not None and not any(a["id"] in allowed and a["id"] != omit_id
-                                                  and a.get("ok") is not False for a in live):
-                    raise HTTPException(503, {"code": "CLIENT_ACCOUNTS_UNAVAILABLE",
-                                              "message": "Không có tài khoản Muse đã cấp quyền sẵn sàng."})
-                if not live:
+                    candidates = [a for a in self.store.accounts if a.get("enabled", True) and a.get("cookies")
+                                  and (allowed is None or (a["id"] in allowed and a.get("ok") is not False))]
+                if not candidates:
+                    if allowed is not None:
+                        raise HTTPException(503, {"code": "CLIENT_ACCOUNTS_UNAVAILABLE",
+                                                  "message": "Không có tài khoản Muse đã cấp quyền sẵn sàng."})
                     raise MuseAuthError("没有可用账号，请先在管理页面导入 cookie")
 
-                self.cond.wait(timeout=0.5 if remaining is None else min(remaining, 0.5))
+                available = any(a["id"] not in self.busy_accounts for a in candidates)
+                if available and (not with_slot or GEN_LOCK.acquire(blocking=False)):
+                    account = None
+                    try:
+                        pref = preferred_id if preferred_id not in self.busy_accounts else None
+                        account = pinned or self.store.pick_account(
+                            preferred_id=pref, rotate=rotate, force_rotate=force_rotate,
+                            exclude_ids=self.busy_accounts, record_use=record_use,
+                            **({"allowed_ids": allowed} if allowed is not None else {}),
+                        )
+                        if account:
+                            self.busy_accounts.add(account["id"])
+                            return account
+                    finally:
+                        if with_slot and account is None:
+                            GEN_LOCK.release(touch_idle=False)
+
+                self.cond.wait(timeout=0.25 if remaining is None else min(remaining, 0.25))
 
     def release(self, account_id: str | None):
         if not account_id:
@@ -852,7 +859,7 @@ def _renew_and_persist(acc_id: str, wake_vm: bool = True, force: bool = False) -
 def safe_chat_stream(cookies: dict, prompt: str, expires: dict | None,
                      timeout: int, account_id: str | None, *, allowed_accounts=None,
                      on_acquired=None, on_account=None):
-    """Acquire a generation slot before the account lease; release both after cleanup."""
+    """Reserve browser capacity only when the tenant can run on its allowed account."""
     import queue
     q = queue.Queue(maxsize=100)
     stop_event = threading.Event()
@@ -868,8 +875,6 @@ def safe_chat_stream(cookies: dict, prompt: str, expires: dict | None,
     def check_queue():
         if stop_event.is_set():
             raise TaskNotQueued()
-        if allowed_accounts:
-            allowed_accounts()
 
     def worker():
         cur_id = account_id
@@ -879,10 +884,11 @@ def safe_chat_stream(cookies: dict, prompt: str, expires: dict | None,
         leased_id = None
         slot_acquired = False
         try:
-            slot_acquired = _wait_for_generation_slot(timeout, check_queue)
-            if not slot_acquired:
-                emit("error", MuseGenerationError("等待对话并发槽位超时"))
-                return
+            if not allowed_accounts:
+                slot_acquired = _wait_for_generation_slot(timeout, check_queue)
+                if not slot_acquired:
+                    emit("error", MuseGenerationError("等待对话并发槽位超时"))
+                    return
             for attempt in range(2):
                 if stop_event.is_set():
                     return
@@ -891,16 +897,23 @@ def safe_chat_stream(cookies: dict, prompt: str, expires: dict | None,
                         engine.close_current_page()
                         ACCOUNT_POOL.release(leased_id)
                         leased_id = None
+                    if allowed_accounts:
+                        _clear_account_proxy()
+                        GEN_LOCK.release()
+                        slot_acquired = False
                     try:
                         alt = ACCOUNT_POOL.acquire(rotate=True, force_rotate=True, timeout=timeout,
                                                    **({"allowed_accounts": allowed_accounts,
-                                                       "omit_id": cur_id} if allowed_accounts else {}))
+                                                       "omit_id": cur_id, "with_slot": True,
+                                                       "queue_guard": check_queue} if allowed_accounts else {}))
                     except HTTPException as exc:
                         if exc.status_code != 503:
                             raise
                         break
                     except (MuseAuthError, MuseGenerationError):
                         break
+                    if allowed_accounts and alt:
+                        slot_acquired = True
                     if not alt or alt["id"] == cur_id:
                         if alt:
                             leased_id = alt["id"]
@@ -911,7 +924,9 @@ def safe_chat_stream(cookies: dict, prompt: str, expires: dict | None,
                     cur_exp = alt.get("cookies_exp")
                     log.info("【对话自动切号】切换到备用账号 %s (%s) 重试...", alt.get("label"), cur_id)
                 elif allowed_accounts:
-                    account = ACCOUNT_POOL.acquire(timeout=timeout, allowed_accounts=allowed_accounts)
+                    account = ACCOUNT_POOL.acquire(timeout=timeout, allowed_accounts=allowed_accounts,
+                                                   with_slot=True, queue_guard=check_queue)
+                    slot_acquired = True
                     leased_id = cur_id = account["id"]
                     cur_cookies, cur_exp = account["cookies"], account.get("cookies_exp")
                 elif cur_id:
@@ -1872,8 +1887,15 @@ def _run_generation(prompt: str, kind: str, timeout: int,
     if not allowed_accounts and not any(a.get("enabled", True) and a.get("cookies") for a in store.accounts):
         raise MuseGenerationError("没有可用的生成账号，请检查账号池")
     queue_timeout = QUEUE_POLICY.settings()["queue_timeout"]
+    if allowed_accounts:
+        return _run_generation_locked(
+            prompt, kind, timeout, account_id, on_progress, reference_image, reference_images,
+            on_acquired=on_acquired, on_account=on_account, on_queue=on_queue, on_error=on_error,
+            queue_timeout=queue_timeout, queue_guard=queue_guard, allowed_accounts=allowed_accounts,
+            pair_slot=True,
+        )
     t0 = time.monotonic()
-    acquired = _wait_for_generation_slot(queue_timeout, check_queue if queue_guard or allowed_accounts else None)
+    acquired = _wait_for_generation_slot(queue_timeout, check_queue if queue_guard else None)
     queued = time.monotonic() - t0
     _generation_callback(on_queue, queued)
     if not acquired:
@@ -1883,8 +1905,7 @@ def _run_generation(prompt: str, kind: str, timeout: int,
                                       on_progress, reference_image, reference_images,
                                       on_acquired=on_acquired, on_account=on_account,
                                       on_queue=on_queue, on_error=on_error,
-                                      queued=queued, queue_timeout=queue_timeout, queue_guard=queue_guard,
-                                      **({"allowed_accounts": allowed_accounts} if allowed_accounts else {}))
+                                      queued=queued, queue_timeout=queue_timeout, queue_guard=queue_guard)
     finally:
         GEN_LOCK.release()
 
@@ -1895,7 +1916,7 @@ def _run_generation_locked(prompt: str, kind: str, timeout: int,
                     reference_images: list[str] | None = None,
                     deadline=None, on_acquired=None, on_account=None,
                     on_queue=None, on_error=None, queued=0.0, queue_timeout=None,
-                    queue_guard=None, allowed_accounts=None) -> tuple[dict, str | None]:
+                    queue_guard=None, allowed_accounts=None, pair_slot=False) -> tuple[dict, str | None]:
     if queue_timeout is None:
         queue_timeout = QUEUE_POLICY.settings()["queue_timeout"]
 
@@ -1905,7 +1926,8 @@ def _run_generation_locked(prompt: str, kind: str, timeout: int,
         t0 = time.monotonic()
         try:
             return ACCOUNT_POOL.acquire(timeout=remaining, **kwargs,
-                                        **({"allowed_accounts": allowed_accounts} if allowed_accounts else {}))
+                                        **({"allowed_accounts": allowed_accounts} if allowed_accounts else {}),
+                                        **({"with_slot": True} if pair_slot else {}))
         finally:
             waited = time.monotonic() - t0
             queued += waited
@@ -1913,6 +1935,17 @@ def _run_generation_locked(prompt: str, kind: str, timeout: int,
             if deadline is not None:
                 deadline += waited
             _generation_callback(on_queue, queued)
+
+    def release(account):
+        try:
+            engine.close_current_page()
+        finally:
+            try:
+                _clear_account_proxy()
+            finally:
+                if pair_slot:
+                    GEN_LOCK.release()
+                ACCOUNT_POOL.release(account["id"])
 
     cur_acc = lease(account_id=account_id, preferred_id=None, rotate=True,
                     **({"queue_guard": queue_guard} if queue_guard else {}))
@@ -1929,12 +1962,9 @@ def _run_generation_locked(prompt: str, kind: str, timeout: int,
                     raise last_exc
                 raise MuseGenerationError("生成时限已到（不含排队时间），已停止等待")
             if attempt > 0:
-                old_id = cur_acc["id"] if cur_acc else None
-                cur_acc = None
-                try:
-                    engine.close_current_page()
-                finally:
-                    ACCOUNT_POOL.release(old_id)
+                previous, cur_acc = cur_acc, None
+                old_id = previous["id"]
+                release(previous)
                 try:
                     alt = lease(rotate=True, force_rotate=True,
                                 **({"omit_id": old_id} if allowed_accounts else {}))
@@ -2006,12 +2036,8 @@ def _run_generation_locked(prompt: str, kind: str, timeout: int,
                 on_error(str(last_exc))
         raise last_exc
     finally:
-        try:
-            engine.close_current_page()
-        finally:
-            _clear_account_proxy()
-            if cur_acc:
-                ACCOUNT_POOL.release(cur_acc.get("id"))
+        if cur_acc:
+            release(cur_acc)
 
 
 # ------------------------- 基础接口 -------------------------
@@ -2596,16 +2622,21 @@ def get_image_task(task_id: str, _=Depends(api_auth), request: Request = None):
 @app.post("/chatgpt/v1/images/generations")
 @app.post("/gemini/v1/images/generations")
 @app.post("/v1/images/generations")
-async def images_generations(req: ImageRequest, _=Depends(api_auth), request: Request = None):
+async def images_generations(req: ImageRequest, _=Depends(api_auth), request: Request = None,
+                             idempotency_key: Annotated[str | None, Header()] = None):
     req = _scope_request_model(request, "image", req)
     _authorize_model(_, req.model, "image")
     owner = _client_id(_)
     route = request.url.path if request else "/v1/images/generations"
     provider = _image_module(req)
+    submission = await asyncio.to_thread(_media_submission, req, idempotency_key) if req.async_ and idempotency_key else None
+    existing = _replayed_media_task(store.tasks.values(), "image", provider or "muse", owner, submission)
+    if existing:
+        return JSONResponse(status_code=202, content=_task_receipt(existing))
     if provider:
         prompt = _web_image_prompt(req)
         if req.async_:
-            return _queue_image(req, prompt, [], owner=owner, route=route)
+            return _queue_image(req, prompt, [], owner=owner, route=route, submission=submission)
         return await _sync_image(req, prompt, [], owner, route)
     ref_images = await asyncio.to_thread(
         _prepare_reference_images, _image_references(req), **({"public_only": True} if owner else {}))
@@ -2613,13 +2644,14 @@ async def images_generations(req: ImageRequest, _=Depends(api_auth), request: Re
     _validate_muse_references(req.prompt, kinds)
     prompt = build_image_prompt(req, kinds, language=store.muse_prompt_language())
     if req.async_:
-        return _queue_image(req, prompt, ref_images, owner=owner, route=route)
+        return _queue_image(req, prompt, ref_images, owner=owner, route=route, submission=submission)
     return await _sync_image(req, prompt, ref_images, owner, route)
 
 
 @app.post("/muse/v1/images/edits")
 @app.post("/v1/images/edits")
-async def images_edits(request: Request, _=Depends(api_auth)):
+async def images_edits(request: Request, _=Depends(api_auth),
+                       idempotency_key: Annotated[str | None, Header()] = None):
     """OpenAI 兼容的图生图/图像编辑接口，兼容 multipart/form-data 与 application/json。"""
     content_type = request.headers.get("content-type", "").lower()
     prompt = ""
@@ -2704,6 +2736,11 @@ async def images_edits(request: Request, _=Depends(api_auth)):
     owner = _client_id(_)
     if _module_provider(req_obj.model, "image"):
         raise HTTPException(400, "Mô-đun web chưa hỗ trợ chỉnh sửa ảnh.")
+    submission = (await asyncio.to_thread(_media_submission, req_obj, idempotency_key)
+                  if req_obj.async_ and idempotency_key else None)
+    existing = _replayed_media_task(store.tasks.values(), "image", "muse", owner, submission)
+    if existing:
+        return JSONResponse(status_code=202, content=_task_receipt(existing))
     ref_image_data = await asyncio.to_thread(
         _prepare_reference_images, ref_image_data, **({"public_only": True} if owner else {}))
     kinds = _reference_kinds(ref_image_data)
@@ -2711,7 +2748,7 @@ async def images_edits(request: Request, _=Depends(api_auth)):
     full_prompt = build_image_prompt(req_obj, kinds, language=store.muse_prompt_language())
     route = getattr(getattr(request, "url", None), "path", "/v1/images/edits")
     if req_obj.async_:
-        return _queue_image(req_obj, full_prompt, ref_image_data, owner=owner, route=route)
+        return _queue_image(req_obj, full_prompt, ref_image_data, owner=owner, route=route, submission=submission)
     return await _sync_image(req_obj, full_prompt, ref_image_data, owner, route)
 
 
@@ -4610,13 +4647,17 @@ async def _chromium_idle_loop():
             log.exception("Không thể tắt Chromium khi rảnh")
 
 
-async def _usage_retention_loop():
+async def _usage_maintenance_loop():
+    next_prune = 0
     while True:
         try:
-            await asyncio.to_thread(client_usage.prune)
+            await asyncio.to_thread(client_usage.reconcile, store.tasks)
+            if time.monotonic() >= next_prune:
+                await asyncio.to_thread(client_usage.prune)
+                next_prune = time.monotonic() + 3600
         except (OSError, sqlite3.Error):
-            log.exception("Không dọn được nội dung lịch sử API đã hết hạn.")
-        await asyncio.sleep(3600)
+            log.exception("Không bảo trì được lịch sử API.")
+        await asyncio.sleep(60)
 
 
 @app.on_event("startup")
@@ -4624,6 +4665,7 @@ async def _startup():
     for task in list(store.tasks.values()):
         if task.get("kind") in ("image", "video") and task.get("status") in ("queued", "processing"):
             store.transition_task(task["id"], task["status"], status="interrupted", needs_reconcile=True,
+                                  error_code="SERVICE_RESTARTED",
                                   error="Dịch vụ đã khởi động lại. Hãy đối chiếu kết quả trước khi gửi yêu cầu mới.")
     if not CFG.api_key:
         import secrets
@@ -4632,13 +4674,13 @@ async def _startup():
         CFG.api_key = new_key
         log.info("Đã tạo khóa quản trị trong tệp .env của dịch vụ.")
     try:
-        await asyncio.to_thread(client_usage.reconcile, store.tasks)
+        await asyncio.to_thread(client_usage.reconcile, store.tasks, restarting=True)
         labels = {account["id"]: account.get("label") or account["id"] for account in store.accounts}
         labels.update({account["id"]: account["label"] for account in managed_web.list_accounts()})
         await asyncio.to_thread(client_usage.import_media, list(store.tasks.values()), labels)
     except (OSError, sqlite3.Error):
         log.exception("Không đối chiếu được lịch sử API khi khởi động.")
-    app.state.usage_retention_task = asyncio.create_task(_usage_retention_loop())
+    app.state.usage_maintenance_task = asyncio.create_task(_usage_maintenance_loop())
     app.state.keepalive_task = asyncio.create_task(_keepalive_loop())
     if CFG.chromium_idle_seconds:
         app.state.chromium_idle_task = asyncio.create_task(_chromium_idle_loop())
@@ -4646,7 +4688,7 @@ async def _startup():
 
 @app.on_event("shutdown")
 async def _shutdown():
-    loops = [task for name in ("chromium_idle_task", "keepalive_task", "usage_retention_task")
+    loops = [task for name in ("chromium_idle_task", "keepalive_task", "usage_maintenance_task")
              if (task := getattr(app.state, name, None)) is not None]
     for loop in loops:
         loop.cancel()

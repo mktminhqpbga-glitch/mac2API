@@ -1,5 +1,10 @@
 # Nhật ký và bàn giao mac2API
 
+## Rà soát hàng đợi và đối chiếu sử dụng API
+
+- Kiểm tra lại quyền trước mỗi lần thử gửi trên trình duyệt. Tác vụ Muse chỉ giữ khe Chromium khi đã có tài khoản được phép.
+- Hai endpoint ảnh bất đồng bộ cũ dùng lại biên nhận khi gửi cùng Idempotency-Key. Lịch sử đối chiếu lại tác vụ media đã kết thúc sau lỗi ghi và phân biệt mất kết nối phía nhà cung cấp.
+
 ## Chỉnh sửa khóa người dùng và theo dõi sử dụng API
 
 - Chọn mô hình và tài khoản theo từng khóa, sửa quyền ngay trên khóa hiện có, tạm khóa và đổi mã. Kiểm tra lại quyền trước khi gửi yêu cầu tới nhà cung cấp.

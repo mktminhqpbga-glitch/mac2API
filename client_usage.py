@@ -94,6 +94,8 @@ class ClientUsage:
             db.execute("CREATE INDEX IF NOT EXISTS usage_owner_time ON usage(owner, created_at)")
             db.execute("CREATE INDEX IF NOT EXISTS usage_time ON usage(created_at)")
             db.execute("CREATE INDEX IF NOT EXISTS usage_quota ON usage(owner, model, created_at)")
+            db.execute("CREATE INDEX IF NOT EXISTS usage_pending ON usage(id) "
+                       "WHERE status IN ('queued','processing')")
             yield db
 
     def begin(self, job_id, client, model, kind, route, *, prompt=None, references=0, parameters=None):
@@ -146,7 +148,7 @@ class ClientUsage:
                 (json.dumps({"id": account_id, "label": label, "started_at": time.time()}), job_id),
             )
 
-    def finish(self, job_id, status, *, usage=None, output=None, asset=None, code=None, error=None):
+    def finish(self, job_id, status, *, usage=None, output=None, asset=None, code=None, error=None, ended_at=None):
         usage = usage or {}
         with self._database() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -163,7 +165,7 @@ class ClientUsage:
             db.execute(
                 """UPDATE usage SET status=?, ended_at=?, usage=?, charge=?, upstream=?,
                    error_code=?, error=?, output=?, asset=? WHERE id=?""",
-                (status, now, json.dumps(usage), charge, upstream, code, error,
+                (status, ended_at or now, json.dumps(usage), charge, upstream, code, error,
                  redact_content(output) if keep_content else None, asset if keep_content else None, job_id),
             )
 
@@ -172,20 +174,24 @@ class ClientUsage:
             db.execute("""UPDATE usage SET input=NULL, output=NULL, asset=NULL, expires_at=NULL
                           WHERE expires_at<=?""", (time.time(),))
 
-    def reconcile(self, tasks):
+    def reconcile(self, tasks, *, restarting=False):
         with self._database() as db:
-            pending = db.execute("SELECT id, status FROM usage WHERE status IN ('queued','processing')").fetchall()
+            pending = db.execute("SELECT id FROM usage WHERE status IN ('queued','processing')").fetchall()
         for row in pending:
             task = tasks.get(row["id"], {})
             status = task.get("status")
+            ended_at = task.get("updated_at")
+            # Let the worker finish the normal write first, including optional output text.
+            if not restarting and ended_at and time.time() - ended_at < 5:
+                continue
             if status == "completed":
                 usage = task.get("usage") or ({"images": 1} if task.get("kind") == "image" else {})
-                self.finish(row["id"], status, usage=usage, asset=(task.get("result") or {}).get("filename"))
-            elif status in ("failed", "cancelled", "interrupted") and task.get("error_code"):
-                self.finish(row["id"], status, code=task["error_code"], error=redact_content(task.get("error")))
-            elif status in ("failed", "cancelled"):
-                self.finish(row["id"], status)
-            else:
+                self.finish(row["id"], status, usage=usage, ended_at=ended_at,
+                            asset=(task.get("result") or {}).get("filename"))
+            elif status in ("failed", "cancelled", "interrupted"):
+                self.finish(row["id"], status, code=task.get("error_code"),
+                            error=redact_content(task.get("error")), ended_at=ended_at)
+            elif restarting:
                 self.finish(row["id"], "interrupted", code="SERVICE_RESTARTED",
                             error="Dịch vụ đã khởi động lại. Cần đối chiếu kết quả.")
 
@@ -250,6 +256,7 @@ class ClientUsage:
                 params.append(value)
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         with self._database() as db:
+            db.execute("BEGIN")
             totals = dict(db.execute(
                 """SELECT count(*) AS requests, sum(charge) AS charge,
                           count(CASE WHEN status IN ('completed','interrupted') AND charge IS NULL THEN 1 END)
@@ -259,7 +266,9 @@ class ClientUsage:
             if admin:
                 final_account = "json_extract(account_attempts, '$[#-1].id')"
                 upstream = db.execute(
-                    "SELECT sum(upstream) AS upstream, count(*) - count(upstream) AS upstream_unknown FROM usage"
+                    """SELECT sum(upstream) AS upstream,
+                              sum(CASE WHEN status IN ('completed','failed','interrupted') AND upstream IS NULL
+                                       THEN 1 ELSE 0 END) AS upstream_unknown FROM usage"""
                     + where + (f" AND {final_account}=?" if account is not None else ""),
                     [*params, account] if account is not None else params,
                 ).fetchone()
@@ -285,8 +294,8 @@ class ClientUsage:
             rows = db.execute(
                 """SELECT owner, count(*) AS requests, sum(status='completed') AS completed,
                           sum(charge) AS charge, sum(upstream) AS upstream,
-                          sum(status='completed' AND charge IS NULL) AS charge_unknown,
-                          sum(upstream IS NULL) AS upstream_unknown, max(created_at) AS last_used
+                          sum(status IN ('completed','interrupted') AND charge IS NULL) AS charge_unknown,
+                          sum(status IN ('completed','failed','interrupted') AND upstream IS NULL) AS upstream_unknown, max(created_at) AS last_used
                    FROM usage WHERE created_at>=? GROUP BY owner""", (start,)
             ).fetchall()
         return {row["owner"]: dict(row) for row in rows}

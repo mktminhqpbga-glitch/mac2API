@@ -3,6 +3,7 @@
 Run: python tests/test_composer_send_browser.py [--root /path/to/candidate]
 """
 import argparse
+import errno
 import importlib.util
 import json
 from pathlib import Path
@@ -133,6 +134,25 @@ with tempfile.TemporaryDirectory(prefix='muse-send-test-', dir=Path.home()) as h
         assert page.js('document.querySelector("textarea[hidden]").value') == 'hidden draft'
         print('PASS: media waits for the real send button past three seconds and ignores hidden drafts')
 
+        # Revocation while the button is disabled must prevent the later click.
+        for media in (False, True):
+            fixture(attachment=media, disabled=True)
+            checks = []
+            def check_access():
+                checks.append(True)
+                if len(checks) == 2:
+                    page.js("document.getElementById('actual').disabled=false")
+                    raise module.HTTPException(403, "quyền vừa bị thu hồi")
+            try:
+                engine._send("Blocked draft", before_submit=check_access,
+                             **({"expected_references": 1} if media else {}))
+            except module.HTTPException as exc:
+                assert exc.status_code == 403
+            else:
+                raise AssertionError("revoked request was sent")
+            assert len(checks) == 2 and page.js("window.accepted.length === 0 && window.wrongClicks === 0")
+        print("PASS: media and chat recheck access even while waiting for Send")
+
         fixture(attachment=True)
         page.js("document.querySelector('#composer textarea').addEventListener('change', e => { e.target.value=''; }, {once:true})")
         assert engine._send('Recreated draft', expected_references=1) == 'clicked'
@@ -160,3 +180,14 @@ with tempfile.TemporaryDirectory(prefix='muse-send-test-', dir=Path.home()) as h
         print('PASS: task deadline limits the wait, with specific readiness errors and zero clicks')
     finally:
         engine.stop()
+        # Chromium subprocesses may finish writing the profile after the parent exits.
+        for attempt in range(10):
+            try:
+                shutil.rmtree(cfg.profile_dir)
+                break
+            except FileNotFoundError:
+                break
+            except OSError as exc:
+                if exc.errno != errno.ENOTEMPTY or attempt == 9:
+                    raise
+                time.sleep(0.1)

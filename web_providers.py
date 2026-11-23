@@ -474,10 +474,9 @@ class WebProviders:
             if image:
                 prompt = "Hãy tạo một ảnh mới dựa trên yêu cầu sau và trả ảnh trong câu trả lời.\n" + prompt
             page.send("Input.insertText", {"text": prompt}, timeout=_remaining(deadline, 5))
-            if before_submit:
-                before_submit()
             try:
-                self._send(page, provider, min(deadline, time.monotonic() + 10))
+                self._send(page, provider, min(deadline, time.monotonic() + 10),
+                           **({"before_submit": before_submit} if before_submit else {}))
                 return self._wait_result(page, provider, deadline, image)
             except CHROME_ERRORS as exc:
                 raise WebPostSendError("Mất xác nhận sau khi gửi yêu cầu. Hãy kiểm tra tác vụ gốc.", 503) from exc
@@ -537,8 +536,10 @@ class WebProviders:
         raise WebProviderError("Ô nhập phiên web còn nội dung cũ. Đã dừng trước khi gửi yêu cầu.")
 
     @staticmethod
-    def _send(page, provider, deadline):
+    def _send(page, provider, deadline, *, before_submit=None):
         while time.monotonic() < deadline:
+            if before_submit:
+                before_submit()
             clicked = page.js(f"""(() => {{
                 if (location.origin !== {json.dumps(_origin(provider.url))}) return false;
                 const button = [...document.querySelectorAll({json.dumps(provider.send)})]

@@ -169,7 +169,7 @@ Khóa người dùng chỉ xem được tác vụ của chính khóa đó. Tải
 
 Dùng HTTPS khi gửi Bearer từ xa. Với proxy ngược, chuyển scheme qua proxy tin cậy để ứng dụng nhận biết HTTPS. Thêm từng origin được phép vào `MUSE2API_CORS_ORIGINS`, cách nhau bằng dấu phẩy. Bảng quản trị giữ khóa trong phiên của tab hiện tại.
 
-Mỗi khóa có tối đa 20 yêu cầu `POST` mỗi phút và 2 yêu cầu `POST` đồng thời. Hàng đợi tạo ảnh chứa tối đa 20 tác vụ đang chờ hoặc chạy trên máy chủ, tối đa 4 tác vụ ảnh mỗi khóa. Hàng đợi video chứa tối đa 8 tác vụ, với ngưỡng 2 tác vụ media mỗi khóa khi nhận video. Việc đọc trạng thái dùng `GET`. Các khóa cùng chia sẻ tài khoản nhà cung cấp, hạn mức upstream, kho media và khe Chromium của tiến trình.
+Mỗi khóa có tối đa 20 yêu cầu `POST` mỗi phút và 2 yêu cầu `POST` đồng thời. Hàng đợi tạo ảnh chứa tối đa 20 tác vụ đang chờ hoặc chạy trên máy chủ, tối đa 4 tác vụ ảnh mỗi khóa. Hàng đợi video chứa tối đa 8 tác vụ, với ngưỡng 2 tác vụ media mỗi khóa khi nhận video. Việc đọc trạng thái dùng `GET`. Các khóa cùng chia sẻ tài khoản nhà cung cấp, hạn mức upstream, kho media và khe Chromium của tiến trình. Một máy chủ chạy một tiến trình ứng dụng trên mỗi thư mục dữ liệu để các khóa dùng chung trạng thái hàng đợi và giới hạn đồng thời.
 
 ## ChatGPT Web và Gemini Web
 

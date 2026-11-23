@@ -18,6 +18,12 @@ class EventStream(httpx.AsyncByteStream):
         yield b'data: [DONE]\n\n'
 
 
+class InterruptedEvents(httpx.AsyncByteStream):
+    async def __aiter__(self):
+        yield b'data: {"choices":[{"delta":{"content":"Xin chao"}}]}\n\n'
+        raise httpx.ReadError("upstream disconnected")
+
+
 async def run():
     import app
     import chat_providers
@@ -47,6 +53,11 @@ async def run():
         assert request.url.path == expected_path
         assert body["messages"] == [{"role": "user", "content": "Xin chao"}]
         assert "timeout" not in body
+        if body["model"] == "interrupted":
+            if body["stream"]:
+                return httpx.Response(200, stream=InterruptedEvents(),
+                                      headers={"Content-Type": "text/event-stream"})
+            raise httpx.ReadTimeout("upstream stopped responding", request=request)
         if body["model"] == "over-quota":
             return httpx.Response(429, content=b"secret upstream detail", headers={"Retry-After": "4"})
         if body["stream"]:
@@ -92,6 +103,18 @@ async def run():
             response = await client.post(url, headers=auth, json={**payload, "model": "openai/over-quota"})
             assert response.status_code == 429 and response.headers["Retry-After"] == "4"
             assert "secret upstream detail" not in response.text
+            created = await client.post("/admin/client-keys", headers=auth, json={
+                "label": "Billing fixture", "providers": ["openai"],
+            })
+            tenant_auth = {"Authorization": "Bearer " + created.json()["api_key"]}
+            payload_with_error = {**payload, "model": "openai/interrupted"}
+            response = await client.post(url, headers=tenant_auth, json=payload_with_error)
+            assert response.status_code == 504 and response.json()["error"]["code"] == "DELIVERY_UNKNOWN"
+            response = await client.post(url, headers=tenant_auth, json={**payload_with_error, "stream": True})
+            assert "DELIVERY_UNKNOWN" in response.text
+            usage = (await client.get("/v1/usage", headers=tenant_auth)).json()
+            assert len(usage["items"]) == 2
+            assert all(row["status"] == "interrupted" and row["charge"] is None for row in usage["items"])
             response = await client.post("/v1/responses", headers=auth, json={"model": "openai/gpt-test", "input": "test"})
             assert response.status_code == 400
             response = await client.put("/admin/chat-providers/openai", headers=auth, json={"model": "gpt-test"})
@@ -100,7 +123,7 @@ async def run():
             assert not response.json()["configured"]
             response = await client.post(url, headers=auth, json=payload)
             assert response.status_code == 503
-            assert len(calls) == 5
+            assert len(calls) == 7
     print("PASS: independent settings, authorization, model checks, legacy routing, chat, SSE and upstream errors")
 
 

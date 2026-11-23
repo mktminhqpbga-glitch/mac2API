@@ -1,5 +1,6 @@
 """Smoke-test the module API with a real local Chromium and fixture pages."""
 import asyncio
+import json
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
@@ -123,6 +124,25 @@ async def check():
                 app.web_providers._wait_composer(page, definition, time.monotonic() + 5)
                 draft = f"(() => {{const editor = document.querySelector({definition.composer!r}); return editor.value ?? editor.innerText;}})()"
                 assert page.js(draft) == "Old draft"
+                selector = json.dumps(definition.send)
+                page.js(f"""window.fixtureClicks = 0;
+                    document.querySelectorAll({selector}).forEach(button => {{
+                        button.disabled = true;
+                        button.addEventListener('click', () => window.fixtureClicks++);
+                    }});""")
+                checks = []
+                def check_access():
+                    checks.append(True)
+                    if len(checks) == 2:
+                        page.js(f"document.querySelectorAll({selector}).forEach(button => button.disabled = false)")
+                        raise app.HTTPException(403, "quyền vừa bị thu hồi")
+                try:
+                    app.web_providers._send(page, definition, time.monotonic() + 3, before_submit=check_access)
+                except app.HTTPException as exc:
+                    assert exc.status_code == 403
+                else:
+                    raise AssertionError(f"{provider} sent after revocation")
+                assert len(checks) == 2 and page.js("window.fixtureClicks") == 0
                 marker = "a" * 32
                 page.js(f"document.documentElement.dataset.mac2apiLink = '{marker}'")
                 endpoint = f"/admin/web-providers/{provider}/link"

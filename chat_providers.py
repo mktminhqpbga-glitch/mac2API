@@ -164,7 +164,8 @@ class ChatProviders:
                         async for chunk in response.aiter_bytes():
                             yield chunk
                     except httpx.RequestError:
-                        yield b'\n\ndata: {"error":{"message":"Upstream stream interrupted","type":"server_error"}}\n\n'
+                        yield (b'\n\ndata: {"error":{"message":"Upstream stream interrupted",'
+                               b'"type":"server_error","code":"DELIVERY_UNKNOWN"}}\n\n')
                     finally:
                         await close()
                 stream = StreamingResponse(
@@ -180,7 +181,7 @@ class ChatProviders:
                 raise HTTPException(502, "Phản hồi chat từ nhà cung cấp không hợp lệ.")
             return JSONResponse(data)
         except httpx.RequestError as exc:
-            raise _connection_error(exc) from None
+            raise _connection_error(exc, submitted=True) from None
         except ValueError:
             raise HTTPException(502, "Phản hồi chat từ nhà cung cấp không hợp lệ.") from None
         finally:
@@ -203,7 +204,12 @@ def _check_response(response: httpx.Response):
     raise HTTPException(502, f"Nhà cung cấp trả lỗi HTTP {status}.")
 
 
-def _connection_error(exc: httpx.RequestError):
+def _connection_error(exc: httpx.RequestError, *, submitted=False):
+    if submitted and isinstance(exc, (httpx.ReadTimeout, httpx.WriteTimeout, httpx.ReadError,
+                                      httpx.WriteError, httpx.RemoteProtocolError)):
+        return HTTPException(504 if isinstance(exc, httpx.TimeoutException) else 502,
+                             {"code": "DELIVERY_UNKNOWN",
+                              "message": "Mất kết nối với nhà cung cấp sau khi bắt đầu gửi. Cần đối chiếu kết quả."})
     if isinstance(exc, httpx.TimeoutException):
         return HTTPException(504, "Hết thời gian chờ nhà cung cấp.")
     return HTTPException(502, "Không kết nối được với nhà cung cấp. Hãy kiểm tra kết nối mạng của máy chủ.")
