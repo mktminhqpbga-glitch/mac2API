@@ -122,12 +122,22 @@ async def run():
             finally:
                 app.GEN_LOCK.release()
             item = await wait_for(tid)
-            overview = await http.get("/admin/overview", headers=admin)
+            app.store.update_account(second, quota={"weekly_used_pct": 35, "checked_at": int(time.time())})
+            overview = await http.get("/admin/overview?days=7", headers=admin)
             stats = overview.json()
             assert {provider["id"] for provider in stats["providers"]} == {
                 "muse", "chatgpt", "gemini-web", "openai", "gemini",
             }
             assert stats["active_keys"] == 2 and stats["requests_today"] == 1
+            report = stats["report"]
+            assert report["days"] == 7 and report["totals"]["completed"] == 1 and report["kinds"][0]["images"] == 1
+            assert report["recent"][0]["id"] == tid and report["recent"][0]["label"] == "Alice renamed"
+            user = next(user for user in report["users"] if user["id"] == alice["id"])
+            assert user["usage"]["charge"] == 25 and user["limits"] == [{"model": "muse/image", "used": 1, "limit": 2}]
+            account = next(account for account in stats["accounts"] if account["id"] == second)
+            assert account["quota"]["weekly_used_pct"] == 35
+            assert not {"cookies", "cookies_exp", "proxy", "note"} & account.keys()
+            assert (await http.get("/admin/overview?days=0", headers=admin)).status_code == 422
             assert (await http.get("/admin/overview", headers=b)).status_code == 401
             compact = (await http.get("/admin/status", headers=admin, params={"compact": 1})).json()
             assert "accounts" not in compact and "tasks" not in compact
@@ -159,6 +169,10 @@ async def run():
                     await asyncio.sleep(0.02)
                 else:
                     raise AssertionError("account never leased")
+                overview = (await http.get("/admin/overview", headers=admin)).json()
+                user = next(user for user in overview["report"]["users"] if user["id"] == alice["id"])
+                assert user["processing"] == 1
+                assert next(account for account in overview["accounts"] if account["id"] == second)["busy"]
                 patch = await http.patch(base, headers=admin,
                                          json={"rules": {"muse/image": image_rule(first, 50, daily_limit=2)}})
                 assert patch.status_code == 200, patch.text
@@ -230,7 +244,10 @@ async def run():
                     assert replay.json()["id"] == replay_id
                     conflict = await http.post(path, headers=retry_headers, json={**request, "prompt": "khác"})
                     assert conflict.status_code == 409
-                assert (await wait_for(replay_id))["charge"] == 15
+                result = await wait_for(replay_id)
+                assert result["charge"] == 15 and result["result_state"] == "available"
+                assert (await http.get(result["result_url"])).status_code == 200
+                assert "result_url" not in await detail(replay_id, b)
 
             # Keep an account busy and allow another tenant with a different account to proceed.
             holding = app.ACCOUNT_POOL.acquire(account_id=ignored)
@@ -256,6 +273,16 @@ async def run():
             assert "input" not in reopened.detail(tid, admin=True)
 
             ledger_owner = app.store.find_client(bob["api_key"])
+            unsaved = reopened.begin("use_unsaved", ledger_owner, "muse/text", "text", "/muse/v1/chat/completions")
+            unsaved.record("finish", "completed", output="no retention")
+            assert (await detail(unsaved.id))["result_state"] == "not_saved"
+            captured = reopened.begin("use_expired", {**ledger_owner, "history_days": 1}, "muse/text", "text", "/muse/v1/chat/completions")
+            captured.record("finish", "completed", output="saved for a day")
+            with reopened._database() as db:
+                db.execute("UPDATE usage SET expires_at=? WHERE id=?", (time.time() - 1, captured.id))
+            reopened.prune()
+            expired = await detail(captured.id)
+            assert expired["result_state"] == "expired" and "output" not in expired
             recovered = reopened.begin("task_recovered", ledger_owner, "muse/image", "image", endpoint)
             reopened.begin("use_still_running", ledger_owner, "muse/image", "image", endpoint)
             ended_at = int(time.time()) - 10

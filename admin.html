@@ -160,6 +160,14 @@
   #usageDialog{width:min(720px,calc(100% - 32px))}
   #usageDetails pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:225px;overflow:auto;font-size:13px}
   #usageDetails p{overflow-wrap:anywhere}
+  .usage-result{padding:14px;margin:0 0 16px;border:1px solid var(--line);border-radius:10px;background:var(--bg2)}
+  .usage-result img,.usage-result video{display:block;max-width:100%;max-height:52dvh;margin:12px auto;object-fit:contain}
+  .usage-result .acts{margin-top:10px}
+  .overview-report .tblwrap{margin-top:12px}
+  .overview-report .toolbar label{min-width:min(100%,155px)}
+  .overview-report .mono{white-space:nowrap}
+  .overview-report td details{margin-top:4px}
+  #overviewReportTotals{margin:10px 0 5px}
 
   /* ---------- 表格 ---------- */
   .tblwrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius)}
@@ -442,6 +450,73 @@
       <p id="overviewNotice" role="status" class="hint"></p>
       <div class="provider-grid" id="overviewProviders"></div>
     </div>
+    <div class="card overview-report">
+      <div class="status-line">
+        <h2 data-ui="reportUsage">Báo cáo sử dụng</h2>
+        <label><span data-ui="reportPeriod">Khoảng thời gian</span><select id="overviewDays">
+          <option value="1" data-ui="today">Hôm nay</option>
+          <option value="7" data-ui="sevenDays">7 ngày gần đây</option>
+          <option value="30" data-ui="thirtyDays">30 ngày gần đây</option>
+        </select></label>
+      </div>
+      <p id="overviewReportStatus" role="status" class="hint"></p>
+      <p id="overviewReportTotals" class="hint"></p>
+      <div id="overviewReportBody" hidden>
+        <div class="tblwrap"><table>
+          <thead><tr><th data-ui="reportKind">Loại</th><th data-ui="totalCalls">Lượt nhận</th>
+            <th data-ui="completedCalls">Hoàn tất</th><th data-ui="failedCalls">Thất bại</th>
+            <th data-ui="reviewCalls">Cần đối chiếu</th><th data-ui="measuredUsage">Kết quả đo được</th></tr></thead>
+          <tbody id="overviewByKind"></tbody>
+        </table></div>
+      </div>
+    </div>
+    <div class="card overview-report">
+      <div class="status-line"><h2 data-ui="reportClients">Khách hàng và ứng dụng</h2></div>
+      <div class="toolbar">
+        <label class="search"><span data-ui="searchClients">Tìm tên khóa</span><input type="search" id="overviewSearch" autocomplete="off"></label>
+        <label><span data-ui="reportActivity">Hoạt động</span><select id="overviewActivity">
+          <option value="" data-ui="anyStatus">Tất cả</option>
+          <option value="active" data-ui="activeTasks">Tác vụ chờ hoặc đang chạy</option>
+          <option value="used" data-ui="reportUsed">Đã dùng trong kỳ</option>
+        </select></label>
+      </div>
+      <div class="tblwrap"><table>
+        <thead><tr><th data-ui="keyName">Tên khóa</th><th data-ui="status">Trạng thái</th>
+          <th data-ui="totalCalls">Lượt nhận</th><th data-ui="completedCalls">Hoàn tất</th>
+          <th data-ui="charged">Tiền thu</th><th data-ui="lastSeen">Lần cuối trong kỳ</th>
+          <th data-ui="dailyQuota">Hạn mức hôm nay</th>
+          <th data-ui="actions">Thao tác</th></tr></thead>
+        <tbody id="overviewUsers"></tbody>
+      </table></div>
+      <div class="pager">
+        <span class="hint" id="overviewUserCount" role="status"></span>
+        <div class="acts">
+          <button type="button" class="ghost mini" id="overviewUsersPrev" data-ui="previous" disabled>Trang trước</button>
+          <button type="button" class="ghost mini" id="overviewUsersNext" data-ui="next" disabled>Trang sau</button>
+        </div>
+      </div>
+    </div>
+    <div class="card overview-report">
+      <div class="status-line"><h2 data-ui="overviewAccounts">Tài khoản AI và phiên web</h2></div>
+      <div class="tblwrap"><table>
+        <thead><tr><th data-ui="accountName">Tên tài khoản</th><th data-ui="providers">Nhà cung cấp AI</th>
+          <th data-ui="status">Trạng thái</th><th data-ui="accountActivity">Phiên hoặc lượt dùng</th>
+          <th data-ui="providerQuota">Hạn mức phía AI</th></tr></thead>
+        <tbody id="overviewAccounts"></tbody>
+      </table></div>
+    </div>
+    <div class="card overview-report">
+      <div class="status-line">
+        <h2 data-ui="recentCalls">Lượt gọi gần đây</h2>
+        <button type="button" id="overviewViewHistory" class="ghost" data-ui="viewUsage">Xem lịch sử</button>
+      </div>
+      <div class="tblwrap"><table>
+        <thead><tr><th data-ui="time">Thời điểm</th><th data-ui="keyName">Tên khóa</th>
+          <th data-ui="model">Mô hình</th><th data-ui="status">Trạng thái</th><th data-ui="actions">Thao tác</th></tr></thead>
+        <tbody id="overviewRecent"></tbody>
+      </table></div>
+    </div>
+
   </section>
 
   <section class="tab" id="tab-clients">
@@ -524,11 +599,6 @@
         <button type="button" class="mini ghost" id="usageNext" disabled>Trang sau</button>
       </div>
     </div>
-    <dialog class="proxy-dialog" id="usageDialog" aria-labelledby="usageDialogTitle">
-      <h2 id="usageDialogTitle" data-ui="usageDetails">Chi tiết lượt sử dụng</h2>
-      <div id="usageDetails"></div>
-      <form method="dialog" class="proxy-actions"><button class="ghost">Đóng</button></form>
-    </dialog>
   </section>
   <section class="tab" id="tab-openai"></section>
   <section class="tab" id="tab-gemini"></section>
@@ -1114,6 +1184,12 @@ t = requests.post(<span class="s">"BASE/v1/videos"</span>, json={<span class="s"
 </footer>
 
 <div id="toasts"></div>
+
+    <dialog class="proxy-dialog" id="usageDialog" aria-labelledby="usageDialogTitle">
+      <h2 id="usageDialogTitle" data-ui="usageDetails">Chi tiết lượt sử dụng</h2>
+      <div id="usageDetails"></div>
+      <form method="dialog" class="proxy-actions"><button class="ghost">Đóng</button></form>
+    </dialog>
 
 <dialog id="mediaDialog" class="media-dialog" aria-labelledby="mediaPreviewTitle">
   <header><h2 id="mediaPreviewTitle" data-no-i18n></h2><button class="btn" type="button" onclick="closeMediaPreview()">关闭预览</button></header>
@@ -2526,6 +2602,36 @@ const uiCopy = {
   thisMonth:['Sử dụng tháng này','Usage this month','本月用量'], actions:['Thao tác','Actions','操作'],
   previous:['Trang trước','Previous','上一页'], next:['Trang sau','Next','下一页'],
   cancel:['Hủy','Cancel','取消'], done:['Xong','Done','完成'], copyKey:['Sao chép khóa','Copy key','复制密钥'],
+  viewResult:['Xem kết quả','View result','查看结果'],
+  resultPrompt:['Prompt đã lưu','Saved prompt','已保存提示词'],
+  resultOutput:['Phản hồi đã lưu','Saved response','已保存回复'],
+  openResult:['Mở tệp kết quả','Open result file','打开结果文件'],
+  pendingResult:['Lượt gọi vẫn đang chờ hoặc xử lý.','The request is still queued or processing.','请求仍在排队或处理中。'],
+  missingResult:['Tệp kết quả không còn trong kho media.','The result file is no longer in the media library.','结果文件已不在媒体库中。'],
+  expiredResult:['Đã hết thời hạn lưu nội dung của lượt gọi.','The content retention period has expired.','该请求的内容保留期已满。'],
+  unsavedResult:['Lượt gọi đã hoàn tất nhưng không còn nội dung đã lưu. Có thể bật lưu nội dung trong mục Khóa API cho các lượt sau.',
+                 'The request completed but no saved content is available. Enable content retention in API Keys for future requests.',
+                 '请求已完成，但没有可查看的已保存内容。可在 API 密钥中为后续请求开启内容保留。'],
+  noResult:['Lượt gọi chưa có kết quả để hiển thị.','There is no result to display for this request.','该请求暂无可显示的结果。'],
+  reportUsage:['Báo cáo sử dụng','Usage report','用量报告'], reportPeriod:['Khoảng thời gian','Date range','时间范围'],
+  today:['Hôm nay','Today','今天'], sevenDays:['7 ngày gần đây','Last 7 days','最近 7 天'],
+  thirtyDays:['30 ngày gần đây','Last 30 days','最近 30 天'],
+  totalCalls:['Lượt nhận','Accepted','已接收'], completedCalls:['Hoàn tất','Completed','已完成'],
+  failedCalls:['Thất bại','Failed','失败'], reviewCalls:['Cần đối chiếu','Needs reconciliation','需要核对'],
+  measuredUsage:['Kết quả đo được','Measured results','已测量结果'], reportClients:['Khách hàng và ứng dụng','Clients and applications','客户与应用'],
+  searchClients:['Tìm tên khóa','Search key names','搜索密钥名称'], reportActivity:['Hoạt động','Activity','活动'],
+  reportUsed:['Đã dùng trong kỳ','Used in this period','本期已使用'], lastSeen:['Lần cuối trong kỳ','Last seen in period','本期最后使用'],
+  dailyQuota:['Hạn mức hôm nay','Daily allowance','今日限额'], overviewAccounts:['Tài khoản AI và phiên web','AI accounts and web sessions','AI 账号与网页会话'],
+  accountActivity:['Phiên hoặc lượt dùng','Session or activity','会话或活动'], providerQuota:['Hạn mức phía AI','Provider allowance','服务商限额'],
+  recentCalls:['Lượt gọi gần đây','Recent requests','最近的请求'], time:['Thời điểm','Time','时间'],
+  noOverviewRows:['Chưa có dữ liệu phù hợp.','No matching records yet.','暂无符合条件的记录。'],
+  reportUnavailable:['Chưa đọc được lịch sử API.','API usage could not be read.','无法读取 API 用量。'],
+  expired:['Hết hạn','Expired','已过期'], busy:['Đang được sử dụng','In use','使用中'],
+  linkedSession:['Chrome đang liên kết','Linked Chrome session','已关联的 Chrome 会话'],
+  unknownQuota:['Chưa có số liệu','No quota data','暂无限额数据'],
+  noLimit:['Chưa đặt','No limit set','未设置'],
+  charged:['Tiền thu','Customer charges','收费'], providerCost:['Chi phí AI','Provider cost','AI 成本'],
+  reportKind:['Loại','Type','类型'],
   filterUsage:['Lọc lượt sử dụng','Filter usage','筛选用量'], usageDetails:['Chi tiết lượt sử dụng','Usage details','用量详情'],
   defaultModel:['Mô hình mặc định','Default model','默认模型'], providerKey:['Khóa API của nhà cung cấp','Provider API key','服务商 API 密钥'],
   testConnection:['Kiểm tra kết nối','Test connection','测试连接'], removeKey:['Gỡ khóa đã lưu','Remove saved key','删除已保存的密钥'],
@@ -2574,7 +2680,10 @@ function showTab(name, {navigate = false, focus = false} = {}){
   if (!button) return;
   closeMediaPreview();
   if (activeTab === 'clients' && name !== 'clients') $('clientKeyDialog').close();
-  if (activeTab === 'usage' && name !== 'usage') $('usageDialog').close();
+  if (activeTab !== name) {
+    usageDetailRequest++;
+    $('usageDialog').close();
+  }
   if (activeTab === 'official' && name !== 'official') {
     $('officialPanels').querySelectorAll('input[type=password]').forEach(input => { input.value = ''; });
   }
@@ -2679,7 +2788,10 @@ function clientButton(text, action, className = 'ghost mini') {
   button.onclick = async () => {
     button.disabled = true;
     try { await action(); }
-    catch (error) { $(activeTab === 'usage' ? 'usageStatus' : 'clientKeyStatus').textContent = error.message; }
+    catch (error) {
+      if (activeTab === 'overview') toast(t(error.message), 'bad');
+      else $(activeTab === 'usage' ? 'usageStatus' : 'clientKeyStatus').textContent = error.message;
+    }
     finally { button.disabled = false; }
   };
   return button;
@@ -2997,10 +3109,60 @@ function usageDetailsText(container, label, value) {
   container.append(clientElement('strong', label), clientElement('p', value));
 }
 
-async function showUsage(id) {
+function renderUsageResult(view, item) {
+  const result = clientElement('section', undefined, 'usage-result');
+  for (const [value, title] of [[item.input, 'resultPrompt'], [item.output, 'resultOutput']]) {
+    if (!value) continue;
+    const content = clientElement('pre', value);
+    content.setAttribute('data-no-i18n', '');
+    result.append(clientElement('strong', ui(title)), content);
+  }
+  const actions = clientElement('div', undefined, 'acts');
+  if (item.output) actions.append(clientButton(ui('copy'), () => copyText(item.output)));
+  if (item.result_url) {
+    const preview = document.createElement(item.kind === 'video' ? 'video' : 'img');
+    preview.src = item.result_url;
+    if (item.kind === 'video') {
+      preview.controls = preview.playsInline = true;
+      preview.preload = 'metadata';
+    } else {
+      preview.alt = ui('viewResult');
+    }
+    result.append(preview);
+    const link = clientElement('a', ui('openResult'), 'btnlike ghostlike');
+    link.href = item.result_url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    actions.append(link);
+  } else if (!item.output) {
+    const message = {pending:'pendingResult', file_missing:'missingResult', expired:'expiredResult',
+                     not_saved:'unsavedResult'}[item.result_state] || 'noResult';
+    result.append(clientElement('p', ui(message), 'hint'));
+  }
+  if (actions.childElementCount) result.append(actions);
+  view.append(result);
+}
+
+let usageDetailRequest = 0;
+$('usageDialog').addEventListener('close', () => {
+  if (!$('usageDialog').open) $('usageDetails').replaceChildren();
+});
+
+async function showUsage(id, resultOnly = false) {
+  const request = ++usageDetailRequest;
+  const tab = activeTab;
   const item = await api('/admin/api-usage/' + encodeURIComponent(id));
+  if (request !== usageDetailRequest || activeTab !== tab || authOK === false) return;
   const view = $('usageDetails');
   view.replaceChildren();
+  $('usageDialogTitle').textContent = ui(resultOnly ? 'viewResult' : 'usageDetails');
+  if (resultOnly) {
+    view.append(clientElement('p', item.model + ' · ' + (usageStates[item.status] || item.status), 'hint'));
+    renderUsageResult(view, item);
+    if (item.error) usageDetailsText(view, 'Chi tiết lỗi', [item.error_code, item.error].filter(Boolean).join(' · '));
+    $('usageDialog').showModal();
+    return;
+  }
   usageDetailsText(view, 'Mã yêu cầu', item.id + ' · ' + item.route);
   usageDetailsText(view, 'Trạng thái', usageStates[item.status] || item.status);
   usageDetailsText(view, 'Thời gian chờ và chạy', item.queue_seconds + ' giây chờ · ' +
@@ -3030,20 +3192,7 @@ async function showUsage(id) {
   }
   const stages = {before_send: 'Trước khi gửi', muse_reply: 'Khi Muse phản hồi', delivery_unknown: 'Cần đối chiếu sau khi gửi'};
   usageDetailsText(view, 'Chi tiết lỗi', [stages[item.error_stage], item.error_code, item.error].filter(Boolean).join(' · '));
-  for (const [value, title] of [[item.input, 'Prompt đã lưu'], [item.output, 'Phản hồi đã lưu']]) {
-    if (value) {
-      const content = clientElement('pre', value);
-      content.setAttribute('data-no-i18n', '');
-      view.append(clientElement('strong', title), content);
-    }
-  }
-  if (item.result_url) {
-    const link = clientElement('a', 'Mở tệp kết quả');
-    link.href = item.result_url;
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    view.append(link);
-  }
+  renderUsageResult(view, item);
   $('usageDialog').showModal();
 }
 
@@ -3077,7 +3226,10 @@ async function loadApiUsage(page) {
     const rows = items.map(item => {
       const row = clientElement('tr');
       const details = clientElement('td');
-      details.append(clientButton(ui('usageDetails'), () => showUsage(item.id)));
+      const actions = clientElement('div', undefined, 'acts');
+      actions.append(clientButton(ui('viewResult'), () => showUsage(item.id, true)),
+                     clientButton(ui('usageDetails'), () => showUsage(item.id)));
+      details.append(actions);
       const name = clientKeys.find(key => key.id === item.owner)?.label || item.owner;
       row.append(clientElement('td', clientDate.format(item.created_at * 1000)),
                  clientElement('td', name + ' · ' + item.model),
@@ -3106,13 +3258,151 @@ $('usagePrev').onclick = () => loadApiUsage(Math.max(0, usagePage - 1));
 $('usageNext').onclick = () => loadApiUsage(usagePage + 1);
 
 const providerTabs = {muse:'pool', chatgpt:'openai', 'gemini-web':'gemini', openai:'official', gemini:'official'};
+const overviewNumbers = new Intl.NumberFormat(LANG === 'vi' ? 'vi-VN' : LANG === 'zh' ? 'zh-CN' : 'en', {
+  maximumFractionDigits: 2,
+});
+const OVERVIEW_PAGE_SIZE = 12;
+let overviewReport = null;
+let overviewUserPage = 0;
+
+function overviewRow(...values) {
+  const row = clientElement('tr');
+  for (const value of values) row.append(value instanceof HTMLElement ? value : clientElement('td', value ?? '—'));
+  return row;
+}
+
+function fillOverviewRows(id, rows, columns) {
+  if (!rows.length) {
+    const cell = clientElement('td', ui('noOverviewRows'), 'empty');
+    cell.colSpan = columns;
+    rows.push(overviewRow(cell));
+  }
+  $(id).replaceChildren(...rows);
+}
+
+function overviewHistory(owner = '') {
+  $('usageOwner').value = '';
+  nextUsageOwner = owner;
+  $('usageModel').value = $('usageAccount').value = $('usageState').value = '';
+  $('usageSince').value = overviewReport ? new Date((overviewReport.since + 7 * 3600) * 1000).toISOString().slice(0, 10) : '';
+  $('usageUntil').value = '';
+  goTab('usage');
+}
+
+function overviewCost(amount, unknown, estimated = false) {
+  return clientMoney(amount, estimated) + (amount != null && unknown ? ' + ' + clientMoney(null) : '');
+}
+
+function renderOverviewUsers(page = overviewUserPage) {
+  const query = searchText($('overviewSearch').value.trim());
+  const activity = $('overviewActivity').value;
+  const users = (overviewReport?.users || []).filter(user =>
+    searchText(user.label).includes(query) && (!activity ||
+      (activity === 'active' ? user.processing || user.queued : user.usage?.requests)));
+  const pages = Math.max(1, Math.ceil(users.length / OVERVIEW_PAGE_SIZE));
+  const expanded = new Set([...$('overviewUsers').querySelectorAll('details[open]')].map(item => item.dataset.owner));
+  overviewUserPage = Math.min(Math.max(page, 0), pages - 1);
+  fillOverviewRows('overviewUsers', users.slice(overviewUserPage * OVERVIEW_PAGE_SIZE,
+                    (overviewUserPage + 1) * OVERVIEW_PAGE_SIZE).map(user => {
+    const state = clientElement('td');
+    state.append(clientElement('span', ui(user.state), 'badge ' + {enabled:'ok', paused:'warn', revoked:'mute'}[user.state]));
+    if (user.processing || user.queued) {
+      state.append(clientElement('div', [user.processing && user.processing + ' đang chạy', user.queued && user.queued + ' đang chờ']
+                          .filter(Boolean).join(' · '), 'hint'));
+    }
+    const limits = clientElement('td');
+    if (!user.limits.length) limits.textContent = ui('noLimit');
+    else {
+      const details = clientElement('details');
+      details.dataset.owner = user.id;
+      details.open = expanded.has(user.id);
+      details.append(clientElement('summary', ui('dailyQuota') + ' (' + user.limits.length + ')'));
+      for (const rule of user.limits) {
+        const remaining = Math.max(0, rule.limit - rule.used);
+        details.append(clientElement('div', rule.model + ' · ' + overviewNumbers.format(rule.used) + '/' +
+          overviewNumbers.format(rule.limit) + ' · ' + overviewNumbers.format(remaining) + ' còn lại', 'hint'));
+      }
+      limits.append(details);
+    }
+    const action = clientElement('td');
+    action.append(clientButton(ui('viewUsage'), () => overviewHistory(user.id)));
+    return overviewRow(user.label, state, overviewNumbers.format(user.usage?.requests || 0),
+                       overviewNumbers.format(user.usage?.completed || 0),
+                       user.usage ? overviewCost(user.usage.charge, user.usage.charge_unknown) : null,
+                       user.usage?.last_seen ? clientDate.format(user.usage.last_seen * 1000) : null, limits, action);
+  }), 8);
+  $('overviewUserCount').textContent = overviewNumbers.format(users.length) + ' · ' + (overviewUserPage + 1) + '/' + pages;
+  $('overviewUsersPrev').disabled = overviewUserPage === 0;
+  $('overviewUsersNext').disabled = overviewUserPage + 1 >= pages;
+}
+
+function renderOverviewAccounts(accounts) {
+  const stateTones = {ready:'ok', paused:'mute', expired:'bad', needs_check:'warn'};
+  fillOverviewRows('overviewAccounts', accounts.map(item => {
+    const state = clientElement('td');
+    state.append(clientElement('span', ui(item.state), 'badge ' + stateTones[item.state]));
+    if (item.busy) state.append(clientElement('div', ui('busy'), 'hint'));
+    const last = item.last_used || item.verified_at;
+    const quota = clientElement('td');
+    const values = [];
+    if (Number.isFinite(item.quota?.weekly_used_pct)) values.push('Tuần ' + item.quota.weekly_used_pct + '% đã dùng');
+    if (Number.isFinite(item.quota?.extra_used_pct)) values.push('Bổ sung ' + item.quota.extra_used_pct + '% đã dùng');
+    quota.textContent = values.join(' · ') || ui('unknownQuota');
+    if (values.length && item.quota.checked_at) {
+      quota.append(clientElement('div', clientDate.format(item.quota.checked_at * 1000), 'hint'));
+    }
+    return overviewRow(item.linked ? ui('linkedSession') : item.label, clientKeyLabels[item.provider] || item.provider,
+                       state, last ? clientDate.format(last * 1000) : null, quota);
+  }), 5);
+}
+
+function overviewMeasured(item) {
+  return [
+    item.images == null ? null : overviewNumbers.format(item.images) + ' ảnh',
+    item.video_seconds == null ? null : overviewNumbers.format(item.video_seconds) + ' giây video',
+    item.input_tokens == null ? null : overviewNumbers.format(item.input_tokens) + ' token đầu vào',
+    item.output_tokens == null ? null : overviewNumbers.format(item.output_tokens) + ' token đầu ra',
+  ].filter(Boolean).join(' · ') || '—';
+}
+
+function renderOverviewReport(report) {
+  overviewReport = report || null;
+  $('overviewReportBody').hidden = !report;
+  $('overviewReportStatus').textContent = report ? '' : ui('reportUnavailable');
+  $('overviewReportTotals').textContent = '';
+  renderOverviewUsers();
+  fillOverviewRows('overviewRecent', (report?.recent || []).map(item => {
+    const action = clientElement('td');
+    action.append(clientButton(ui('viewResult'), () => showUsage(item.id, true)));
+    return overviewRow(clientDate.format(item.created_at * 1000), item.label, item.model, usageStatusCell(item.status), action);
+  }), 5);
+  if (!report) return;
+  const totals = report.totals;
+  $('overviewReportTotals').textContent = [
+    overviewNumbers.format(totals.requests) + ' lượt nhận',
+    overviewNumbers.format(totals.completed || 0) + ' hoàn tất',
+    overviewNumbers.format(totals.cancelled || 0) + ' đã hủy',
+    ui('charged') + ' ' + overviewCost(totals.charge, totals.charge_unknown),
+    ui('providerCost') + ' ' + overviewCost(totals.upstream, totals.upstream_unknown, true),
+  ].join(' · ');
+  fillOverviewRows('overviewByKind', report.kinds.map(item =>
+    overviewRow(ui(item.kind), overviewNumbers.format(item.requests), overviewNumbers.format(item.completed),
+                overviewNumbers.format(item.failed), overviewNumbers.format(item.interrupted), overviewMeasured(item))), 6);
+}
+
+$('overviewDays').onchange = () => { overviewUserPage = 0; loadOverview(); };
+$('overviewSearch').oninput = $('overviewActivity').onchange = () => renderOverviewUsers(0);
+$('overviewUsersPrev').onclick = () => renderOverviewUsers(overviewUserPage - 1);
+$('overviewUsersNext').onclick = () => renderOverviewUsers(overviewUserPage + 1);
+$('overviewViewHistory').onclick = () => overviewHistory();
+
 let overviewRequest = 0;
 async function loadOverview(){
   const request = ++overviewRequest;
   const notice = $('overviewNotice');
   if (!$('overviewProviders').childElementCount) notice.textContent = ui('loading');
   try {
-    const data = await api('/admin/overview');
+    const data = await api('/admin/overview?days=' + encodeURIComponent($('overviewDays').value));
     if (request !== overviewRequest) return;
     const ready = data.providers.filter(item => ['ready', 'configured'].includes(item.state)).length;
     $('overviewReady').textContent = ready + '/' + data.providers.length;
@@ -3136,11 +3426,15 @@ async function loadOverview(){
       tile.append(header, badges, action);
       return tile;
     }));
+    renderOverviewAccounts(data.accounts || []);
+    renderOverviewReport(data.report);
     notice.textContent = '';
   } catch (error) {
     if (request !== overviewRequest) return;
     notice.textContent = t(error.message);
     $('overviewProviders').replaceChildren();
+    renderOverviewAccounts([]);
+    renderOverviewReport(null);
     for (const id of ['overviewReady','overviewKeys','overviewRequests','overviewTasks']) $(id).textContent = '—';
   }
 }
@@ -4488,6 +4782,7 @@ function clearAdminView(){
   accounts = [];
   taskLoad++;
   usageLoad++;
+  usageDetailRequest++;
   overviewRequest++;
   closeMediaPreview();
   $('clientKeyDialog').close();
@@ -4502,6 +4797,8 @@ function clearAdminView(){
     $(id).replaceChildren();
   }
   $('newClientKey').disabled = true;
+  renderOverviewAccounts([]);
+  renderOverviewReport(null);
   $('overviewNotice').textContent = ui('loginTitle');
   for (const id of ['overviewReady','overviewKeys','overviewRequests','overviewTasks','sTotal','sOk','sBad','sDis','sMedia']) {
     $(id).textContent = '—';

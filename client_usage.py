@@ -171,8 +171,8 @@ class ClientUsage:
 
     def prune(self):
         with self._database() as db:
-            db.execute("""UPDATE usage SET input=NULL, output=NULL, asset=NULL, expires_at=NULL
-                          WHERE expires_at<=?""", (time.time(),))
+            db.execute("""UPDATE usage SET input=NULL, output=NULL, asset=NULL
+                          WHERE expires_at<=? AND (input IS NOT NULL OR output IS NOT NULL OR asset IS NOT NULL)""", (time.time(),))
 
     def reconcile(self, tasks, *, restarting=False):
         with self._database() as db:
@@ -236,6 +236,8 @@ class ClientUsage:
             for key in ("input", "output", "asset"):
                 view.pop(key, None)
         if admin:
+            if detail:
+                view["content_expires_at"] = expires_at
             view["account_attempts"] = json.loads(view["account_attempts"])
             view["upstream_basis"] = "estimated" if view["upstream"] is not None else "unknown"
             view["prices"] = {key: settings[key] for key in ("charge", "upstream")}
@@ -288,10 +290,41 @@ class ClientUsage:
             raise HTTPException(404, "Không tìm thấy lượt sử dụng API.")
         return self._view(row, admin=admin, detail=True)
 
-    def today_count(self):
-        start = _now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    def overview(self, days):
+        today = _now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        since = today - (days - 1) * 86400
+        aggregates = """
+            count(*) AS requests, sum(status='completed') AS completed,
+            sum(status='failed') AS failed, sum(status='interrupted') AS interrupted,
+            sum(status='cancelled') AS cancelled,
+            sum(CASE WHEN status='completed' THEN json_extract(usage, '$.images') END) AS images,
+            sum(CASE WHEN status='completed' THEN json_extract(usage, '$.video_seconds') END) AS video_seconds,
+            sum(CASE WHEN status='completed' THEN json_extract(usage, '$.input_tokens') END) AS input_tokens,
+            sum(CASE WHEN status='completed' THEN json_extract(usage, '$.output_tokens') END) AS output_tokens,
+            sum(charge) AS charge, sum(upstream) AS upstream,
+            sum(status IN ('completed','interrupted') AND charge IS NULL) AS charge_unknown,
+            sum(status IN ('completed','failed','interrupted') AND upstream IS NULL) AS upstream_unknown
+        """
         with self._database() as db:
-            return db.execute("SELECT count(*) FROM usage WHERE created_at>=?", (start,)).fetchone()[0]
+            db.execute("BEGIN")
+            totals = dict(db.execute(f"SELECT {aggregates} FROM usage WHERE created_at>=?", (since,)).fetchone())
+            kinds = [dict(row) for row in db.execute(
+                f"SELECT kind, {aggregates} FROM usage WHERE created_at>=? GROUP BY kind", (since,))]
+            owners = {row["owner"]: dict(row) for row in db.execute(
+                f"""SELECT owner, max(created_at) AS last_seen, {aggregates}
+                    FROM usage WHERE created_at>=? GROUP BY owner""", (since,))}
+            daily = {(row["owner"], row["model"]): row["requests"] for row in db.execute(
+                """SELECT owner, model, count(*) AS requests FROM usage
+                   WHERE created_at>=? GROUP BY owner, model""", (today,))}
+            running = {row["owner"]: dict(row) for row in db.execute(
+                """SELECT owner, sum(status='processing') AS processing, sum(status='queued') AS queued
+                   FROM usage WHERE status IN ('processing','queued') GROUP BY owner""")}
+            recent = [dict(row) for row in db.execute(
+                """SELECT id, owner, model, kind, status, created_at FROM usage WHERE created_at>=?
+                   ORDER BY created_at DESC, id DESC LIMIT 8""", (since,))]
+        return {"totals": totals, "kinds": kinds, "owners": owners, "daily": daily,
+                "running": running, "recent": recent, "today_count": sum(daily.values()),
+                "since": since, "resets_at": today + 86400}
 
     def month(self):
         start = _now().replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp()

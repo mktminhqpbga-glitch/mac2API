@@ -88,6 +88,7 @@ def check_dashboard(app, page, url):
       const block = document.querySelector('[data-model="muse/image"]');
       block.querySelector('.client-grant').click();
       block.querySelector('.client-account').click();
+      block.querySelector('.client-limit').value = '5';
       block.querySelector('[data-field=charge][data-unit=image]').value = '42';
       $('clientSave').click();
     })()""")
@@ -121,6 +122,8 @@ def check_dashboard(app, page, url):
     wait(lambda: page.js("$('tab-usage').classList.contains('active') && $('usageList').textContent.includes('42')"))
     page.js("$('usageList').querySelector('button').click()")
     wait(lambda: page.js("$('usageDialog').open"))
+    assert page.js("$('usageDialogTitle').textContent === 'Xem kết quả'")
+    assert page.js("$('usageDetails').textContent.includes('Kết quả mô phỏng')")
     assert page.js("$('usageDetails').textContent.includes('Ảnh từ giao diện')")
     page.js("$('usageDialog').close()")
 
@@ -134,6 +137,17 @@ def check_dashboard(app, page, url):
     page.js("goTab('overview')")
     wait(lambda: page.js("$('overviewKeys').textContent === '1' && $('overviewRequests').textContent === '1'"))
     assert page.js("$('playKey').value === ''")
+    wait(lambda: page.js("$('overviewUsers').textContent.includes('1/5')"))
+    assert page.js("$('overviewAccounts').textContent.includes('Muse trình duyệt')")
+    assert page.js("$('overviewByKind').textContent.includes('1 ảnh')")
+    page.js("$('overviewDays').value='7';$('overviewDays').dispatchEvent(new Event('change'))")
+    wait(lambda: page.js("overviewReport.days === 7"))
+    page.js("$('overviewRecent').querySelector('button').click()")
+    wait(lambda: page.js("$('usageDialog').open && $('usageDetails').textContent.includes('Kết quả mô phỏng')"))
+    page.js("$('usageDialog').close()")
+    page.js("$('overviewUsers').querySelector('button').click()")
+    wait(lambda: page.js("$('usageOwner').value && $('usageList').textContent.includes('42')"))
+    page.js("goTab('overview')")
     screenshot("overview")
     page.send("Emulation.setDeviceMetricsOverride",
               {"width": 390, "height": 844, "deviceScaleFactor": 1, "mobile": False})

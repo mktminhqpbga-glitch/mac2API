@@ -142,7 +142,9 @@ Trong **Quản lý tài khoản**, chọn **Ngôn ngữ chỉ dẫn Muse** rồi
 
 ## Bảng quản trị API
 
-Trang **Tổng quan** hiển thị trạng thái từng kết nối AI, số khóa đang bật, lượt API trong ngày và tác vụ đang chờ hoặc xử lý. **Khóa API** quản lý quyền của từng khách hàng. **Lịch sử API** đối chiếu kết quả và chi phí, còn **Tác vụ** lọc yêu cầu media theo nhà cung cấp, trạng thái hoặc mã.
+Trang **Tổng quan** hiển thị trạng thái kết nối AI và báo cáo lượt API theo hôm nay, 7 ngày hoặc 30 ngày gần đây. Báo cáo gồm số lượt hoàn tất, ảnh tạo được, thời lượng video và token khi có số đo. Bảng khách hàng hiển thị lượt gọi gần nhất trong kỳ, tác vụ đang chờ hoặc chạy, tiền thu và hạn mức ngày đã dùng/còn lại theo mô hình. Bảng tài khoản AI dùng trạng thái và hạn mức đã ghi nhận, kèm thời điểm đọc hạn mức nếu có.
+
+**Khóa API** quản lý quyền của từng khách hàng. **Lịch sử API** đối chiếu kết quả và chi phí, còn **Tác vụ** lọc yêu cầu media theo nhà cung cấp, trạng thái hoặc mã. Bấm **Xem kết quả** ở Lịch sử API hoặc Lượt gọi gần đây để mở phản hồi đã lưu hoặc xem trước tệp. Quản trị viên có thể mở cả tệp ảnh/video còn trong kho của tác vụ bất đồng bộ. Phản hồi văn bản chỉ xem được nếu đã bật lưu nội dung lúc gọi và còn trong thời hạn lưu.
 
 Chọn **API chính thức** để đặt model mặc định và lưu hoặc kiểm tra khóa OpenAI và Gemini. Khóa được cấp qua biến môi trường hiển thị nguồn cấu hình để quản trị viên biết cần đổi ở đâu. Trong **Thử API**, chọn **Khóa của người dùng**, nhập khóa của khách rồi bấm **Kiểm tra và tải mô hình** để kiểm tra đúng quyền trước khi gửi yêu cầu thử.
 

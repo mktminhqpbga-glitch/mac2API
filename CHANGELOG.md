@@ -1,5 +1,10 @@
 # Nhật ký và bàn giao mac2API
 
+## Báo cáo Tổng quan và xem kết quả API
+
+- Tổng quan theo dõi lượt nhận và kết quả theo loại, hoạt động của từng khóa, hạn mức ngày và trạng thái tài khoản AI.
+- Lịch sử API và lượt gọi gần đây có nút xem kết quả, xem trước tệp media và thông báo khi nội dung hết hạn hoặc chưa được lưu.
+
 ## Bảng quản trị API và tiện ích 1.0.6
 
 - Giao diện mac2API dùng điều hướng theo nhóm, tổng quan nhiều nhà cung cấp và bố cục thích ứng trên thiết bị nhỏ. Có màn hình cấu hình OpenAI và Gemini API chính thức.

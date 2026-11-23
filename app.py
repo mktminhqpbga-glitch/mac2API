@@ -3597,13 +3597,33 @@ def admin_api_usage(owner: str | None = None, model: str | None = None, status: 
 
 def _usage_detail(job_id, admin, owner=None):
     detail = client_usage.detail(job_id, admin=admin, owner=owner)
-    if task := store.get_task(job_id):
+    asset = detail.pop("asset", None)
+    task = store.get_task(job_id)
+    if task:
         for field in ("error_stage", "confirmed_reference_count"):
             if task.get(field) is not None:
                 detail[field] = task[field]
-    if asset := detail.pop("asset", None):
-        if os.path.isfile(os.path.join(CFG.media_dir, asset)):
-            detail["result_url"] = media_url(asset, admin=admin)
+        if (admin and not asset and detail["kind"] in ("image", "video")
+                and task.get("owner") == detail["owner"]
+                and task["status"] in ("completed", "succeeded", "success", "done")):
+            asset = (task.get("result") or {}).get("filename")
+    if asset and os.path.isfile(os.path.join(CFG.media_dir, asset)):
+        detail["result_url"] = media_url(asset, admin=admin)
+    if admin:
+        expires_at = detail.get("content_expires_at")
+        if detail.get("output") or detail.get("result_url"):
+            state = "available"
+        elif detail["status"] in ("processing", "queued"):
+            state = "pending"
+        elif asset:
+            state = "file_missing"
+        elif expires_at and expires_at <= time.time():
+            state = "expired"
+        elif detail["status"] == "completed":
+            state = "not_saved"
+        else:
+            state = "no_output"
+        detail["result_state"] = state
     return detail
 
 
@@ -3625,8 +3645,41 @@ def own_usage_detail(job_id: str, client=Depends(contract_auth)):
     return _usage_detail(job_id, False, client["id"])
 
 
+def _overview_accounts():
+    now = time.time()
+    with ACCOUNT_POOL.cond:
+        muse_busy = set(ACCOUNT_POOL.busy_accounts)
+    accounts = []
+    for item in store.list_accounts():
+        if not item.get("enabled", True):
+            state = "paused"
+        elif item.get("expires_at") and item["expires_at"] <= now:
+            state = "expired"
+        elif item.get("ok") is not True or not item.get("essential_ok"):
+            state = "needs_check"
+        else:
+            state = "ready"
+        quota = item.get("quota") or {}
+        accounts.append({
+            "id": item["id"], "label": item["label"], "provider": "muse", "state": state,
+            "busy": item["id"] in muse_busy, "last_used": item.get("last_used"),
+            "quota": {key: quota[key] for key in ("weekly_used_pct", "extra_used_pct", "checked_at") if key in quota},
+        })
+    for item in managed_web.list_accounts():
+        state = "paused" if not item["enabled"] else "ready" if item["verified"] else "needs_check"
+        accounts.append({key: item[key] for key in ("id", "label", "provider", "busy")} | {"state": state})
+    for provider in WEB_PROVIDERS:
+        if managed_web.state(provider) is None and (web_providers.ready(provider) or provider in web_providers.linked_at):
+            accounts.append({
+                "id": "linked-chrome", "provider": provider, "linked": True,
+                "state": "ready" if web_providers.profile_preferred and web_providers.ready(provider) else "needs_check",
+                "verified_at": web_providers.linked_at.get(provider),
+            })
+    return accounts
+
+
 @app.get("/admin/overview")
-def admin_overview(_=Depends(auth)):
+def admin_overview(_=Depends(auth), days: Literal["1", "7", "30"] = "1"):
     muse = _muse_capability_state()
     providers = {"muse": "ready" if muse["ready"] else "needs_check" if muse["configured"] else "setup"}
     for provider in WEB_PROVIDERS:
@@ -3643,15 +3696,45 @@ def admin_overview(_=Depends(auth)):
               for provider in providers}
     for item in official:
         models[item["id"]] = [item["model_id"]]
+    clients = {item["id"]: item for item in store.list_clients()}
+    active_keys = sum(not key.get("revoked_at") and key.get("enabled", True) for key in clients.values())
+    account_rows = _overview_accounts()
     try:
-        requests_today = client_usage.today_count()
+        ledger = client_usage.overview(int(days))
     except (OSError, sqlite3.Error):
-        requests_today = None
+        ledger = None
+
+    report = None
+    if ledger is not None:
+        users = []
+        identities = dict.fromkeys([*clients, *ledger["owners"], *ledger["running"]])
+        for owner in identities:
+            client = clients.get(owner, {})
+            state = ("revoked" if not client or client.get("revoked_at") else
+                     "enabled" if client.get("enabled", True) else "paused")
+            limits = []
+            for model, rule in (client.get("rules") or {}).items():
+                if (limit := rule.get("daily_limit")) is not None:
+                    used = ledger["daily"].get((owner, model), 0)
+                    limits.append({"model": model, "used": used, "limit": limit})
+            activity = ledger["running"].get(owner, {})
+            users.append({
+                "id": owner, "label": client.get("label") or owner, "state": state,
+                "usage": ledger["owners"].get(owner), "limits": limits,
+                "processing": activity.get("processing", 0), "queued": activity.get("queued", 0),
+            })
+        users.sort(key=lambda user: (-user["processing"], -user["queued"],
+                                     -((user["usage"] or {}).get("last_seen") or 0), user["label"].casefold()))
+        report = {key: ledger[key] for key in ("totals", "kinds", "recent", "since", "resets_at")}
+        for item in report["recent"]:
+            item["label"] = clients.get(item["owner"], {}).get("label") or item["owner"]
+        report.update(users=users, days=int(days))
+
     return JSONResponse({
         "providers": [{"id": provider, "state": state, "models": models[provider]}
                       for provider, state in providers.items()],
-        "active_keys": sum(not key.get("revoked_at") and key.get("enabled", True) for key in store.list_clients()),
-        "requests_today": requests_today,
+        "active_keys": active_keys, "accounts": account_rows, "report": report,
+        "requests_today": ledger["today_count"] if ledger else None,
         "active_tasks": sum(task.get("status") in ("queued", "processing") for task in store.tasks.values()),
     }, headers=NO_STORE)
 
