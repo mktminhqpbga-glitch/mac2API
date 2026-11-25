@@ -26,6 +26,8 @@ function setLang(v) {
 
 /* 整句：中文 → 英文 */
 const I18N_EN = {
+  '使用扩展直接运行 ChatGPT 和 Gemini': 'Run ChatGPT and Gemini directly in Chrome',
+  '已连接 {site}。请保持 Chrome 打开，并在 mac2API 中试聊。': 'Connected {site}. Keep Chrome open and try chat in mac2API.',
   "选择当前标签页对应的服务。": "Select the service in the active tab.",
   "请在当前窗口打开 {site} 后重试。": "Open {site} in the current window and try again.",
   "请在已授权 Chrome 的普通窗口中连接网页服务。": "Connect web services from the connected Chrome browser in a regular window.",
@@ -75,6 +77,8 @@ const I18N_EN = {
 
 /* 含富文本的块：data-i18n="key" → 英文 innerHTML */
 const I18N_EN_HTML = {
+  'direct-steps': '<b>Open a signed-in ChatGPT or Gemini tab.</b><br>Enter the local mac2API URL and select the service. Keep a regular Chrome window open.',
+  'bridge-foot': 'Muse imports cookies. The direct extension mode runs jobs in the signed-in Chrome profile and returns their results to mac2API.',
   "steps": "<b>Open the signed-in tab and select its service.</b><br>Muse imports cookies. ChatGPT and Gemini verify the signed-in Chrome tab on the mac2API machine.",
   "foot": "Only Muse cookies are sent to the configured service. ChatGPT and Gemini send a one-time verification marker."
 };
@@ -85,6 +89,8 @@ const I18N_EN_PATTERNS = [
 ];
 
 const I18N_VI = {
+  '使用扩展直接运行 ChatGPT 和 Gemini': 'Chạy ChatGPT và Gemini trực tiếp bằng tiện ích',
+  '已连接 {site}。请保持 Chrome 打开，并在 mac2API 中试聊。': 'Đã liên kết {site}. Hãy giữ Chrome mở rồi thử chat trong mac2API.',
   "选择当前标签页对应的服务。": "Chọn dịch vụ tương ứng với tab đang mở.",
   "请在当前窗口打开 {site} 后重试。": "Hãy mở {site} trong cửa sổ hiện tại rồi thử lại.",
   "请在已授权 Chrome 的普通窗口中连接网页服务。": "Hãy kết nối dịch vụ web từ cửa sổ thường của Chrome đã cấp quyền.",
@@ -121,6 +127,8 @@ const I18N_VI = {
   "API key 无效": "API key không hợp lệ"
 };
 const I18N_VI_HTML = {
+  'direct-steps': '<b>Mở tab ChatGPT hoặc Gemini đã đăng nhập.</b><br>Nhập địa chỉ mac2API trên máy này rồi bấm đúng tên dịch vụ. Hãy giữ cửa sổ Chrome thường mở.',
+  'bridge-foot': 'Muse nhập cookie. Chế độ kết nối trực tiếp chạy tác vụ trong hồ sơ Chrome đã đăng nhập và gửi kết quả về mac2API.',
   "steps": "<b>Mở tab đã đăng nhập rồi chọn đúng nút.</b><br>Muse nhập cookie. ChatGPT và Gemini xác minh tab trong Chrome đã cấp quyền trên cùng máy với mac2API.",
   "foot": "Tiện ích chỉ gửi cookie Muse tới địa chỉ dịch vụ bạn nhập. Với ChatGPT và Gemini, tiện ích gửi mã xác minh một lần."
 };
@@ -322,6 +330,13 @@ async function linkWebProvider(provider) {
     }
     if (tab.incognito) return log(t('请在已授权 Chrome 的普通窗口中连接网页服务。'), 'bad');
     log(t('正在验证 {site} 标签页…', {site}));
+    if ($('directChrome').checked) {
+      const result = await chrome.runtime.sendMessage({type: 'mac2apiChromeConnect', provider, tabId: tab.id,
+        base, key, label: $('label').value.trim()});
+      if (!result?.ok) return log(t(result?.error || '连接失败 (HTTP {status})', {status: '?'}), 'bad');
+      log(t('已连接 {site}。请保持 Chrome 打开，并在 mac2API 中试聊。', {site}), 'ok');
+      return;
+    }
     tabId = tab.id;
     marker = [...crypto.getRandomValues(new Uint8Array(16))]
       .map(byte => byte.toString(16).padStart(2, '0')).join('');
@@ -367,6 +382,10 @@ async function linkWebProvider(provider) {
 }
 
 applyLang();
+$('directChrome').addEventListener('change', () => {
+  $('directSteps').hidden = !$('directChrome').checked;
+  $('cdpSteps').hidden = $('directChrome').checked;
+});
 $('langSel').addEventListener('change', (e) => setLang(e.target.value));
 $('go').addEventListener('click', run);
 for (const [provider, {button}] of Object.entries(WEB_BUTTONS)) {

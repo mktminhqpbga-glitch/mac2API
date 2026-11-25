@@ -36,7 +36,7 @@
 </style>
 </head>
 <body>
-  <h1><span class="dot" aria-hidden="true"></span><span data-i18n-text>mac2API 账号连接</span><span id="extensionVersion" style="font-size:11px;color:var(--muted)">v1.0.6</span>
+  <h1><span class="dot" aria-hidden="true"></span><span data-i18n-text>mac2API 账号连接</span><span id="extensionVersion" style="font-size:11px;color:var(--muted)">v1.0.7</span>
     <select id="langSel" class="langsel" title="Ngôn ngữ / Language / 语言">
       <option value="vi">Tiếng Việt</option>
       <option value="zh">中文</option>
@@ -60,11 +60,15 @@
     <button id="linkGemini" type="button">Gemini</button>
   </div>
 
-  <div class="steps" data-i18n="steps"><b>打开已登录的标签页并选择对应服务。</b><br>Muse 导入 Cookie。ChatGPT 和 Gemini 验证 mac2API 同一台机器上已授权 Chrome 的标签页。</div>
+  <label><input id="directChrome" type="checkbox" checked style="width:auto"> <span data-i18n-text>使用扩展直接运行 ChatGPT 和 Gemini</span></label>
+
+  <div class="steps" id="directSteps" data-i18n="direct-steps"><b>打开已登录的 ChatGPT 或 Gemini 标签页。</b><br>输入本机服务地址，点击对应按钮。请保持普通 Chrome 窗口打开。</div>
+
+  <div class="steps" id="cdpSteps" hidden data-i18n="steps"><b>打开已登录的标签页并选择对应服务。</b><br>Muse 导入 Cookie。ChatGPT 和 Gemini 验证 mac2API 同一台机器上已授权 Chrome 的标签页。</div>
 
   <div id="log" role="status"></div>
 
-  <div class="foot" data-i18n="foot">只有 Muse Cookie 会发送至配置的服务。ChatGPT 和 Gemini 仅发送一次性验证标记。</div>
+  <div class="foot" data-i18n="bridge-foot">Muse 会导入 Cookie。直连扩展模式在 Chrome 已登录的个人资料中运行任务，向 mac2API 返回任务结果。</div>
 
   <script src="popup.js"></script>
 </body>

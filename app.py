@@ -24,6 +24,7 @@ OpenAI 兼容:
 from __future__ import annotations
 
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 
 import asyncio
 import copy
@@ -52,9 +53,10 @@ from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Reques
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                Response, StreamingResponse)
-from pydantic import model_validator, BaseModel, Field, SecretStr, field_validator
+from pydantic import model_validator, BaseModel, Field, SecretStr, ValidationError, field_validator
 
 from chat_providers import ChatProviders, ProviderName, ProviderSettings
+from chrome_bridge import ChromeBridge
 from client_usage import ClientJob, ClientUsage, Price, TextOutcome, redact_content
 from config import CFG
 from engine import (ESSENTIAL_COOKIES, MAX_REFERENCE_IMAGE_BYTES,
@@ -67,8 +69,8 @@ from generation_timing import QueuePolicy, QueueSettings, TaskNotQueued, TaskTim
 from managed_web import ManagedWebAccounts, visible_chrome_available
 from proxy import normalize_server, request_proxy_context, split_proxy_url
 from media_storage import CAPACITY_BYTES, CLEANUP_BYTES, delete_media_file, media_entries, media_owner, new_media_name, save_media
-from web_providers import (DEFAULT_WEB_CDP_PORT, PROVIDERS as WEB_PROVIDERS, WebPostSendError,
-                           WebProviderError, WebProviders, WebSessionUnavailable)
+from web_providers import (DEFAULT_WEB_CDP_PORT, MAX_IMAGE_BYTES, PROVIDERS as WEB_PROVIDERS, WebPostSendError,
+                           WebProviderError, WebProviders, WebSessionUnavailable, decode_web_image)
 from thumbnails import (VIDEO_FORMATS, ThumbnailUnavailable,
                         source_version, video_thumbnail)
 
@@ -152,6 +154,7 @@ if not web_port and CFG.cdp_port != DEFAULT_WEB_CDP_PORT and store.web_chrome_en
     web_port = DEFAULT_WEB_CDP_PORT
 web_providers = WebProviders(web_port, profile_preferred=store.web_chrome_profile_preferred())
 managed_web = ManagedWebAccounts(CFG)
+chrome_bridge = ChromeBridge(CFG.data_dir)
 MODULES = {f"muse/{kind}": ("muse", kind) for kind in ("text", "image", "video")}
 MODULES.update({f"{provider}/{kind}": (provider, kind)
                 for provider in WEB_PROVIDERS for kind in ("text", "image")})
@@ -238,7 +241,33 @@ def _run_web_generation(provider, prompt, *, image, timeout, on_acquired=None, o
     deadline = queued_at + queue_timeout if queue_timeout else None
     while True:
         try:
+            with chrome_bridge.reserve(provider, deadline, queue_guard, allowed_accounts) as extension:
+                if extension:
+                    aid = extension["id"]
+
+                    def generate_in_extension():
+                        if allowed_accounts:
+                            allowed = allowed_accounts()
+                            if allowed is not None and aid not in allowed:
+                                raise WebAccountChanged()
+                        if on_acquired:
+                            on_acquired()
+                        if on_account:
+                            on_account(aid, extension["label"])
+                        return chrome_bridge.generate(aid, prompt, image=image, timeout=timeout,
+                                                      check_permission=lambda: _check_dispatch(allowed_accounts, aid))
+
+                    return _web_call(generate_in_extension, queued_at=queued_at, queue_timeout=queue_timeout,
+                                     on_queue=on_queue, queue_guard=queue_guard)
             reserve_options = {"allowed_accounts": allowed_accounts} if allowed_accounts else {}
+            allowed = allowed_accounts() if allowed_accounts else None
+            paired = chrome_bridge.state(provider, allowed)
+            managed = managed_web.state(provider, allowed)
+            if paired and not (managed and managed["configured"]) and (allowed is not None or not web_providers.ready(provider)):
+                if paired["ready"]:
+                    # The extension came online after the reservation check.
+                    raise WebAccountChanged()
+                raise WebProviderError("Hồ sơ tiện ích Chrome chưa sẵn sàng. Hãy mở Chrome hoặc đăng nhập và liên kết lại.", 503)
             with managed_web.reserve(provider, deadline, queue_guard, **reserve_options) as account:
                 aid = account["id"] if account else None
 
@@ -2121,8 +2150,18 @@ def _muse_capability_state(allowed_ids=None):
 
 
 def _web_provider_ready(provider):
-    state = managed_web.state(provider)
+    state = _web_account_state(provider)
     return state["ready"] if state is not None else web_providers.ready(provider)
+
+
+def _web_account_state(provider, allowed_ids=None):
+    extension = chrome_bridge.state(provider, allowed_ids)
+    if extension and extension["ready"]:
+        return extension
+    managed = managed_web.state(provider, allowed_ids)
+    if allowed_ids is not None and extension and not managed["configured"]:
+        return extension
+    return managed
 
 
 @app.get("/muse/v1/capabilities")
@@ -2146,7 +2185,7 @@ def capabilities(request: Request, client=Depends(contract_auth)):
         busy = not lease or GEN_LOCK.full()
         for provider, state in web_states.items():
             if provider in allowed:
-                state = managed_web.state(provider) or state
+                state = _web_account_state(provider) or (state if state["configured"] else chrome_bridge.state(provider) or state)
                 states[provider] = {**state, "busy": busy or state.get("busy", False),
                                     "reason": "busy" if busy and state["ready"] else state["reason"]}
     if rules is not None:
@@ -2169,7 +2208,7 @@ def capabilities(request: Request, client=Depends(contract_auth)):
         if rules is not None and provider == "muse":
             state = _muse_capability_state(_catalog_accounts(client, f"muse/{kind}"))
         elif rules is not None and provider in WEB_PROVIDERS:
-            state = managed_web.state(provider, _catalog_accounts(client, model_id))
+            state = _web_account_state(provider, _catalog_accounts(client, model_id))
             if state["ready"] and GEN_LOCK.full():
                 state.update(busy=True, reason="busy")
         references = provider == "muse" and kind in ("image", "video")
@@ -3334,6 +3373,7 @@ def list_web_providers(_=Depends(auth)):
             "profile_connected": profile_connected,
             "ready": [provider for provider in WEB_PROVIDERS if _web_provider_ready(provider)],
             "accounts": managed_web.list_accounts(),
+            "extension_accounts": chrome_bridge.list_accounts(),
             "managed_login_available": visible_chrome_available(),
             "linked_at": dict(web_providers.linked_at),
             "local_setup": not (os.environ.get("RENDER", "").lower() == "true"
@@ -3352,6 +3392,112 @@ def connect_web_chrome(_=Depends(auth)):
     except WebProviderError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
     return list_web_providers()
+
+
+def _require_local_extension(request):
+    try:
+        host = urlsplit(str(request.url)).hostname
+        local = request.client and ipaddress.ip_address(request.client.host).is_loopback
+    except ValueError:
+        local = False
+        host = None
+    if not local or host not in ("localhost", "127.0.0.1", "::1") or any(
+        name == "forwarded" or name.startswith("x-forwarded-") or name == "x-real-ip"
+        for name in request.headers
+    ):
+        raise HTTPException(403, "Tiện ích cần kết nối trực tiếp qua localhost trên máy chạy mac2API.")
+
+
+class ChromeExtensionPair(BaseModel):
+    profile: str = Field(pattern=r"^[0-9a-f]{32}$")
+    label: str = Field(default="", max_length=120)
+
+
+@app.post("/admin/web-providers/{provider}/extension", status_code=201)
+def pair_chrome_extension(provider: str, req: ChromeExtensionPair, request: Request, _=Depends(auth)):
+    _require_local_extension(request)
+    if not CFG.api_key:
+        raise HTTPException(403, "Hãy cấu hình khóa quản trị mac2API trước khi liên kết tiện ích.")
+    if provider not in WEB_PROVIDERS:
+        raise HTTPException(404, "Không tìm thấy nhà cung cấp web.")
+    try:
+        token = chrome_bridge.pair(provider, req.profile, req.label.strip() or "Tiện ích Chrome")
+    except WebProviderError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+    return JSONResponse({"token": token}, status_code=201, headers=NO_STORE)
+
+
+@app.delete("/admin/web-providers/{provider}/extension/{aid}", status_code=204)
+def revoke_chrome_extension(provider: str, aid: str, _=Depends(auth)):
+    try:
+        chrome_bridge.revoke(provider, aid)
+    except WebProviderError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+    return Response(status_code=204)
+
+
+@app.get("/browser-bridge/next")
+async def chrome_extension_next(request: Request, authorization: str | None = Header(default=None)):
+    _require_local_extension(request)
+    token = _bearer_token(authorization)
+    deadline = time.monotonic() + 12
+    try:
+        while True:
+            job = chrome_bridge.next_job(token)
+            if job:
+                return JSONResponse(job, headers=NO_STORE)
+            if time.monotonic() >= deadline or await request.is_disconnected():
+                return Response(status_code=204, headers=NO_STORE)
+            await asyncio.sleep(0.35)
+    except WebProviderError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
+class ChromeExtensionReport(BaseModel):
+    text: str | None = Field(default=None, min_length=1, max_length=500_000)
+    image: str | None = Field(default=None, max_length=4 * ((MAX_IMAGE_BYTES + 2) // 3))
+    error: Literal["session", "page_unavailable", "composer", "interrupted", "timeout", "media_missing",
+                   "media_unreadable", "close_failed"] | None = None
+
+
+@app.post("/browser-bridge/jobs/{job_id}/{action}")
+async def chrome_extension_job(job_id: str, action: Literal["permit", "heartbeat", "finish"], request: Request,
+                               authorization: str | None = Header(default=None)):
+    _require_local_extension(request)
+    token = _bearer_token(authorization)
+    try:
+        if action != "finish":
+            ok = chrome_bridge.job_action(token, job_id, permit=action == "permit", heartbeat=action == "heartbeat")
+        else:
+            image = chrome_bridge.report_kind(token, job_id)
+            if image is None:
+                return JSONResponse({"ok": False}, headers=NO_STORE)
+            body = bytearray()
+            limit = (4 * ((MAX_IMAGE_BYTES + 2) // 3) if image else 3_000_000) + 64
+            async for chunk in request.stream():
+                if len(body) + len(chunk) > limit:
+                    raise HTTPException(413, "Kết quả từ Chrome quá lớn.")
+                body.extend(chunk)
+            try:
+                report = ChromeExtensionReport.model_validate_json(body)
+            except ValidationError as exc:
+                raise HTTPException(400, "Báo cáo tác vụ Chrome không hợp lệ.") from exc
+            if report.error:
+                ok = chrome_bridge.job_action(token, job_id, error=report.error)
+            elif image and report.image:
+                try:
+                    data = await asyncio.to_thread(decode_web_image, report.image)
+                except WebProviderError:
+                    ok = chrome_bridge.job_action(token, job_id, error="media_unreadable")
+                else:
+                    ok = chrome_bridge.job_action(token, job_id, result=data)
+            elif not image and report.text and report.text.strip():
+                ok = chrome_bridge.job_action(token, job_id, result=report.text.strip())
+            else:
+                raise HTTPException(400, "Kết quả Chrome không khớp loại tác vụ.")
+        return JSONResponse({"ok": ok}, headers=NO_STORE)
+    except WebProviderError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
 
 
 @app.post("/admin/web-providers/connect-profile")
@@ -3490,7 +3636,7 @@ def _client_key_catalog():
     accounts = {"muse": [{"id": account["id"], "label": account.get("label") or account["id"],
                           "enabled": account.get("enabled", True), "verified": account.get("ok") is True}
                          for account in store.accounts]}
-    for account in managed_web.list_accounts():
+    for account in [*managed_web.list_accounts(), *chrome_bridge.list_accounts()]:
         accounts.setdefault(account["provider"], []).append(
             {key: account[key] for key in ("id", "label", "enabled", "verified")})
     entries = [{"id": model, "provider": provider, "kind": kind, "accounts": accounts.get(provider, [])}
@@ -3668,6 +3814,9 @@ def _overview_accounts():
     for item in managed_web.list_accounts():
         state = "paused" if not item["enabled"] else "ready" if item["verified"] else "needs_check"
         accounts.append({key: item[key] for key in ("id", "label", "provider", "busy")} | {"state": state})
+    for item in chrome_bridge.list_accounts():
+        accounts.append({key: item[key] for key in ("id", "label", "provider", "busy")}
+                        | {"state": "ready" if item["verified"] else "needs_check"})
     for provider in WEB_PROVIDERS:
         if managed_web.state(provider) is None and (web_providers.ready(provider) or provider in web_providers.linked_at):
             accounts.append({
@@ -3683,11 +3832,13 @@ def admin_overview(_=Depends(auth), days: Literal["1", "7", "30"] = "1"):
     muse = _muse_capability_state()
     providers = {"muse": "ready" if muse["ready"] else "needs_check" if muse["configured"] else "setup"}
     for provider in WEB_PROVIDERS:
-        pool = managed_web.state(provider)
+        pool = _web_account_state(provider)
         if pool:
             providers[provider] = "ready" if pool["ready"] else "needs_check"
         elif web_providers.ready(provider):
             providers[provider] = "ready" if web_providers.profile_preferred else "needs_check"
+        elif chrome_bridge.state(provider):
+            providers[provider] = "needs_check"
         else:
             providers[provider] = "setup"
     official = chat_providers.status()
@@ -4479,7 +4630,7 @@ MANAGED_DEPLOYMENT = (
 TRACKED_REPO_PATHS = [
     "app.py", "engine.py", "store.py", "cdp.py", "config.py", "proxy.py",
     "generation_timing.py", "thumbnails.py", "media_storage.py", "chat_providers.py", "web_providers.py",
-    "managed_web.py", "client_usage.py", "GENERATION_QUEUE.md", "VERSION_REPORTING.md",
+    "managed_web.py", "chrome_bridge.py", "client_usage.py", "GENERATION_QUEUE.md", "VERSION_REPORTING.md",
     "admin.html", "start-mac2api.command", "README.md", "AGENTS.md", "CHANGELOG.md", "version.json", "requirements.txt",
     "MAC2API_API_CONTRACT_TESTS.md",
     "Dockerfile", "docker-compose.yml", ".env.example", ".gitignore",

@@ -1,5 +1,10 @@
 # Nhật ký và bàn giao mac2API
 
+## Kết nối trực tiếp qua tiện ích Chrome 1.0.7
+
+- ChatGPT Web và Gemini Web dùng hồ sơ Chrome đã đăng nhập thông qua tiện ích trên cùng máy. Mỗi tác vụ có tab riêng và kiểm tra quyền của khóa trước khi gửi.
+- Hồ sơ tiện ích xuất hiện trong bảng quản trị và có thể được chọn theo từng khóa người dùng. mac2API theo dõi kết nối, thu hồi quyền ghép nối và ghi nhận hồ sơ thực hiện tác vụ.
+
 ## Báo cáo Tổng quan và xem kết quả API
 
 - Tổng quan theo dõi lượt nhận và kết quả theo loại, hoạt động của từng khóa, hạn mức ngày và trạng thái tài khoản AI.

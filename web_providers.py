@@ -627,6 +627,10 @@ def _read_image(page, source: str, *, timeout=15):
             reader.readAsDataURL(blob);
         }});
     }})()""", await_promise=True, timeout=timeout)
+    return decode_web_image(encoded)
+
+
+def decode_web_image(encoded):
     if not isinstance(encoded, str) or len(encoded) > 4 * ((MAX_IMAGE_BYTES + 2) // 3):
         raise WebProviderError("Không đọc được ảnh hoặc ảnh vượt 20 MiB.")
     try:

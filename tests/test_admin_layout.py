@@ -98,7 +98,7 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
   wait("document.querySelectorAll('#poolBody tr').length===8")
   page.js("document.querySelector('[data-t=openai]').click()")
   wait("$('tab-openai').querySelector('[data-provider-status]').textContent.includes('Chưa kết nối')")
-  assert page.js("$('tab-openai').querySelector('[data-web-setup]').open && !$('extensionUpgradeNotice').getClientRects().length")
+  assert page.js("$('tab-openai').querySelector('[data-web-extension]').getClientRects().length && !$('tab-openai').querySelector('[data-web-setup]').open && !$('extensionUpgradeNotice').getClientRects().length")
   page.js("$('tab-openai').querySelector('[data-web-connect]').click()")
   wait("$('tab-openai').querySelector('[data-provider-status]').textContent.includes('Đã kết nối Chrome')")
   assert any(item['path']=='/admin/web-providers/connect-profile' for item in events)

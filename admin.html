@@ -630,8 +630,12 @@
         <label style="flex:1;min-width:0">Base URL riêng <input type="text" data-provider-base readonly spellcheck="false" style="width:100%"></label>
         <button type="button" class="ghost" data-provider-copy-base>Sao chép Base URL</button>
       </div>
+      <div data-web-extension>
+        <p class="hint">Cài <a href="/admin/extension">tiện ích Chrome</a> vào hồ sơ đã đăng nhập. Mở tab AI, nhập địa chỉ localhost và khóa quản trị của mac2API vào tiện ích rồi bấm tên dịch vụ.</p>
+        <div data-web-extension-accounts></div>
+      </div>
       <details data-web-setup>
-        <summary>Dùng hồ sơ Chrome đang đăng nhập</summary>
+        <summary>Kết nối qua Chrome DevTools</summary>
         <ol>
           <li>Trong Chrome 144 trở lên, dán <code>chrome://inspect/#remote-debugging</code> vào thanh địa chỉ và bật gỡ lỗi từ xa.</li>
           <li>Bấm <b>Kết nối Chrome</b> bên dưới rồi chọn <b>Cho phép</b> khi Chrome hỏi.</li>
@@ -776,7 +780,7 @@
 
   <!-- ==================== 获取 Cookie ==================== -->
   <section class="tab" id="tab-cookie">
-    <div class="card" id="extensionUpgradeNotice" role="note" data-i18n="extension-upgrade-notice"><b>浏览器扩展 1.0.6</b><br><a href="/admin/extension">下载扩展</a>。如需更新解压的扩展，请替换文件后在 <code>chrome://extensions</code> 或 <code>edge://extensions</code> 点击重新加载。</div>
+    <div class="card" id="extensionUpgradeNotice" role="note" data-i18n="extension-upgrade-notice"><b>浏览器扩展 1.0.7</b><br><a href="/admin/extension">下载扩展</a>。如需更新解压的扩展，请替换文件后在 <code>chrome://extensions</code> 或 <code>edge://extensions</code> 点击重新加载。</div>
     <div class="card" style="border-color:rgba(52,211,153,.45)">
       <h3>方式一：浏览器扩展 <span class="tag">推荐 · 零命令行 · 全平台</span></h3>
       <div class="hint" data-i18n="ext-why-hint">
@@ -1670,7 +1674,7 @@ const I18N_EN = {
 };
 /* 含富文本的块：data-i18n="key" → 英文 innerHTML（须保留原有子元素的 id/class/属性） */
 const I18N_EN_HTML = {
-  "extension-upgrade-notice": "<b>Browser extension 1.0.6</b><br><a href=\"/admin/extension\">Download the extension</a>. To update an unpacked installation, replace its files and click Reload at <code>chrome://extensions</code> or <code>edge://extensions</code>.",
+  "extension-upgrade-notice": "<b>Browser extension 1.0.7</b><br><a href=\"/admin/extension\">Download the extension</a>. To update an unpacked installation, replace its files and click Reload at <code>chrome://extensions</code> or <code>edge://extensions</code>.",
   "repo-status-desc": "Comparing your local version with the latest version in the official GitHub repository… (online upgrades keep your <code>.env</code> keys and the <code>data/</code> Account Pool and media data)",
   "auth-banner": "\n      <b>Enter your API Key first so the page can load data</b><br>\n      <span style=\"color:var(--muted)\">\n        The API Key is this service's own \"access password\". It stops other people from using your Muse account quota.\n        It is <b style=\"color:var(--text)\">not</b> your Muse password. It is a random string generated at deploy time (it starts with <code>m2a_</code>).<br>\n        Paste it into the box at the top right and click \"Save\". Your browser remembers it, so you won't need to enter it again.\n      </span>\n    ",
   "model-names-hint": "\n        Model names: <code>muse-spark</code> (chat/code), <code>muse-image</code> (images), <code>muse-video</code> (videos).\n        See the \"Integration Docs\" tab for full examples.\n      ",
@@ -2358,7 +2362,7 @@ const I18N_VI = {
   "✗ 保活失败: 未知错误": "✗ Duy trì phiên thất bại do lỗi chưa xác định"
 };
 const I18N_VI_HTML = {
-  "extension-upgrade-notice": "<b>Tiện ích trình duyệt 1.0.6</b><br><a href=\"/admin/extension\">Tải tiện ích</a>. Để cập nhật bản giải nén, thay tệp rồi bấm Tải lại tại <code>chrome://extensions</code> hoặc <code>edge://extensions</code>.",
+  "extension-upgrade-notice": "<b>Tiện ích trình duyệt 1.0.7</b><br><a href=\"/admin/extension\">Tải tiện ích</a>. Để cập nhật bản giải nén, thay tệp rồi bấm Tải lại tại <code>chrome://extensions</code> hoặc <code>edge://extensions</code>.",
   "repo-status-desc": "Đang đối chiếu phiên bản đã cài với kho cập nhật. Cấu hình <code>.env</code> và dữ liệu trong <code>data/</code> được giữ lại khi cập nhật.",
   "auth-banner": "<b>Nhập API Key để tải dữ liệu</b><br><span style=\"color:var(--muted)\">Dùng khóa truy cập của dịch vụ Muse2API và bấm Lưu.</span>",
   "model-names-hint": "Model: <code>muse-spark</code> (chat và mã), <code>muse-image</code> (ảnh), <code>muse-video</code> (video). Xem mục Hướng dẫn tích hợp để biết ví dụ.",
@@ -3542,9 +3546,12 @@ const chatProviderPanels = new Map([
   const test = panel.querySelector('[data-provider-test]');
   const chat = panel.querySelector('[data-provider-chat]');
   const send = chat.querySelector('button');
+  let chatInFlight = false;
+  let providerReady = false;
   const status = panel.querySelector('[data-provider-status]');
   const output = panel.querySelector('[data-provider-output]');
   const setup = panel.querySelector('[data-web-setup]');
+  const extensionAccounts = panel.querySelector('[data-web-extension-accounts]');
   const connect = panel.querySelector('[data-web-connect]');
   const accountPanel = panel.querySelector('[data-web-accounts-panel]');
   const accountsList = panel.querySelector('[data-web-accounts]');
@@ -3627,17 +3634,40 @@ const chatProviderPanels = new Map([
 
   function render(data) {
     const ready = data.ready?.includes(id) ?? Boolean(data.configured);
+    providerReady = ready;
     const managed = data.accounts?.some(account => account.provider === id && account.enabled);
+    const extensions = (data.extension_accounts || []).filter(account => account.provider === id);
+    const extensionReady = extensions.some(account => account.verified);
     status.textContent = data.profile_connected ? 'Đã kết nối Chrome. Mở tab đã đăng nhập và chọn dịch vụ trong tiện ích.'
       : data.configured ? 'Đang dùng cổng Chrome đã cấu hình. Bạn cũng có thể kết nối hồ sơ đang đăng nhập bên dưới.'
         : 'Chưa kết nối Chrome Web. Làm theo phần thiết lập bên dưới.';
     setup.hidden = data.local_setup === false;
-    setup.open = !ready && !setup.hidden;
+    panel.querySelector('[data-web-extension]').hidden = data.local_setup === false && !extensions.length;
     panel.querySelector('[data-web-remote]').hidden = data.local_setup !== false;
     if (ready && data.linked_at?.[id]) status.textContent = 'Đã xác minh tab qua tiện ích lúc ' + fmtTime(data.linked_at[id]) + '.';
     if (managed) status.textContent = ready ? 'Đang dùng kho hồ sơ Chromium.' : 'Hãy kiểm tra phiên của hồ sơ Chromium đã bật.';
-    send.disabled = !ready;
-    test.disabled = managed || !ready;
+    if (extensionReady) status.textContent = 'Đã kết nối tiện ích Chrome. Hãy giữ cửa sổ Chrome mở.';
+    else if (extensions.length && !ready) status.textContent = 'Hồ sơ tiện ích Chrome đang ngoại tuyến hoặc cần đăng nhập lại.';
+    send.disabled = chatInFlight || !ready;
+    test.disabled = extensionReady || managed || !ready;
+    extensionAccounts.replaceChildren();
+    for (const account of extensions) {
+      const row = clientElement('div', undefined, 'provider-row');
+      const state = account.busy ? 'Đang dùng' : account.verified ? 'Đã kết nối' : 'Chờ kết nối';
+      row.append(clientElement('span', account.label + ' · ' + state, 'hint'));
+      const button = clientElement('button', 'Ngắt liên kết', 'ghost mini');
+      button.type = 'button';
+      button.disabled = account.busy;
+      button.onclick = async () => {
+        button.disabled = true;
+        try {
+          await accountAction('/admin/web-providers/' + id + '/extension/' + encodeURIComponent(account.id),
+            {method: 'DELETE'}, 'Đã ngắt liên kết ' + account.label + '.');
+        } finally { button.disabled = account.busy; }
+      };
+      row.append(button);
+      extensionAccounts.append(row);
+    }
     renderAccounts(data);
   }
   test.disabled = send.disabled = true;
@@ -3652,7 +3682,8 @@ const chatProviderPanels = new Map([
   chat.onsubmit = async event => {
     event.preventDefault();
     const prompt = chat.elements.prompt.value.trim();
-    if (!prompt) return;
+    if (!prompt || chatInFlight || !providerReady) return;
+    chatInFlight = true;
     send.disabled = true;
     output.hidden = false;
     output.textContent = 'Đang chờ phản hồi…';
@@ -3662,7 +3693,10 @@ const chatProviderPanels = new Map([
       })});
       output.textContent = result.choices?.[0]?.message?.content || 'Trang web chưa trả lời.';
     } catch (error) { output.textContent = error.message; }
-    finally { send.disabled = false; }
+    finally {
+      chatInFlight = false;
+      send.disabled = !providerReady;
+    }
   };
   return [tab, {render, status}];
 }));
@@ -4825,6 +4859,7 @@ setInterval(() => {
   if (activeTab === 'pool') loadPool();
   if (activeTab === 'overview') loadOverview();
   if (activeTab === 'tasks') loadTasks();
+  if (authOK && chatProviderPanels.has(activeTab)) loadChatProvider(activeTab);
 }, 12000);
 setInterval(() => {
   loadRepoStatus(false);

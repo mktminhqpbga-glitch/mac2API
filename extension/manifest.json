@@ -1,14 +1,15 @@
 {
   "manifest_version": 3,
   "name": "__MSG_extName__",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "__MSG_extDesc__",
   "default_locale": "vi",
   "permissions": [
     "cookies",
     "storage",
     "activeTab",
-    "scripting"
+    "scripting",
+    "alarms"
   ],
   "host_permissions": [
     "https://muse.ai/*",
@@ -16,6 +17,7 @@
     "http://*/*",
     "https://*/*"
   ],
+  "background": {"service_worker": "bridge-worker.js"},
   "action": {
     "default_title": "__MSG_extName__",
     "default_popup": "popup.html"
