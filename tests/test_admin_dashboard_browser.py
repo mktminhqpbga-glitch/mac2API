@@ -208,6 +208,35 @@ def check_dashboard(app, page, url):
     page.js("$('clientKeyLabel').value='Lưu từ cửa sổ cũ';$('clientSave').click()")
     wait(lambda: page.js("$('clientFormStatus').textContent.includes('Khóa đã được cập nhật')"))
     assert app.store.get_client(old["id"])["rules"] == old["rules"]
+    page.js("$('clientDismiss').click()")
+
+    queued = app.store.create_task("image", "Ảnh còn chờ")
+    page.js("goTab('tasks')")
+    wait(lambda: page.js("Boolean($('taskBody').querySelector('[data-task-action=cancel]'))"))
+    page.js("$('taskBody').querySelector('[data-task-action=cancel]').click()")
+    wait(lambda: app.store.get_task(queued["id"])["status"] == "cancelled")
+    wait(lambda: page.js("$('taskBody').textContent.includes('Đã hủy')"))
+
+    async def workflow_fixture(run, item, _step, _checkpoint):
+        return {"kind": "text", "text": 'Kết quả ' + run["items"][item]["input"]}
+
+    with patch.object(app, "_execute_workflow_step", side_effect=workflow_fixture):
+        page.js("goTab('workflows')")
+        wait(lambda: page.js("$('workflowSteps').childElementCount === 1"))
+        page.js("""$('workflowInput').value='[một] [hai]';$('workflowInput').dispatchEvent(new Event('input'));
+            $('workflowStart').click()""")
+        wait(lambda: page.js("$('workflowResults').textContent.includes('Kết quả hai')"))
+        assert page.js("$('workflowProgress').value === 2 && $('workflowItems').children.length === 2")
+        screenshot("workflow-mobile")
+        page.send("Emulation.setDeviceMetricsOverride",
+                  {"width": 1600, "height": 1000, "deviceScaleFactor": 1, "mobile": False})
+        assert page.js("$('tab-workflows').closest('.workspace-content') && $('workflowForm').clientWidth > 350")
+        screenshot("workflow")
+        opened_at = page.js("performance.timeOrigin")
+        page.send("Page.reload")
+        wait(lambda: page.js(f"performance.timeOrigin !== {opened_at} && "
+                             "document.getElementById('workflowResults')?.textContent.includes('Kết quả hai') && "
+                             "document.getElementById('workflowInput').value === '[một] [hai]'"))
 
 
 if __name__ == "__main__":

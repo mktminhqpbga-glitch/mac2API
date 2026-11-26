@@ -1,5 +1,11 @@
 # Nhật ký và bàn giao mac2API
 
+## Luồng tự động và rà soát vận hành
+
+- Bảng quản trị chạy tuần tự từng mục theo các bước văn bản, ảnh hoặc video, kèm ngữ cảnh chung và kết quả bước trước. Tiến độ được lưu, lỗi được cô lập theo mục và có thể chạy lại đúng bước.
+- Lưu khóa quản trị và hồ sơ Docker qua lần khởi động lại. Cập nhật Git theo commit đã xác minh, kiểm tra gói trước khi thay tệp và xác nhận phiên dịch vụ mới trước khi tải lại bảng quản trị.
+- Báo lỗi nhập sai khi chỉnh ảnh, thêm nút hủy tác vụ đang chờ và hiển thị khi tệp kết quả đã được dọn hoặc xóa.
+
 ## Cấp khóa API theo nhà cung cấp và tài khoản
 
 - Chọn nhà cung cấp rồi chọn tài khoản trong cùng một hộp. Khóa mới dùng khả năng đã cấu hình của nhà cung cấp.

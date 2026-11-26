@@ -1,5 +1,6 @@
 """Offline regressions for video / audio / document references. No account, network or Chromium."""
 import asyncio
+from contextlib import asynccontextmanager
 import base64
 import hashlib
 import importlib.util
@@ -133,8 +134,9 @@ with tempfile.TemporaryDirectory() as home:
         def __init__(self, form):
             self.value = form
 
+        @asynccontextmanager
         async def form(self, **kwargs):
-            return self.value
+            yield self.value
 
     captured = {}
     original_queue = app._queue_image

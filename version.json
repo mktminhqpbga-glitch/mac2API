@@ -1,9 +1,9 @@
 {
-  "version": "1.6.12",
-  "updated_at": "2026-11-19",
+  "version": "1.6.13",
+  "updated_at": "2026-11-26",
   "repo": "https://github.com/mktminhqpbga-glitch/mac2API",
   "highlights": [
-    "整合 mac2API 修复。Chrome 144 及以上可授权使用已登录的 ChatGPT 和 Gemini 个人资料。",
+    "管理页面支持逐项运行工作流，保存进度并重新运行失败步骤。",
     "扩展 1.0.8 可直接使用已登录的 Chrome 个人资料运行 ChatGPT 和 Gemini。手动安装的扩展可在原个人资料中重新加载。",
     "提供 Muse、ChatGPT 和 Gemini 的独立 API，支持按用户密钥限制服务，以及隔离任务与媒体访问。",
     "图片与视频任务支持 Idempotency-Key。重试相同请求可返回原任务 ID。",
@@ -11,7 +11,7 @@
     "更新越南语界面、Muse 参考文件检查和 MacFlow/Toonflow 媒体适配器。"
   ],
   "highlights_en": [
-    "This mac2API release bundles the fixes. Chrome 144 and later supports connecting the existing signed-in ChatGPT and Gemini profiles.",
+    "Run multi-step batches in the dashboard, resume saved runs, and retry an individual failed step.",
     "Extension 1.0.8 runs ChatGPT and Gemini directly in signed-in Chrome profiles. Reload unpacked extensions in every browser profile where they are installed.",
     "Muse, ChatGPT and Gemini have separate API paths, provider-scoped user keys, and isolated task and media access.",
     "Image and video tasks accept Idempotency-Key so retries can recover the original task ID.",
@@ -19,7 +19,7 @@
     "Includes the Vietnamese dashboard, Muse reference checks, and MacFlow/Toonflow media adapters."
   ],
   "highlights_vi": [
-    "Bản tổng hợp mac2API. ChatGPT Web và Gemini Web dùng hồ sơ đang đăng nhập trên Chrome 144 trở lên.",
+    "Luồng tự động lưu tiến độ từng mục và cho chạy lại đúng bước lỗi.",
     "Tiện ích 1.0.8 chạy ChatGPT và Gemini trực tiếp trong hồ sơ Chrome đã đăng nhập. Tải lại tiện ích đã giải nén trong từng hồ sơ đã cài.",
     "Muse, ChatGPT và Gemini có đường dẫn API riêng. Khóa người dùng giới hạn quyền truy cập dịch vụ, tác vụ và tệp kết quả.",
     "Yêu cầu tạo ảnh và video hỗ trợ Idempotency-Key để lấy lại mã tác vụ khi gửi lại cùng nội dung.",

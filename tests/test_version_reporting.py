@@ -1,13 +1,16 @@
 """Offline scheduling, budget, persistence and provenance regressions."""
 import json
 import asyncio
+import io
 import os
 from pathlib import Path
 import sys
+import tarfile
 import tempfile
 import threading
 import time
 from types import SimpleNamespace
+from dataclasses import replace
 import unittest
 from unittest.mock import patch
 
@@ -79,7 +82,9 @@ class VersionReportingTests(unittest.TestCase):
     def test_failed_upgrade_does_not_record_remote_as_installed(self):
         target='a'*40
         marker=Path(HOME.name)/'failed-installed-sha'
-        broken=SimpleNamespace(check_returncode=lambda:(_ for _ in ()).throw(RuntimeError('git failed')))
+        def fail():
+            raise app.subprocess.CalledProcessError(1, 'fixture')
+        broken=SimpleNamespace(check_returncode=fail)
         app.store.tasks={}
         with patch.object(app,'MANAGED_DEPLOYMENT',False),patch.object(app,'_check_update_sync',return_value={'remote_commit':target,'remote_relation':'ahead','has_update':True}), \
              patch.object(app,'_ensure_git_repo'),patch.object(app,'_git',return_value=broken), \
@@ -87,6 +92,61 @@ class VersionReportingTests(unittest.TestCase):
             with self.assertRaises(app.HTTPException) as cm:app._upgrade_from_github_sync()
         self.assertEqual(cm.exception.status_code,502)
         self.assertFalse(marker.exists())
+
+    def test_archive_is_checked_before_installed_files_change(self):
+        def package(files):
+            buffer = io.BytesIO()
+            with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+                for name, data in files.items():
+                    info = tarfile.TarInfo("fixture/" + name)
+                    info.size = len(data)
+                    archive.addfile(info, io.BytesIO(data))
+            return buffer.getvalue()
+
+        with tempfile.TemporaryDirectory() as root, patch.object(app, "BASE_DIR", root):
+            local = Path(root)
+            entry = local / "app.py"
+            entry.write_text("old")
+            (local / ".env").write_text("keep")
+            with self.assertRaises(app.HTTPException):
+                app._install_source_archive(package({"app.py": b"new"}))
+            self.assertEqual(entry.read_text(), "old")
+            files = {"app.py": b"new", "admin.html": b"ui", "version.json": b'{"version":"fixture"}',
+                     ".env": b"replace"}
+            with self.assertRaises(app.HTTPException):
+                app._install_source_archive(package({**files, "app.py": b"invalid source!"}))
+            self.assertEqual(entry.read_text(), "old")
+            app._install_source_archive(package(files))
+            self.assertEqual(entry.read_text(), "new")
+            self.assertEqual((local / ".env").read_text(), "keep")
+
+    def test_admin_keys_survive_restart_and_intentional_config_change(self):
+        with tempfile.TemporaryDirectory() as root:
+            cfg = replace(app.CFG, base_dir=root)
+            first = app.Store(cfg).load_admin_key("")
+            self.assertTrue(first.startswith("m2a_"))
+            self.assertEqual(app.Store(cfg).load_admin_key(""), first)
+            app.Store(cfg).save_admin_key("configured", "rotated")
+            self.assertEqual(app.Store(cfg).load_admin_key("configured"), "rotated")
+            self.assertEqual(app.Store(cfg).load_admin_key("replacement"), "replacement")
+
+    def test_plain_process_keeps_running_after_upgrade(self):
+        with patch.dict(os.environ, {"MUSE2API_RESTART_ON_UPGRADE": "0"}), \
+             patch.object(app, "_upgrade_from_github_sync", return_value={"ok": True}), \
+             patch.object(app, "_restart_upgraded_service") as restart:
+            result = app._apply_admin_upgrade(True)
+        self.assertFalse(result["restart_scheduled"])
+        self.assertEqual(result["previous_instance"], app.healthz()["instance"])
+        self.assertFalse(app.UPDATE_IN_PROGRESS)
+        restart.assert_not_called()
+
+    def test_running_api_prevents_source_update(self):
+        with patch.object(app, "API_POSTS_IN_PROGRESS", 1), \
+             patch.object(app, "_upgrade_from_github_sync") as upgrade:
+            with self.assertRaises(app.HTTPException) as error:
+                app._apply_admin_upgrade(True)
+        self.assertEqual(error.exception.status_code, 409)
+        upgrade.assert_not_called()
 
 
 if __name__=="__main__":unittest.main(verbosity=2)

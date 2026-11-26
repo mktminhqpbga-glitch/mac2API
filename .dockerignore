@@ -1,0 +1,12 @@
+.git
+.env*
+data/
+venv/
+env/
+__pycache__/
+**/__pycache__/
+muse2api-profiles/
+chrome-profile/
+*.key
+*.pem
+*.log

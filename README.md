@@ -1,6 +1,6 @@
 # MUSE2API
 
-Bản tổng hợp mac2API 1.6.12 gồm mã máy chủ, bảng quản trị, tiện ích Chrome/Edge 1.0.8 và các adapter MacFlow/Toonflow. [Nhật ký phiên bản](CHANGELOG.md)
+Bản tổng hợp mac2API 1.6.13 gồm mã máy chủ, bảng quản trị, tiện ích Chrome/Edge 1.0.8 và các adapter MacFlow/Toonflow. [Nhật ký phiên bản](CHANGELOG.md)
 
 MUSE2API cung cấp API kiểu OpenAI để gọi các tính năng chat, tạo ảnh và tạo video của [Muse.ai](https://muse.ai/). Máy chủ Python chạy FastAPI và điều khiển Chromium qua Chrome DevTools Protocol (CDP). Muse.ai thực hiện việc tạo nội dung. Dịch vụ quản lý cookie, hàng đợi, tài khoản, proxy và kết quả tải về.
 
@@ -15,6 +15,8 @@ bash start-mac2api.command
 ```
 
 Mở địa chỉ Terminal in ra, mặc định là [http://127.0.0.1:18610/admin](http://127.0.0.1:18610/admin). Nếu cổng đang được dùng, chờ tác vụ của bản cũ kết thúc rồi dừng tiến trình đó trước khi chạy lại.
+
+Nếu bạn để trống khóa quản trị, mở tệp `data/admin-key.json` tại đường dẫn Terminal in ra và sao chép giá trị `key`. Khóa tự tạo và khóa đã đổi trong bảng quản trị được lưu trong thư mục dữ liệu để dùng lại sau khi khởi động.
 
 Để dùng lại cấu hình và dữ liệu, đặt `MUSE2API_HOME` thành thư mục chứa `.env` và `data/` của bản cũ khi chạy lệnh khởi động. Bảng quản trị vẫn được đọc từ thư mục mã mới.
 
@@ -39,6 +41,8 @@ docker compose up -d
 ```
 
 Mở `http://<máy-chủ>:18610/admin` và nhập API Key. Kiểm tra `/healthz` để xác nhận HTTP hoạt động và `/readyz` để xem có tài khoản Muse đang bật hay chưa.
+
+Docker Compose giữ dữ liệu trong `data/` và giữ hồ sơ trình duyệt trong volume `browser-profiles`. Khi cập nhật, dựng lại image với `docker compose up -d --build`.
 
 ## Triển khai trực tiếp trên Debian hoặc Ubuntu
 
@@ -141,6 +145,15 @@ Dùng `images` để gửi ảnh tham chiếu cho video. Ảnh đầu tiên là 
 Trong **Quản lý tài khoản**, chọn **Ngôn ngữ chỉ dẫn Muse** rồi bấm **Lưu ngôn ngữ chỉ dẫn**. Có ba lựa chọn là tiếng Việt (mặc định), tiếng Anh và tiếng Trung. Cài đặt lưu trong `data/muse-prompt.json`, áp dụng cho yêu cầu Muse mới và giữ nguyên prompt đầu vào. Phần chỉ dẫn tạo ảnh/video đề nghị Muse xác nhận bằng ngôn ngữ đã chọn. Muse tự quyết định lời đáp thực tế. Chat chỉ có một tin nhắn người dùng vẫn gửi trực tiếp. Khóa và tin nhắn gửi tới OpenAI hoặc Gemini sử dụng luồng riêng.
 
 ## Bảng quản trị API
+
+### Luồng tự động
+
+1. Mở **Luồng tự động**. Nhập nội dung và ngữ cảnh chung. Ví dụ `[Sản phẩm A] [Sản phẩm B]` tạo hai mục khi **Tách mỗi cụm [ ... ]** đang bật.
+2. Thêm các bước theo thứ tự và chọn kết quả cần tạo ở mỗi bước. Ví dụ **Văn bản → Ảnh → Video**. Mỗi bước nhận nội dung của mục, ngữ cảnh chung, kết quả văn bản đã hoàn tất trước đó và chỉ dẫn riêng. Trong **Nâng cao**, chọn mô hình, tỉ lệ, thời lượng hoặc dùng ảnh của bước trước khi bước hiện tại chạy qua Muse.
+3. Bấm **Chạy luồng**. **Tiến độ** hiển thị từng mục và bước. **Tạm dừng** để bước đang chạy kết thúc rồi mới dừng. Nếu một bước lỗi, các bước sau của mục đó chờ và các mục khác vẫn chạy. Bấm **Chạy lại bước này** sau khi xử lý nguyên nhân.
+4. Sao chép hoặc tải kết quả trong mục **Kết quả**. Dùng **Luồng đã lưu** để mở lại lần chạy trước. Bản nháp lưu trong trình duyệt và các lần chạy lưu trên máy chủ. Sau khi mac2API khởi động lại, bấm **Tiếp tục** để đọc lại biên nhận media. Bước văn bản bị gián đoạn cần xem lại rồi chạy lại thủ công.
+
+### Tổng quan và lịch sử
 
 Trang **Tổng quan** hiển thị trạng thái kết nối AI và báo cáo lượt API theo hôm nay, 7 ngày hoặc 30 ngày gần đây. Báo cáo gồm số lượt hoàn tất, ảnh tạo được, thời lượng video và token khi có số đo. Bảng khách hàng hiển thị lượt gọi gần nhất trong kỳ, tác vụ đang chờ hoặc chạy, tiền thu và hạn mức ngày đã dùng/còn lại theo mô hình. Bảng tài khoản AI dùng trạng thái và hạn mức đã ghi nhận, kèm thời điểm đọc hạn mức nếu có.
 

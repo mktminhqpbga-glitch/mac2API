@@ -1,5 +1,6 @@
 """Offline/API regressions for multi-reference validation and memory limits."""
 import asyncio
+from contextlib import asynccontextmanager
 import base64
 import importlib.util
 import os
@@ -111,9 +112,10 @@ class FakeMultipartRequest:
         self.value = form
         self.form_options = None
 
+    @asynccontextmanager
     async def form(self, **kwargs):
         self.form_options = kwargs
-        return self.value
+        yield self.value
 
 
 class FakeUpload:

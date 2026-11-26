@@ -26,9 +26,8 @@ class Client:
     def __init__(self, app, headers):
         self.app, self.headers = app, headers
 
-    async def request(self, method, path, json_data=None, data=None, files=None, headers=None):
+    async def request(self, method, path, json_data=None, data=None, files=None, headers=None, body=b""):
         hdr = {**self.headers, **(headers or {})}
-        body = b""
         if files:
             boundary = "muse-test-boundary"
             chunks = []
@@ -159,6 +158,14 @@ async def check(source, home):
         await client.get("/v1/images/tasks/" + tid)
         assert len(calls) == 1, "polling must not rerun generation"
         print("completed_b64_roundtrip=PASS polling_does_not_regenerate=PASS")
+
+        for body, status in (({"timeout": "wrong"}, 422), ([], 400), ({"model": {"invalid": True}}, 422)):
+            rejected = await client.post("/v1/images/edits", json=body)
+            assert rejected.status_code == status, rejected.body
+        rejected = await client.request("POST", "/v1/images/edits", body=b"{",
+                                        headers={"Content-Type": "application/json"})
+        assert rejected.status_code == 400, rejected.body
+        assert len(calls) == 1, "invalid edits must not start a task"
 
         response = await client.post("/v1/images/edits", data={
             "prompt": "edit reference", "async": "true"},

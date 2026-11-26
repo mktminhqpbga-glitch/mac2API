@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   muse2api:
     build: .
@@ -12,7 +10,7 @@ services:
       # 管理与 API 鉴权 Key（从 .env 或宿主环境读取，留空则自动生成）
       - MUSE2API_KEY=${MUSE2API_KEY:-}
       # 服务对外基准 URL，如 https://your-domain.com（留空则管理前端自动检测当前域名）
-      - MUSE2API_PUBLIC_BASE=
+      - MUSE2API_PUBLIC_BASE=${MUSE2API_PUBLIC_BASE:-}
       - MUSE2API_CORS_ORIGINS=${MUSE2API_CORS_ORIGINS:-https://muse.ai,https://www.muse.ai,http://127.0.0.1:3000,http://localhost:3000}
       - MUSE2API_ALLOW_LEGACY_PUBLIC_MEDIA=${MUSE2API_ALLOW_LEGACY_PUBLIC_MEDIA:-0}
       # 超时配置（秒）
@@ -28,4 +26,8 @@ services:
     volumes:
       # 持久化账号配置、任务日志及媒体文件
       - ./data:/app/data
+      - browser-profiles:/root/muse2api-profiles
     shm_size: '2gb' # 保证 Chromium 渲染多标签页时不因 /dev/shm 耗尽崩溃
+
+volumes:
+  browser-profiles:

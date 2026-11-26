@@ -163,6 +163,20 @@
   .client-provider-accounts .hint,#clientRules .hint{margin:0}
   .client-model-settings{margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:9px}
   .client-model-settings summary{font-weight:650;cursor:pointer}
+  .workflow-layout{display:grid;grid-template-columns:minmax(0,.95fr) minmax(0,1.05fr);gap:16px;align-items:start}
+  .workflow-layout .card{min-width:0}
+  .workflow-layout textarea{min-height:82px;resize:vertical}
+  #workflowInput{min-height:135px}
+  .workflow-step,.workflow-item,.workflow-result{border:1px solid var(--line);border-radius:10px;padding:12px;margin:10px 0;min-width:0}
+  .workflow-step label{margin:6px 0}
+  .workflow-step details{margin-top:10px;padding-top:8px;border-top:1px solid var(--line)}
+  .workflow-step summary,.workflow-item summary{cursor:pointer}
+  .workflow-step-head,.workflow-step-state,.workflow-run-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+  .workflow-step-state{padding:8px 0;border-top:1px solid var(--line);margin-top:8px}
+  .workflow-step-state p{flex-basis:100%;margin:0;color:var(--bad);overflow-wrap:anywhere}
+  .workflow-result pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto;margin:9px 0}
+  #workflowProgress{width:100%;margin:10px 0;accent-color:var(--accent)}
+  @media(max-width:900px){.workflow-layout{grid-template-columns:minmax(0,1fr)}}
   #usageDialog{width:min(720px,calc(100% - 32px))}
   #usageDetails pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:225px;overflow:auto;font-size:13px}
   #usageDetails p{overflow-wrap:anywhere}
@@ -361,6 +375,7 @@
         <button type="button" data-t="clients" data-ui="clients">Khóa API</button>
         <button type="button" data-t="usage" data-ui="usage">Lịch sử API</button>
         <button type="button" data-t="tasks" data-ui="tasks">Tác vụ</button>
+        <button type="button" data-t="workflows">Luồng tự động</button>
         <button type="button" data-t="media" data-ui="media">Thư viện media</button>
       </div>
       <div class="nav-group">
@@ -1190,6 +1205,41 @@ t = requests.post(<span class="s">"BASE/v1/videos"</span>, json={<span class="s"
         所以：依赖 <code>tool_calls</code> 的<b>自主 Agent 模式</b>（自动读写文件、执行命令那一类）接不了；
         但所有<b>问答式</b>用法 —— 对话、写代码、解释、翻译、总结、生图、生视频 —— <b>全部完全可用</b>。<br>
         客户端若强行带上 <code>tools</code> 字段，接口不会报错，会忽略工具声明、按普通对话正常回答。
+      </div>
+    </div>
+  </section>
+  <section class="tab" id="tab-workflows">
+    <div class="workflow-layout">
+      <form class="card" id="workflowForm">
+        <h2>Thiết lập luồng</h2>
+        <label>Tên luồng<input id="workflowTitle" type="text" maxlength="100" placeholder="Ví dụ: Nội dung quảng cáo"></label>
+        <label>Nội dung cần xử lý<textarea id="workflowInput" rows="5" required maxlength="40000" placeholder="[Sản phẩm thứ nhất]&#10;[Sản phẩm thứ hai]"></textarea></label>
+        <label><input id="workflowSplit" type="checkbox" checked> Tách mỗi cụm [ ... ] thành một mục</label>
+        <label>Ngữ cảnh chung<textarea id="workflowContext" rows="2" maxlength="16000" placeholder="Ví dụ: Viết tiếng Việt, giọng ngắn gọn"></textarea></label>
+        <div id="workflowSteps"></div>
+        <div class="acts">
+          <button type="button" class="ghost" id="workflowAdd">Thêm bước</button>
+          <button type="submit" id="workflowStart">Chạy luồng</button>
+        </div>
+        <p id="workflowDraftStatus" role="status" class="hint"></p>
+      </form>
+      <div>
+        <section class="card">
+          <div class="workflow-run-head"><h2>Tiến độ</h2><span id="workflowRunState" class="badge mute" hidden></span></div>
+          <label id="workflowHistory" hidden>Luồng đã lưu<select id="workflowRunSelect"></select></label>
+          <p class="hint" id="workflowRunStatus" role="status">Thiết lập rồi bấm Chạy luồng.</p>
+          <progress id="workflowProgress" hidden aria-label="Tiến độ luồng"></progress>
+          <div class="acts" id="workflowActions" hidden>
+            <button id="workflowPause" type="button" class="ghost">Tạm dừng</button>
+            <button id="workflowResume" type="button" hidden>Tiếp tục</button>
+            <button id="workflowUseConfig" type="button" class="ghost">Dùng lại thiết lập</button>
+          </div>
+          <div id="workflowItems"></div>
+        </section>
+        <section class="card">
+          <h2>Kết quả</h2>
+          <div id="workflowResults"><p class="hint">Kết quả sẽ hiện khi từng bước hoàn tất.</p></div>
+        </section>
       </div>
     </div>
   </section>
@@ -2665,6 +2715,8 @@ const uiCopy = {
   setup:['Chưa cấu hình','Not configured','未配置'], openProvider:['Quản lý kết nối','Manage connection','管理连接'],
   text:['Văn bản','Text','文本'], image:['Ảnh','Image','图片'], video:['Video','Video','视频'],
   editKey:['Chỉnh sửa','Edit','编辑'], rotateKey:['Đổi mã khóa','Rotate key','轮换密钥'], revokeKey:['Thu hồi','Revoke','撤销'],
+  deleteTask:['Xóa','Delete','删除'], cancelTask:['Hủy tác vụ','Cancel task','取消任务'],
+  taskFileMissing:['Tệp kết quả đã được dọn hoặc xóa','Result file was cleaned up or deleted','结果文件已清理或删除'],
   viewUsage:['Xem lịch sử','View usage','查看用量'], updateKey:['Lưu thay đổi','Save changes','保存修改'],
   loading:['Đang tải…','Loading…','加载中…'],
 };
@@ -2676,6 +2728,7 @@ function localizeUi(root = document){
 localizeUi();
 
 const pageContexts = {
+  workflows: ['Chạy từng mục theo các bước đã thiết lập.', 'Run a saved sequence for each item.', '按已配置的步骤处理每一项。'],
   overview: ['Theo dõi kết nối AI và việc sử dụng API trên một màn hình.', 'Monitor AI connections and API activity.', '查看 AI 连接与 API 活动。'],
   clients: ['Cấp quyền theo mô hình, tài khoản và hạn mức cho từng khách hàng.', 'Manage model access, accounts and usage limits for each customer.', '管理每位客户的模型、账号和用量限制。'],
   usage: ['Đối chiếu lượt gọi, chi phí AI và số tiền thu theo khóa.', 'Review requests, provider costs and customer charges.', '核对请求、服务商成本和客户费用。'],
@@ -2730,6 +2783,8 @@ function loadActiveTab(){
     case 'overview': return loadOverview();
     case 'pool': return loadPool();
     case 'tasks': return Promise.all([loadPool(), loadTasks()]);
+    case 'workflows': return import('/admin/workflow.js').then(module => module.loadWorkflows())
+      .catch(() => { $('workflowRunStatus').textContent = 'Chưa mở được luồng. Hãy tải lại trang.'; });
     case 'clients': return loadClientKeys();
     case 'usage': return loadUsageView();
     case 'media': return loadMedia();
@@ -4294,7 +4349,8 @@ function paintTasks(ts){
       const accountLabel = accounts.find(a => a.id === t.account)?.label;
       const accountText = accountLabel ? accountLabel + ' (' + t.account + ')' : t.account;
       let out = '—';
-      if (t.result && t.result.url) out = `<a href="${esc(t.result.url)}" target="_blank">查看结果</a> <span class="mono">${fmtBytes(t.result.bytes ?? t.result.size)}</span>`;
+      if (t.result_available === false) out = `<span class="muted">${esc(ui('taskFileMissing'))}</span>`;
+      else if (t.result && t.result.url) out = `<a href="${esc(t.result.url)}" target="_blank">查看结果</a> <span class="mono">${fmtBytes(t.result.bytes ?? t.result.size)}</span>`;
       else if (t.error || t.last_error) {
         const message = translateTaskText(t.error || t.last_error);
         const previous = t.last_error && translateTaskText(t.last_error);
@@ -4318,7 +4374,10 @@ function paintTasks(ts){
         <td class="mono">${taskDuration(t)}</td>
         <td class="mono">${fmtTime(t.created_at)}</td>
         <td>${out}</td>
-        <td><button class="danger mini" onclick="delTask('${t.id}')">删</button></td>
+        <td>${t.status === 'processing' ? '—' :
+          `<button type="button" class="${t.status === 'queued' ? 'ghost' : 'danger'} mini"
+            data-task-action="${t.status === 'queued' ? 'cancel' : 'delete'}" data-task-id="${esc(t.id)}">
+            ${esc(ui(t.status === 'queued' ? 'cancelTask' : 'deleteTask'))}</button>`}</td>
       </tr>`;
     }).join('');
 }
@@ -4330,10 +4389,20 @@ $('taskSearch').oninput = () => {
 };
 $('taskPrev').onclick = () => loadTasks(Math.max(0, taskPage - 1));
 $('taskNext').onclick = () => loadTasks(taskPage + 1);
-async function delTask(id){
-  try{ await api('/admin/tasks/' + id, {method:'DELETE'}); loadTasks(); }
-  catch(e){ toast('删除失败：' + e.message, 'bad'); }
-}
+$('taskBody').addEventListener('click', async event => {
+  const button = event.target.closest('[data-task-action]');
+  if (!button || button.disabled) return;
+  const cancel = button.dataset.taskAction === 'cancel';
+  const path = '/admin/tasks/' + encodeURIComponent(button.dataset.taskId);
+  button.disabled = true;
+  try {
+    await api(cancel ? path + '/cancel' : path, {method: cancel ? 'POST' : 'DELETE'});
+    await loadTasks();
+  } catch (error) {
+    toast(error.message, 'bad');
+    if (error.status === 409) await loadTasks();
+  } finally { button.disabled = false; }
+});
 async function clearTasks(){
   if (!confirm('确定清空全部任务记录？（已生成的媒体文件不会被删除）')) return;
   try{
@@ -4818,17 +4887,32 @@ async function upgradeNow(){
   if (btn2) { btn2.disabled = true; btn2.innerHTML = '<span class="spin"></span>正在在线更新…'; }
   try{
     const r = await api('/admin/update/upgrade', {method: 'POST', body: JSON.stringify({restart: true})});
-    toast('✓ ' + (r.message || '更新完成') + '，服务正在重启，就绪后将自动刷新页面…', 'ok');
     $('updateBanner').classList.remove('show');
+    if (!r.restart_scheduled) {
+      const message = {vi: 'Đã cài bản mới. Hãy đóng rồi mở lại mac2API để chạy bản mới.',
+        en: 'Update installed. Close and reopen mac2API to start the new version.',
+        zh: '更新已安装，请关闭并重新打开 mac2API。'}[LANG];
+      $('repoStatusDesc').textContent = message;
+      toast(message, 'ok');
+      if (btn1) btn1.textContent = message;
+      return;
+    }
+    toast('✓ ' + (r.message || '更新完成') + '，服务正在重启，就绪后将自动刷新页面…', 'ok');
     let tries = 0;
     const waitReady = async () => {
       tries++;
       try{
         const hr = await fetch('/healthz?t=' + Date.now(), {cache: 'no-store'});
-        if (hr.ok) { location.reload(); return; }
+        const health = hr.ok ? await hr.json() : null;
+        if (health?.instance && health.instance !== r.previous_instance) { location.reload(); return; }
       }catch(_){}
-      if (tries < 20) setTimeout(waitReady, 1000);
-      else location.reload();
+      if (tries < 30) setTimeout(waitReady, 1000);
+      else {
+        const message = {vi: 'Dịch vụ chưa mở lại. Hãy kiểm tra cửa sổ chạy mac2API.',
+          en: 'The service has not restarted. Check the mac2API window.', zh: '服务尚未重新启动，请检查 mac2API 窗口。'}[LANG];
+        $('repoStatusDesc').textContent = message;
+        toast(message, 'warn');
+      }
     };
     setTimeout(waitReady, 2500);
   }catch(e){

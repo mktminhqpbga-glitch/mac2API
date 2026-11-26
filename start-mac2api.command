@@ -13,7 +13,10 @@ if [[ ! -x venv/bin/python ]]; then
     exit 1
 fi
 
-exec venv/bin/python - <<'PY'
+export MUSE2API_RESTART_ON_UPGRADE=1
+
+run_mac2api() {
+venv/bin/python - <<'PY'
 import errno
 import socket
 from pathlib import Path
@@ -48,3 +51,16 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
     if not server.started:
         raise SystemExit(1)
 PY
+}
+
+while true; do
+    if run_mac2api; then
+        exit 0
+    else
+        status=$?
+    fi
+    if [[ "$status" -ne 75 ]]; then
+        exit "$status"
+    fi
+    printf '%s\n' 'Đang mở lại mac2API sau khi cập nhật…'
+done

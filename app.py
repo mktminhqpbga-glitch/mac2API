@@ -40,10 +40,12 @@ import json
 import logging
 import mimetypes
 import os
+from pathlib import Path
 import re
 import shutil
 import sqlite3
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -73,6 +75,7 @@ from web_providers import (DEFAULT_WEB_CDP_PORT, MAX_IMAGE_BYTES, PROVIDERS as W
                            WebProviderError, WebProviders, WebSessionUnavailable, decode_web_image)
 from thumbnails import (VIDEO_FORMATS, ThumbnailUnavailable,
                         source_version, video_thumbnail)
+from workflows import WorkflowRequest, WorkflowStepError, Workflows, workflow_prompt
 
 import sys
 BASE_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -145,6 +148,10 @@ class AccessLogFilter(logging.Filter):
 logging.getLogger("uvicorn.access").addFilter(AccessLogFilter())
 
 store = Store(CFG)
+CONFIGURED_ADMIN_KEY = CFG.api_key
+ADMIN_KEY_LOCK = threading.Lock()
+SERVICE_INSTANCE = uuid.uuid4().hex
+workflows = Workflows(os.path.join(CFG.data_dir, "workflows"))
 client_usage = ClientUsage(os.path.join(CFG.data_dir, "api-usage.sqlite3"))
 chat_providers = ChatProviders(CFG.data_dir)
 if CFG.web_cdp_port and (not 1 <= CFG.web_cdp_port <= 65535 or CFG.web_cdp_port == CFG.cdp_port):
@@ -647,6 +654,9 @@ KIND_PENDING_MEDIA_LIMIT = 8
 CLIENT_PENDING_IMAGE_LIMIT = 4
 IMAGE_PENDING_LIMIT = 20
 MEDIA_ADMISSION_LOCK = threading.Lock()
+UPDATE_LOCK = threading.Lock()
+UPDATE_IN_PROGRESS = False
+API_POSTS_IN_PROGRESS = 0
 CLIENT_MEDIA_PATTERN = re.compile(r"^client-([0-9a-f]{16})--")
 NO_STORE = {"Cache-Control": "no-store"}
 
@@ -669,28 +679,38 @@ def contract_auth(request: Request, authorization: str | None = Header(default=N
 
 
 async def api_auth(request: Request, authorization: str | None = Header(default=None)):
-    """Return the restricted client, or None for the existing administrator workflow."""
+    """Authorize the API call and keep updates out of active requests."""
+    global API_POSTS_IN_PROGRESS
     token = _bearer_token(authorization)
-    if _is_admin(token) or (not CFG.api_key and not token):
-        yield None
-        return
-    client = store.find_client(token)
-    if not client:
-        raise HTTPException(401, "API Key không hợp lệ hoặc đã bị thu hồi.")
-    provider = _path_provider(request)
-    if (provider and provider not in client["providers"]
-            and not (request.method == "GET" and "/models" not in request.url.path)):
-        raise HTTPException(403, "Khóa API này không có quyền dùng nhà cung cấp ở Base URL này.")
+    client = None
+    if not (_is_admin(token) or (not CFG.api_key and not token)):
+        client = store.find_client(token)
+        if not client:
+            raise HTTPException(401, "API Key không hợp lệ hoặc đã bị thu hồi.")
+        provider = _path_provider(request)
+        if (provider and provider not in client["providers"]
+                and not (request.method == "GET" and "/models" not in request.url.path)):
+            raise HTTPException(403, "Khóa API này không có quyền dùng nhà cung cấp ở Base URL này.")
     is_write = request.method == "POST"
-    if is_write and not store.acquire_client_request(
-        client["id"], CLIENT_REQUESTS_PER_MINUTE, CLIENT_ACTIVE_POST_LIMIT
-    ):
-        raise _backpressure("CLIENT_RATE_LIMIT", "Khóa API đã đạt giới hạn yêu cầu hoặc đang có yêu cầu xử lý.", 60)
+    if is_write:
+        with UPDATE_LOCK:
+            if UPDATE_IN_PROGRESS:
+                raise HTTPException(503, "mac2API đang cập nhật. Hãy thử lại sau.", headers={"Retry-After": "5"})
+            API_POSTS_IN_PROGRESS += 1
+    client_acquired = False
     try:
+        if is_write and client is not None:
+            client_acquired = store.acquire_client_request(client["id"], CLIENT_REQUESTS_PER_MINUTE,
+                                                           CLIENT_ACTIVE_POST_LIMIT)
+            if not client_acquired:
+                raise _backpressure("CLIENT_RATE_LIMIT", "Khóa API đã đạt giới hạn yêu cầu hoặc đang có yêu cầu xử lý.", 60)
         yield client
     finally:
-        if is_write:
+        if client_acquired:
             store.release_client_request(client["id"])
+        if is_write:
+            with UPDATE_LOCK:
+                API_POSTS_IN_PROGRESS -= 1
 
 
 def _authorize_model(client, model: str, kind: str):
@@ -817,6 +837,9 @@ def _public_task(task, client):
         data = {key: value for key, value in data.items() if key in allowed}
     result = data.get("result")
     if isinstance(result, dict) and result.get("filename"):
+        if not _client_id(client):
+            path = os.path.join(CFG.media_dir, result["filename"])
+            data["result_available"] = not os.path.islink(path) and os.path.isfile(path)
         url = media_url(result["filename"], admin=not _client_id(client))
         public_result = {key: value for key, value in result.items() if key != "path"}
         data.update(result={**public_result, "url": url}, url=url)
@@ -2072,7 +2095,7 @@ def _run_generation_locked(prompt: str, kind: str, timeout: int,
 # ------------------------- 基础接口 -------------------------
 @app.get("/healthz")
 def healthz():
-    return {"status": "ok", "time": int(time.time())}
+    return {"status": "ok", "time": int(time.time()), "instance": SERVICE_INSTANCE}
 
 
 @app.get("/readyz")
@@ -2361,6 +2384,10 @@ def cancel_media_task(task_id: str, request: Request, client=Depends(contract_au
     if (not task or task.get("kind") != kind or task.get("owner") != client["id"]
             or (scope and scope != provider)):
         raise HTTPException(404, "Không tìm thấy tác vụ.", headers=NO_STORE)
+    return _cancel_queued_task(task_id)
+
+
+def _cancel_queued_task(task_id):
     try:
         cancelled = store.transition_task(task_id, "queued", status="cancelled")
     except OSError as exc:
@@ -2703,47 +2730,46 @@ async def images_edits(request: Request, _=Depends(api_auth),
     async_mode = False
 
     if "multipart/form-data" in content_type:
-        form = await request.form(
-            max_files=MAX_REFERENCE_IMAGES, max_fields=20)
-        async_mode = form.get("async", False)
-        prompt = form.get("prompt") or ""
-        model = form.get("model") or "muse-image"
-        size = form.get("size")
-        aspect_ratio = form.get("aspect_ratio")
-        response_format = form.get("response_format") or "url"
-        timeout_val = form.get("timeout")
-        if timeout_val:
-            try:
-                timeout = int(timeout_val)
-            except ValueError:
-                pass
-        # image 可重复提交；video / audio / file 同样可重复，按字段顺序排在 image 之后
-        img_fields = [(name, value) for name in ("image", "image[]", "video", "audio", "file")
-                      for value in form.getlist(name)]
-        if len(img_fields) > MAX_REFERENCE_IMAGES:
-            raise HTTPException(400, f"参考素材最多 {MAX_REFERENCE_IMAGES} 个（当前 {len(img_fields)} 个）")
-        total_upload_bytes = 0
-        mib = 1024 * 1024
-        for index, (name, img_field) in enumerate(img_fields):
-            if img_field and hasattr(img_field, "read"):
-                ref_mime = (getattr(img_field, "content_type", "") or "").split(";", 1)[0].strip().lower()
-                if ref_mime and ref_mime not in REFERENCE_MIME_EXT and not _generic_upload_mime(ref_mime):
-                    raise HTTPException(400, f"{name}[{index}] 文件类型不受支持（{ref_mime}）")
-                content = await img_field.read(MAX_REFERENCE_IMAGE_BYTES + 1)
-                if len(content) > MAX_REFERENCE_IMAGE_BYTES:
-                    raise HTTPException(400, f"{name}[{index}] 超过 {MAX_REFERENCE_IMAGE_BYTES // mib} MiB 限制")
-                total_upload_bytes += len(content)
-                if total_upload_bytes > MAX_REFERENCE_TOTAL_BYTES:
-                    raise HTTPException(400, f"参考素材总大小超过 {MAX_REFERENCE_TOTAL_BYTES // mib} MiB 限制")
-                ref_mime = ref_mime or "application/octet-stream"
-                ref_image_data.append(
-                    f"data:{ref_mime};base64,{base64.b64encode(content).decode('ascii')}")
-            elif isinstance(img_field, str) and img_field.strip():
-                ref_image_data.append(img_field.strip())
-            else:
-                raise HTTPException(400, f"{name}[{index}] 不是有效素材引用")
+        async with request.form(max_files=MAX_REFERENCE_IMAGES, max_fields=20) as form:
+            async_mode = form.get("async", False)
+            prompt = form.get("prompt") or ""
+            model = form.get("model") or "muse-image"
+            size = form.get("size")
+            aspect_ratio = form.get("aspect_ratio")
+            response_format = form.get("response_format") or "url"
+            timeout = form.get("timeout") or None
+            # image 可重复提交；video / audio / file 同样可重复，按字段顺序排在 image 之后
+            img_fields = [(name, value) for name in ("image", "image[]", "video", "audio", "file")
+                          for value in form.getlist(name)]
+            if len(img_fields) > MAX_REFERENCE_IMAGES:
+                raise HTTPException(400, f"参考素材最多 {MAX_REFERENCE_IMAGES} 个（当前 {len(img_fields)} 个）")
+            total_upload_bytes = 0
+            mib = 1024 * 1024
+            for index, (name, img_field) in enumerate(img_fields):
+                if img_field and hasattr(img_field, "read"):
+                    ref_mime = (getattr(img_field, "content_type", "") or "").split(";", 1)[0].strip().lower()
+                    if ref_mime and ref_mime not in REFERENCE_MIME_EXT and not _generic_upload_mime(ref_mime):
+                        raise HTTPException(400, f"{name}[{index}] 文件类型不受支持（{ref_mime}）")
+                    content = await img_field.read(MAX_REFERENCE_IMAGE_BYTES + 1)
+                    if len(content) > MAX_REFERENCE_IMAGE_BYTES:
+                        raise HTTPException(400, f"{name}[{index}] 超过 {MAX_REFERENCE_IMAGE_BYTES // mib} MiB 限制")
+                    total_upload_bytes += len(content)
+                    if total_upload_bytes > MAX_REFERENCE_TOTAL_BYTES:
+                        raise HTTPException(400, f"参考素材总大小超过 {MAX_REFERENCE_TOTAL_BYTES // mib} MiB 限制")
+                    ref_mime = ref_mime or "application/octet-stream"
+                    ref_image_data.append(
+                        f"data:{ref_mime};base64,{base64.b64encode(content).decode('ascii')}")
+                elif isinstance(img_field, str) and img_field.strip():
+                    ref_image_data.append(img_field.strip())
+                else:
+                    raise HTTPException(400, f"{name}[{index}] 不是有效素材引用")
     else:
-        body = await request.json()
+        try:
+            body = await request.json()
+        except ValueError as exc:
+            raise HTTPException(400, "Nội dung yêu cầu chỉnh ảnh phải là JSON hợp lệ hoặc biểu mẫu tải tệp.") from exc
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Nội dung JSON của yêu cầu chỉnh ảnh phải là một object.")
         async_mode = body.get("async", False)
         prompt = body.get("prompt") or ""
         model = body.get("model") or "muse-image"
@@ -2761,16 +2787,15 @@ async def images_edits(request: Request, _=Depends(api_auth),
     if not prompt:
         prompt = "参考此图片并进行生图创作"
 
-    req_obj = ImageRequest(
-        prompt=prompt,
-        model=_scoped_model(request, "image", model),
-        size=size,
-        aspect_ratio=aspect_ratio,
-        response_format=response_format,
-        timeout=timeout,
-        images=ref_image_data,
-        **{"async": async_mode}
-    )
+    try:
+        req_obj = ImageRequest(
+            prompt=prompt, model=model, size=size, aspect_ratio=aspect_ratio,
+            response_format=response_format, timeout=timeout, images=ref_image_data,
+            **{"async": async_mode},
+        )
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors()) from exc
+    req_obj = _scope_request_model(request, "image", req_obj)
     _authorize_model(_, req_obj.model, "image")
     owner = _client_id(_)
     if _module_provider(req_obj.model, "image"):
@@ -4230,12 +4255,17 @@ def get_apikey(_=Depends(auth)):
 
 
 @app.post("/admin/apikey/rotate")
-def rotate_apikey(_=Depends(auth)):
-    """生成新的 API Key，写入 .env 并立即生效（不用重启）。"""
+def rotate_apikey(authorization: str | None = Header(default=None), _=Depends(auth)):
+    """Persist the replacement key before making it active."""
     import secrets
-    new_key = "m2a_" + secrets.token_hex(24)
-    _persist_env("MUSE2API_KEY", new_key)
-    CFG.api_key = new_key
+    with ADMIN_KEY_LOCK:
+        auth(authorization)
+        new_key = "m2a_" + secrets.token_hex(24)
+        try:
+            store.save_admin_key(CONFIGURED_ADMIN_KEY, new_key)
+        except OSError as exc:
+            raise HTTPException(507, "Không lưu được khóa mới. Khóa hiện tại vẫn có hiệu lực.") from exc
+        CFG.api_key = new_key
     return {"ok": True, "api_key": new_key,
             "message": "已生成新 Key 并立即生效；旧 Key 已失效，请更新下游项目"}
 
@@ -4255,10 +4285,13 @@ def _persist_env(key: str, value: str):
             found = True
     if not found:
         lines.append(f"{key}={value}")
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines).strip() + "\n")
-    os.replace(tmp, path)
+    fd, tmp = tempfile.mkstemp(prefix=".env-", dir=CFG.base_dir)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines).strip() + "\n")
+        os.replace(tmp, path)
+    finally:
+        Path(tmp).unlink(missing_ok=True)
 
 
 # ------------------------- 管理：Cookie 获取 -------------------------
@@ -4320,6 +4353,150 @@ def extension_files():
 
 
 # ------------------------- 管理：任务 / 媒体 -------------------------
+def _workflow_media_path(filename):
+    if not isinstance(filename, str) or not filename or filename != os.path.basename(filename):
+        raise WorkflowStepError("Dịch vụ chưa trả về tệp kết quả hợp lệ.")
+    path = Path(CFG.media_dir) / filename
+    if path.is_symlink() or not path.is_file():
+        raise WorkflowStepError("Tệp kết quả đã được dọn hoặc xóa.")
+    return path
+
+
+async def _execute_workflow_step(run, item_index, index, checkpoint):
+    import httpx
+
+    item = run["items"][item_index]
+    step = run["config"]["steps"][index]
+    state = item["steps"][index]
+    kind = step["kind"]
+    model = step["model"] or f"muse/{kind}"
+    prompt = workflow_prompt(run, item, index)
+    payload = {"model": model, "prompt": prompt}
+    if kind != "text" and step["aspect_ratio"]:
+        payload["aspect_ratio"] = step["aspect_ratio"]
+    if kind == "video" and step["duration"]:
+        payload["duration"] = step["duration"]
+    if step["input_image"] and not state.get("task_id"):
+        reference = next((x.get("result", {}).get("filename") for x in reversed(item["steps"][:index])
+                          if x.get("result", {}).get("kind") == "image"), None)
+        if not reference:
+            raise WorkflowStepError("Cần một bước tạo ảnh đã hoàn tất ở trước bước này.")
+        path = _workflow_media_path(reference)
+        if path.stat().st_size > MAX_REFERENCE_IMAGE_BYTES:
+            raise WorkflowStepError("Ảnh từ bước trước vượt kích thước tham chiếu cho phép.")
+        data = await asyncio.to_thread(path.read_bytes)
+        mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        payload["images"] = [f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"]
+
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as api:
+        async def call(method, path, **kwargs):
+            headers = {"Authorization": f"Bearer {CFG.api_key}", **kwargs.pop("headers", {})}
+            response = await api.request(method, path, headers=headers, **kwargs)
+            try:
+                body = response.json()
+            except ValueError:
+                body = {}
+            if not response.is_success:
+                detail = None
+                if isinstance(body, dict):
+                    error = body.get("error")
+                    detail = error.get("message") if isinstance(error, dict) else body.get("detail")
+                fallback = f"mac2API chưa trả kết quả cho bước này (HTTP {response.status_code})."
+                raise WorkflowStepError(_redact_task_error(detail) if isinstance(detail, str) and detail else fallback)
+            if not isinstance(body, dict):
+                raise WorkflowStepError("mac2API trả dữ liệu không đúng định dạng.")
+            return body
+
+        if kind == "text":
+            payload = {"model": model, "messages": [{"role": "user", "content": prompt}]}
+            answer = await call("POST", "/v1/chat/completions", json=payload)
+            choices = answer.get("choices") or []
+            content = (choices[0].get("message") or {}).get("content") if choices else None
+            if not isinstance(content, str) or not content.strip():
+                raise WorkflowStepError("Mô hình chưa trả văn bản cho bước này.")
+            return {"kind": "text", "text": content}
+        endpoint = "/v1/images/tasks" if kind == "image" else "/v1/videos"
+        task_id = state.get("task_id")
+        if not task_id:
+            receipt = await call("POST", endpoint, json=payload,
+                                 headers={"Idempotency-Key": f"flow-{run['id']}-{item_index}-{index}-{state['attempt']}"})
+            task_id = receipt.get("task_id") or receipt.get("id")
+            if not task_id:
+                raise WorkflowStepError("Chưa nhận được mã tác vụ. Kiểm tra mục Tác vụ trước khi thử lại.")
+            checkpoint(task_id)
+        while True:
+            result = await call("GET", f"{endpoint}/{task_id}")
+            status = result.get("status")
+            if status in ("completed", "succeeded", "done", "success"):
+                filename = (result.get("result") or {}).get("filename")
+                _workflow_media_path(filename)
+                return {"kind": kind, "filename": filename}
+            if status not in ("queued", "processing"):
+                message = result.get("error") or "Tác vụ chưa hoàn tất. Kiểm tra mục Tác vụ để xem chi tiết."
+                raise WorkflowStepError(f"{_redact_task_error(message)} ({task_id})")
+            await asyncio.sleep(1.5)
+
+
+def _workflow_response(run, status_code=200):
+    for item in run["items"]:
+        for step in item["steps"]:
+            result = step.get("result") or {}
+            if result.get("filename"):
+                try:
+                    _workflow_media_path(result["filename"])
+                    result["url"] = media_url(result["filename"], admin=True)
+                except WorkflowStepError:
+                    result["file_missing"] = True
+    return JSONResponse(run, status_code=status_code, headers=NO_STORE)
+
+
+@app.get("/admin/workflows")
+async def list_workflows(_=Depends(auth)):
+    return JSONResponse({"runs": workflows.list()}, headers=NO_STORE)
+
+
+@app.post("/admin/workflows", status_code=201)
+async def create_workflow(req: WorkflowRequest, _=Depends(auth)):
+    for step in req.steps:
+        model = step.model or f"muse/{step.kind}"
+        module = MODULES.get(model)
+        official = step.kind == "text" and chat_providers.route(model)
+        muse_alias = resolve_model(model.removeprefix("muse/"), default="") == MUSE_MODELS_BY_KIND[step.kind]
+        if not (module and module[1] == step.kind or official or muse_alias):
+            raise HTTPException(422, f"Mô hình của bước {step.name} không phù hợp. Hãy chọn lại trong Nâng cao.")
+    with UPDATE_LOCK:
+        if UPDATE_IN_PROGRESS:
+            raise HTTPException(503, "mac2API đang cập nhật. Hãy thử lại sau.")
+        run = workflows.create(req, _execute_workflow_step)
+    return _workflow_response(run, status_code=201)
+
+
+@app.get("/admin/workflows/{run_id}")
+async def get_workflow(run_id: str, _=Depends(auth)):
+    return _workflow_response(workflows.get(run_id))
+
+
+class WorkflowControl(BaseModel):
+    item: int | None = Field(default=None, ge=0)
+    step: int | None = Field(default=None, ge=0)
+
+
+@app.post("/admin/workflows/{run_id}/{action}")
+async def control_workflow(run_id: str, action: Literal["pause", "resume", "retry"],
+                           req: WorkflowControl = Body(default=WorkflowControl()), _=Depends(auth)):
+    with UPDATE_LOCK:
+        if UPDATE_IN_PROGRESS:
+            raise HTTPException(503, "mac2API đang cập nhật. Hãy thử lại sau.")
+        return _workflow_response(workflows.control(run_id, action, _execute_workflow_step, req.item, req.step))
+
+
+@app.get("/admin/workflow.js")
+def workflow_script():
+    return FileResponse(os.path.join(BASE_DIR, "workflow.js"), media_type="text/javascript",
+                        headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/admin/tasks")
 def admin_tasks(limit: Annotated[int, Query(ge=1, le=200)] = 50, _=Depends(auth), *,
                 provider: str | None = None, status: str | None = None,
@@ -4346,6 +4523,14 @@ def del_task(tid: str, _=Depends(auth)):
     if not removed:
         raise HTTPException(404, "任务不存在")
     return {"deleted": True}
+
+
+@app.post("/admin/tasks/{tid}/cancel")
+def cancel_admin_task(tid: str, _=Depends(auth)):
+    task = store.get_task(tid)
+    if not task or task.get("kind") not in ("image", "video"):
+        raise HTTPException(404, "Không tìm thấy tác vụ media.", headers=NO_STORE)
+    return _cancel_queued_task(tid)
 
 
 @app.post("/admin/tasks/clear")
@@ -4647,10 +4832,10 @@ MANAGED_DEPLOYMENT = (
 TRACKED_REPO_PATHS = [
     "app.py", "engine.py", "store.py", "cdp.py", "config.py", "proxy.py",
     "generation_timing.py", "thumbnails.py", "media_storage.py", "chat_providers.py", "web_providers.py",
-    "managed_web.py", "chrome_bridge.py", "client_usage.py", "GENERATION_QUEUE.md", "VERSION_REPORTING.md",
+    "managed_web.py", "chrome_bridge.py", "client_usage.py", "workflows.py", "workflow.js", "GENERATION_QUEUE.md", "VERSION_REPORTING.md",
     "admin.html", "start-mac2api.command", "README.md", "AGENTS.md", "CHANGELOG.md", "version.json", "requirements.txt",
     "MAC2API_API_CONTRACT_TESTS.md",
-    "Dockerfile", "docker-compose.yml", ".env.example", ".gitignore",
+    "Dockerfile", "docker-compose.yml", ".dockerignore", ".env.example", ".gitignore",
     "LICENSE", "extension", "deploy", "tools", "adapters",
 ]
 _UPDATE_CACHE: dict[str, Any] = {"ts": 0.0, "data": None}
@@ -4808,10 +4993,9 @@ def _upgrade_from_github_sync() -> dict:
     """Explicit upgrades pin one verified remote commit and preserve deployment data."""
     if MANAGED_DEPLOYMENT:
         raise HTTPException(409, "此实例通过镜像部署，请从配置的仓库分支构建并更新容器")
-    if GEN_LOCK.locked() or any(t.get("status") in ("queued", "processing") for t in store.tasks.values()):
+    if GEN_LOCK.locked() or _has_queued_media_work():
         raise HTTPException(409, "仍有任务排队或运行，请等待任务完成后更新")
     import requests
-    import tarfile
     comparison = _check_update_sync(force=True, _auto_upgrade=False)
     if comparison.get("remote_relation") != "ahead" or not comparison.get("has_update"):
         raise HTTPException(409, "Chỉ cập nhật khi xác minh được commit từ xa nối tiếp bản đang chạy.")
@@ -4820,36 +5004,24 @@ def _upgrade_from_github_sync() -> dict:
     target = comparison.get("remote_commit", "")
     if not re.fullmatch(r"[0-9a-f]{40}", target):
         raise HTTPException(502, "无法确认远端目标提交，未执行更新")
-    upgraded_via = ""
-    try:
-        _ensure_git_repo(_read_env_key("GITHUB_TOKEN"))
-        for command in (["fetch", "origin", REPO_REF],
-                        ["checkout", "-f", target, "--", "."],
-                        ["reset", "--mixed", target]):
-            result = _git(command, timeout=45)
-            result.check_returncode()
+    if comparison.get("has_git", os.path.exists(os.path.join(BASE_DIR, ".git"))):
+        try:
+            status = _git(["status", "--porcelain", "--untracked-files=no"])
+            status.check_returncode()
+            if status.stdout.strip():
+                raise HTTPException(409, "Mã nguồn có thay đổi cục bộ. Hãy lưu thay đổi trước khi cập nhật.")
+            _git(["fetch", "--no-tags", f"{REPO_URL}.git", target], timeout=45).check_returncode()
+            _git(["merge", "--ff-only", "--no-edit", target], timeout=45).check_returncode()
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise HTTPException(502, "Git không cài được bản đã xác minh. Kiểm tra kết nối và thay đổi trong thư mục mac2API.") from exc
         upgraded_via = "git"
-    except Exception as exc:
-        log.warning("Git 更新未完成，尝试固定提交归档 (%s)", type(exc).__name__)
-    if not upgraded_via:
-        response = requests.get(f"https://codeload.github.com/{REPO_SLUG}/tar.gz/{target}", timeout=60)
-        if response.status_code != 200:
-            raise HTTPException(502, f"下载更新包失败 (HTTP {response.status_code})")
-        with tarfile.open(fileobj=io.BytesIO(response.content), mode="r:gz") as archive:
-            for member in archive.getmembers():
-                parts = member.name.split("/", 1)
-                if len(parts) < 2 or not parts[1]:
-                    continue
-                rel = parts[1].replace("\\", "/")
-                if rel.startswith("/") or ".." in rel.split("/") or rel == ".env" or rel.startswith("data/") or rel.startswith(".git/"):
-                    continue
-                path = os.path.join(BASE_DIR, rel)
-                if member.isdir():
-                    os.makedirs(path, exist_ok=True)
-                elif member.isfile():
-                    os.makedirs(os.path.dirname(path), exist_ok=True)
-                    with archive.extractfile(member) as source, open(path, "wb") as out:
-                        out.write(source.read())
+    else:
+        try:
+            response = requests.get(f"https://codeload.github.com/{REPO_SLUG}/tar.gz/{target}", timeout=60)
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise HTTPException(502, "Không tải được gói cập nhật từ GitHub.") from exc
+        _install_source_archive(response.content)
         upgraded_via = "tarball"
     # Record what was installed, never a newer remote HEAD observed after the download.
     with open(_installed_sha_file(), "w") as f:
@@ -4858,6 +5030,74 @@ def _upgrade_from_github_sync() -> dict:
     status = _check_update_sync(force=True, _auto_upgrade=False)
     return {"ok": True, "via": upgraded_via, "installed_sha": target,
             "message": f"已安装版本 {_read_local_version().get('version')} ({target[:7]})", "status": status}
+
+
+def _install_source_archive(content):
+    """Validate a complete archive before replacing the installed application files."""
+    import tarfile
+
+    base = Path(BASE_DIR).resolve()
+    with tempfile.TemporaryDirectory(prefix=".mac2api-update-", dir=base) as temporary:
+        staging = Path(temporary) / "source"
+        backups = Path(temporary) / "backup"
+        files = []
+        try:
+            with tarfile.open(fileobj=io.BytesIO(content), mode="r:gz") as archive:
+                for member in archive:
+                    _, _, name = member.name.partition("/")
+                    path = Path(name)
+                    if not member.isfile() or path.is_absolute() or ".." in path.parts or "\\" in name:
+                        continue
+                    if not path.parts or path.parts[0] not in TRACKED_REPO_PATHS:
+                        continue
+                    candidate = staging / path
+                    candidate.parent.mkdir(parents=True, exist_ok=True)
+                    with archive.extractfile(member) as source, candidate.open("wb") as output:
+                        shutil.copyfileobj(source, output)
+                    candidate.chmod(member.mode & 0o777)
+                    files.append(path)
+        except (tarfile.TarError, EOFError, OSError) as exc:
+            raise HTTPException(502, "Gói cập nhật chưa đầy đủ hoặc không đọc được.") from exc
+        if any(not (staging / name).is_file() or not (staging / name).stat().st_size
+               for name in ("app.py", "admin.html", "version.json")):
+            raise HTTPException(502, "Gói cập nhật thiếu tệp cần để khởi động mac2API.")
+        try:
+            metadata = json.loads((staging / "version.json").read_text(encoding="utf-8"))
+            if not isinstance(metadata, dict) or not metadata.get("version"):
+                raise ValueError("Missing version")
+            for path in files:
+                if path.suffix == ".py":
+                    compile((staging / path).read_bytes(), str(path), "exec")
+        except (OSError, ValueError, SyntaxError) as exc:
+            raise HTTPException(502, "Gói cập nhật có tệp phiên bản hoặc mã Python không hợp lệ.") from exc
+        installed = []
+        try:
+            for path in files:
+                destination = base / path
+                if destination.resolve() != destination:
+                    raise OSError("Source path is a symbolic link")
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if destination.exists():
+                    previous = backups / path
+                    previous.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(destination, previous)
+                (staging / path).replace(destination)
+                installed.append(path)
+        except OSError as exc:
+            rollback_failed = False
+            for path in reversed(installed):
+                previous = backups / path
+                try:
+                    if previous.exists():
+                        previous.replace(base / path)
+                    else:
+                        (base / path).unlink(missing_ok=True)
+                except OSError:
+                    rollback_failed = True
+                    log.exception("Không khôi phục được tệp mã nguồn %s", path)
+            detail = ("Không khôi phục đủ tệp. Hãy cài lại từ gói mac2API đã xác minh trước khi khởi động lại."
+                      if rollback_failed else "Không ghi được bản cập nhật. Đã giữ lại tệp của bản đang chạy.")
+            raise HTTPException(507, detail) from exc
 
 
 @app.get("/admin/update/check")
@@ -4870,19 +5110,34 @@ async def admin_check_update(force: bool = False):
 @app.post("/admin/update/upgrade")
 @app.post("/admin/repo/pull")
 async def admin_upgrade_now(payload: dict = Body(default={}), _=Depends(auth)):
-    """一键从 GitHub 官方仓库拉取最新更新并自动平滑重启服务。"""
-    res = await asyncio.to_thread(_upgrade_from_github_sync)
-    restart = payload.get("restart", True) if isinstance(payload, dict) else True
-    if restart:
-        def _delayed_restart():
-            time.sleep(0.5)
-            try:
-                engine.stop()
-            except Exception:
-                pass
-            os._exit(0)
-        threading.Thread(target=_delayed_restart, daemon=True).start()
-    return res
+    return await asyncio.to_thread(_apply_admin_upgrade, payload.get("restart", True) is True)
+
+
+def _apply_admin_upgrade(restart):
+    global UPDATE_IN_PROGRESS
+    with UPDATE_LOCK:
+        if UPDATE_IN_PROGRESS or API_POSTS_IN_PROGRESS or workflows.active:
+            raise HTTPException(409, "mac2API đang cập nhật hoặc còn yêu cầu đang xử lý. Hãy thử lại khi dịch vụ rảnh.")
+        UPDATE_IN_PROGRESS = True
+    scheduled = False
+    try:
+        result = _upgrade_from_github_sync()
+        if restart and os.environ.get("MUSE2API_RESTART_ON_UPGRADE") == "1":
+            threading.Thread(target=_restart_upgraded_service, daemon=True).start()
+            scheduled = True
+        return {**result, "restart_scheduled": scheduled, "previous_instance": SERVICE_INSTANCE}
+    finally:
+        if not scheduled:
+            with UPDATE_LOCK:
+                UPDATE_IN_PROGRESS = False
+
+
+def _restart_upgraded_service():
+    time.sleep(0.5)
+    try:
+        engine.stop()
+    finally:
+        os._exit(75)
 
 
 @app.post("/admin/repo/push")
@@ -4961,12 +5216,10 @@ async def _startup():
             store.transition_task(task["id"], task["status"], status="interrupted", needs_reconcile=True,
                                   error_code="SERVICE_RESTARTED",
                                   error="Dịch vụ đã khởi động lại. Hãy đối chiếu kết quả trước khi gửi yêu cầu mới.")
-    if not CFG.api_key:
-        import secrets
-        new_key = "m2a_" + secrets.token_hex(24)
-        _persist_env("MUSE2API_KEY", new_key)
-        CFG.api_key = new_key
-        log.info("Đã tạo khóa quản trị trong tệp .env của dịch vụ.")
+    CFG.api_key = store.load_admin_key(CONFIGURED_ADMIN_KEY)
+    workflows.recover()
+    if not CONFIGURED_ADMIN_KEY:
+        log.info("Đọc khóa quản trị tại %s", os.path.join(CFG.data_dir, "admin-key.json"))
     try:
         await asyncio.to_thread(client_usage.reconcile, store.tasks, restarting=True)
         labels = {account["id"]: account.get("label") or account["id"] for account in store.accounts}
@@ -4982,6 +5235,7 @@ async def _startup():
 
 @app.on_event("shutdown")
 async def _shutdown():
+    await workflows.close()
     loops = [task for name in ("chromium_idle_task", "keepalive_task", "usage_maintenance_task")
              if (task := getattr(app.state, name, None)) is not None]
     for loop in loops:

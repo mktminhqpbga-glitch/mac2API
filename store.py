@@ -122,6 +122,23 @@ class Store:
         self._client_requests: dict[str, list[float]] = {}
         self._client_active: dict[str, int] = {}
 
+    def load_admin_key(self, configured: str) -> str:
+        path = os.path.join(self.cfg.data_dir, "admin-key.json")
+        saved = _read(path, {})
+        source = hashlib.sha256(configured.encode()).hexdigest()
+        if (isinstance(saved, dict) and saved.get("source") == source
+                and isinstance(saved.get("key"), str) and saved["key"]):
+            return saved["key"]
+        key = configured or "m2a_" + secrets.token_hex(24)
+        if saved or not configured:
+            self.save_admin_key(configured, key)
+        return key
+
+    def save_admin_key(self, configured: str, key: str):
+        source = hashlib.sha256(configured.encode()).hexdigest()
+        with _LOCK:
+            _write(os.path.join(self.cfg.data_dir, "admin-key.json"), {"source": source, "key": key})
+
     @staticmethod
     def _public_client(client: dict) -> dict:
         return {key: value for key, value in client.items() if key != "digest"}

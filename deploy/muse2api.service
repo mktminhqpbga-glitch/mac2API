@@ -15,6 +15,7 @@ Environment=MUSE2API_PORT=18610
 Environment=MUSE2API_CDP_PORT=19210
 Environment=MUSE2API_CHROMIUM=/snap/bin/chromium
 Environment=MUSE2API_HOME_DIR=/home/ubuntu
+Environment=MUSE2API_RESTART_ON_UPGRADE=1
 EnvironmentFile=-/opt/muse2api/.env
 ExecStart=/opt/muse2api/venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 18610
 Restart=always
