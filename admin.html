@@ -154,9 +154,15 @@
 
   #clientKeyForm fieldset{border:1px solid var(--line);border-radius:9px;margin:10px 0;padding:10px 12px;min-width:0}
   .client-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));gap:10px;margin:12px 0}
-  .client-checks{display:flex;gap:5px 16px;flex-wrap:wrap;margin-top:8px}
-  .client-checks label,.client-rule > label{display:flex;align-items:center;gap:6px;color:var(--text)}
-  .client-rule details{margin:8px 0 0;color:var(--muted);font-size:13px}
+  .client-provider{border:1px solid var(--line);border-radius:9px;margin:7px 0}
+  #clientKeyForm .client-provider-select,#clientKeyForm .client-account-select{display:flex;align-items:center;gap:8px;margin:0;color:var(--text);cursor:pointer}
+  .client-provider-select{min-height:46px;padding:8px 12px}
+  .client-provider-select strong{flex:1;min-width:0}
+  .client-provider-select .hint{font-size:12px;text-align:right}
+  .client-provider-accounts{display:grid;gap:8px;border-top:1px solid var(--line);padding:10px 12px 12px 33px}
+  .client-provider-accounts .hint,#clientRules .hint{margin:0}
+  .client-model-settings{margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:9px}
+  .client-model-settings summary{font-weight:650;cursor:pointer}
   #usageDialog{width:min(720px,calc(100% - 32px))}
   #usageDetails pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:225px;overflow:auto;font-size:13px}
   #usageDetails p{overflow-wrap:anywhere}
@@ -282,11 +288,11 @@
   .toolbar label{margin:0}
   .toolbar .search{flex:1 1 240px}
   .pager{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px}
-  #clientKeyDialog{width:min(810px,calc(100% - 24px))}
+  #clientKeyDialog{width:min(610px,calc(100% - 24px))}
   #clientKeyNew{border:1px solid #446393;background:#202e49;border-radius:10px;padding:13px;margin-top:14px}
   #clientKeyNew label{margin:0 0 6px}
-  #clientKeyForm .client-provider-group{padding:0;margin:13px 0;border:0}
-  .client-provider-group>h3{font-size:13px;margin:0 0 5px;color:var(--muted)}
+  #clientKeyForm .client-fields{padding:0;margin:0;border:0}
+  #clientRulesHeading{font-size:13px;margin:16px 0 6px;color:var(--muted)}
   .client-options label>input,.client-options label>select{margin-top:4px}
   .status-text[data-error=true]{color:var(--bad)}
   .official-form label{margin:13px 0 5px}
@@ -549,16 +555,19 @@
     <dialog class="proxy-dialog" id="clientKeyDialog" aria-labelledby="clientKeyFormTitle">
       <h2 id="clientKeyFormTitle">Tạo khóa API</h2>
       <form id="clientKeyForm">
-        <div class="client-options">
+        <fieldset class="client-fields" id="clientAccessFields">
           <label>Tên người dùng<input id="clientKeyLabel" type="text" required maxlength="80" autocomplete="off"></label>
+          <h3 id="clientRulesHeading">Nhà cung cấp</h3>
+          <div id="clientRules" role="group" aria-labelledby="clientRulesHeading"></div>
+        </fieldset>
+        <fieldset class="client-fields" id="clientSettingsFields" hidden disabled>
           <label>Số ngày lưu prompt và kết quả
             <input id="clientHistoryDays" type="number" min="0" max="30" value="0" required>
           </label>
-        </div>
-        <p class="hint">Nhập 0 để chỉ lưu dữ liệu vận hành của yêu cầu mới. Giá tính bằng đồng Việt Nam (VND).</p>
-        <label><input type="checkbox" id="clientEnabled" checked> Cho phép dùng khóa</label>
-        <label id="clientKeepLegacy"><input type="checkbox" id="clientLegacy"> Giữ quyền cũ theo nhà cung cấp</label>
-        <div id="clientRules"></div>
+          <p class="hint">Nhập 0 để chỉ lưu dữ liệu vận hành của yêu cầu mới.</p>
+          <label><input type="checkbox" id="clientEnabled" checked> Cho phép dùng khóa</label>
+          <div id="clientModelSettings"></div>
+        </fieldset>
         <p id="clientFormStatus" class="hint status-text" role="status"></p>
         <div class="proxy-actions">
           <button id="clientDismiss" type="button" class="ghost" data-ui="cancel">Hủy</button>
@@ -2540,7 +2549,9 @@ async function api(path, opts){
       };
       msg = statusHints[r.status] || ('服务返回了无法解析的响应 (HTTP ' + r.status + ')，请稍后重试或查看服务器日志');
     }
-    throw new Error(msg || ('HTTP ' + r.status));
+    const error = new Error(msg || ('HTTP ' + r.status));
+    error.status = r.status;
+    throw error;
   }
   return data;
 }
@@ -2836,83 +2847,12 @@ function clientNumber(label, value, className, min, max) {
   field.type = 'number';
   field.min = min;
   field.max = max;
-  field.value = value ?? '';
+  field.defaultValue = value ?? '';
   wrapper.append(field);
   return wrapper;
 }
 
-function clientRule(model, values) {
-  const block = clientElement('fieldset', undefined, 'client-rule');
-  block.dataset.model = model.id;
-  const choice = clientElement('input', undefined, 'client-grant');
-  choice.type = 'checkbox';
-  choice.checked = Boolean(values);
-  choice.disabled = model.configured === false && !values;
-  const label = clientElement('label');
-  const caption = (clientKeyLabels[model.provider] || model.provider) + ' · ' + model.id;
-  label.append(choice, clientElement('span', caption + (choice.disabled ? ' (chưa cấu hình)' : '')));
-  block.append(label);
-  const work = clientElement('fieldset');
-  const accountChoices = clientElement('div', undefined, 'client-checks');
-  const selected = new Set(values?.accounts || []);
-  const accounts = [...model.accounts];
-  for (const id of selected) {
-    if (!accounts.some(account => account.id === id)) accounts.push({id, label: id + ' (đã xóa)'});
-  }
-  for (const account of accounts) {
-    const container = clientElement('label');
-    const checkbox = clientElement('input', undefined, 'client-account');
-    checkbox.type = 'checkbox';
-    checkbox.value = account.id;
-    checkbox.checked = selected.has(account.id);
-    const status = !account.enabled ? ' · Đang tắt' : !account.verified ? ' · Chưa xác minh' : '';
-    container.append(checkbox, clientElement('span', account.label + status));
-    accountChoices.append(container);
-  }
-  const official = ['openai', 'gemini'].includes(model.provider);
-  if (!official) {
-    work.append(clientElement('legend', 'Tài khoản được dùng'), accountChoices);
-    if (!accounts.length) work.append(clientElement('p', 'Chưa có tài khoản trong kho.', 'hint'));
-  } else {
-    work.append(clientElement('legend', 'Thông tin sử dụng'), clientElement('p', 'Dùng cấu hình API chính thức của máy chủ.', 'hint'));
-  }
-  work.append(clientNumber('Hạn mức lượt mỗi ngày (bỏ trống để không đặt)', values?.daily_limit,
-                          'client-limit', 1, 1000000));
-  const prices = clientElement('details');
-  prices.append(clientElement('summary', 'Cài đặt giá'));
-  const units = ['request', ...{image: ['image'], video: ['video_second'],
-                               text: official ? ['input_1k_tokens', 'output_1k_tokens'] : []}[model.kind]];
-  for (const [field, title] of [['charge', 'Tiền thu của khách'], ['upstream', 'Chi phí AI ước tính']]) {
-    const group = clientElement('div', undefined, 'client-options');
-    for (const unit of units) {
-      const wrapper = clientNumber(clientPriceUnits[unit], values?.[field]?.[unit], 'client-price', 0, 100000000);
-      const input = wrapper.querySelector('input');
-      input.dataset.field = field;
-      input.dataset.unit = unit;
-      group.append(wrapper);
-    }
-    prices.append(clientElement('p', title), group);
-  }
-  work.append(prices);
-  block.append(work);
-  const toggle = () => { work.hidden = !choice.checked; work.disabled = !choice.checked; };
-  choice.onchange = toggle;
-  toggle();
-  return block;
-}
-
-function editClient(client = null) {
-  editingClient = client;
-  clearClientSecret();
-  $('clientKeyForm').hidden = false;
-  $('clientFormStatus').textContent = '';
-  $('clientKeyFormTitle').textContent = client ? ui('editKey') : ui('newKey');
-  $('clientKeyLabel').value = client?.label || '';
-  $('clientHistoryDays').value = client?.history_days ?? 0;
-  $('clientEnabled').checked = client?.enabled ?? true;
-  $('clientKeepLegacy').hidden = !client || Boolean(client.rules);
-  $('clientLegacy').checked = Boolean(client && !client.rules);
-  $('clientSave').textContent = client ? ui('updateKey') : ui('newKey');
+function clientProviderGroups(client) {
   const models = [...clientModels];
   for (const id of Object.keys(client?.rules || {})) {
     if (!models.some(model => model.id === id)) {
@@ -2921,16 +2861,186 @@ function editClient(client = null) {
   }
   const groups = new Map();
   for (const model of models) {
-    if (!groups.has(model.provider)) {
-      const group = clientElement('section', undefined, 'client-provider-group');
-      group.append(clientElement('h3', clientKeyLabels[model.provider] || model.provider));
-      groups.set(model.provider, group);
-    }
-    groups.get(model.provider).append(clientRule(model, client?.rules?.[model.id]));
+    if (!groups.has(model.provider)) groups.set(model.provider, []);
+    groups.get(model.provider).push(model);
   }
-  $('clientRules').replaceChildren(...groups.values());
-  $('clientRules').hidden = $('clientLegacy').checked;
-  $('clientLegacy').onchange = () => { $('clientRules').hidden = $('clientLegacy').checked; };
+  return Array.from(groups, ([id, entries]) => {
+    const current = entries.filter(model => client?.rules?.[model.id]);
+    const legacy = Boolean(client && !client.rules && client.providers.includes(id));
+    const accounts = new Map(entries.flatMap(model => model.accounts.map(account => [account.id, account])));
+    const selected = new Set(legacy ? accounts.keys() : current.flatMap(model => client.rules[model.id].accounts));
+    for (const aid of selected) {
+      if (!accounts.has(aid)) accounts.set(aid, {id: aid, label: aid + ' · Đã xóa', removed: true});
+    }
+    const configured = entries.filter(model => model.configured !== false);
+    const partial = current.length > 0 && configured.some(model => !current.includes(model));
+    return {id, configured, current, legacy, partial,
+            official: ['openai', 'gemini'].includes(id), accounts, selected};
+  });
+}
+
+function clientProviderOption(group) {
+  const section = clientElement('section', undefined, 'client-provider');
+  section.dataset.provider = group.id;
+  const choice = clientElement('input', undefined, 'client-provider-choice');
+  choice.type = 'checkbox';
+  choice.defaultChecked = group.legacy || group.current.length > 0;
+  const available = group.configured.length && (group.official || group.accounts.size);
+  choice.disabled = !choice.defaultChecked && !available;
+  if (group.partial) {
+    choice.checked = false;
+    choice.indeterminate = true;
+  }
+  const label = clientElement('label', undefined, 'client-provider-select');
+  const models = group.current.length ? group.current : group.configured;
+  const kinds = [...new Set(models.map(model => ui(model.kind)))];
+  const summary = choice.disabled ? (group.configured.length ? 'Chưa có tài khoản' : 'Chưa cấu hình') : kinds.join(' · ');
+  const description = clientElement('span', summary, 'hint');
+  label.append(choice, clientElement('strong', clientKeyLabels[group.id] || group.id), description);
+  section.append(label);
+
+  const accountList = clientElement('div', undefined, 'client-provider-accounts');
+  accountList.id = 'client-accounts-' + group.id;
+  accountList.setAttribute('role', 'group');
+  accountList.setAttribute('aria-label', 'Tài khoản ' + (clientKeyLabels[group.id] || group.id));
+  choice.setAttribute('aria-controls', accountList.id);
+  if (group.official) {
+    accountList.append(clientElement('p', 'Dùng tài khoản API đã cấu hình trên máy chủ.', 'hint'));
+  } else {
+    for (const account of group.accounts.values()) {
+      const option = clientElement('label', undefined, 'client-account-select');
+      const checkbox = clientElement('input', undefined, 'client-account');
+      checkbox.type = 'checkbox';
+      checkbox.value = account.id;
+      checkbox.defaultChecked = group.selected.has(account.id);
+      const status = account.removed ? '' : !account.enabled ? ' · Đang tắt' : !account.verified ? ' · Chưa xác minh' : '';
+      option.append(checkbox, clientElement('span', account.label + status));
+      accountList.append(option);
+    }
+    if (!group.accounts.size) accountList.append(clientElement('p', 'Chưa có tài khoản để chọn.', 'hint'));
+  }
+  const partialHint = clientElement('p', 'Khóa đang dùng một phần khả năng. Chọn nhà cung cấp để cấp đủ khả năng đã cấu hình.', 'hint');
+  if (group.partial) accountList.append(partialHint);
+  section.append(accountList);
+  const toggle = () => {
+    accountList.hidden = !(choice.checked || choice.indeterminate);
+    if (group.partial) {
+      partialHint.hidden = !choice.indeterminate;
+      description.textContent = choice.checked
+        ? [...new Set([...models, ...group.configured].map(model => ui(model.kind)))].join(' · ')
+        : summary;
+    }
+  };
+  choice.onchange = toggle;
+  toggle();
+  return section;
+}
+
+function clientAccessChanges() {
+  let changed = !editingClient;
+  let legacySelection = Boolean(editingClient && !editingClient.rules);
+  const selected = [];
+  for (const group of clientProviderGroups(editingClient)) {
+    const block = $('clientRules').querySelector('[data-provider="' + group.id + '"]');
+    const choice = block.querySelector('.client-provider-choice');
+    const enabled = choice.checked || choice.indeterminate;
+    const expand = group.partial && choice.checked;
+    changed ||= enabled !== choice.defaultChecked || expand;
+    if (!enabled) continue;
+    const checks = [...block.querySelectorAll('.client-account')];
+    const accountsChanged = checks.some(input => input.checked !== input.defaultChecked);
+    changed ||= accountsChanged;
+    legacySelection &&= group.legacy && !accountsChanged;
+    selected.push({group, expand, accounts: checks.filter(input => input.checked).map(input => input.value)});
+  }
+  if (!changed) return {};
+  if (!selected.length) throw new Error('Hãy chọn ít nhất một nhà cung cấp.');
+  if (legacySelection) return {providers: selected.map(({group}) => group.id)};
+
+  const rules = {};
+  for (const {group, expand, accounts} of selected) {
+    const name = clientKeyLabels[group.id] || group.id;
+    const models = group.current.length ? [...group.current] : group.configured;
+    if (expand) models.push(...group.configured.filter(model => !models.includes(model)));
+    if (!models.length) throw new Error(name + ' chưa có mô hình được cấu hình.');
+    if (!group.official && !accounts.length) throw new Error('Hãy chọn ít nhất một tài khoản cho ' + name + '.');
+    for (const model of models) {
+      const previous = editingClient?.rules?.[model.id];
+      // Keep each existing model's account scope, including grants that differed across models.
+      const allowed = previous ? accounts.filter(aid => previous.accounts.includes(aid) || !group.selected.has(aid)) : accounts;
+      if (group.official || allowed.length) rules[model.id] = {...previous, accounts: allowed};
+    }
+  }
+  return {rules};
+}
+
+function clientPolicySettings(model, values) {
+  const block = clientElement('details', undefined, 'client-model-settings');
+  block.dataset.model = model.id;
+  block.append(clientElement('summary', model.id),
+               clientNumber('Hạn mức lượt mỗi ngày', values.daily_limit, 'client-limit', 1, 1000000));
+  const official = ['openai', 'gemini'].includes(model.provider);
+  const units = ['request', ...{image: ['image'], video: ['video_second'],
+                               text: official ? ['input_1k_tokens', 'output_1k_tokens'] : []}[model.kind]];
+  for (const [field, title] of [['charge', 'Tiền thu của khách (VND)'], ['upstream', 'Chi phí AI ước tính (VND)']]) {
+    const group = clientElement('div', undefined, 'client-options');
+    for (const unit of units) {
+      const wrapper = clientNumber(clientPriceUnits[unit], values[field]?.[unit], 'client-price', 0, 100000000);
+      const input = wrapper.querySelector('input');
+      input.dataset.field = field;
+      input.dataset.unit = unit;
+      group.append(wrapper);
+    }
+    block.append(clientElement('p', title, 'hint'), group);
+  }
+  return block;
+}
+
+function clientSettingsChanges() {
+  const changes = {enabled: $('clientEnabled').checked, history_days: Number($('clientHistoryDays').value)};
+  if (!editingClient.rules) return changes;
+  const rules = structuredClone(editingClient.rules);
+  let updated = false;
+  for (const block of $('clientModelSettings').querySelectorAll('.client-model-settings')) {
+    const rule = rules[block.dataset.model];
+    const limit = block.querySelector('.client-limit');
+    if (limit.value !== limit.defaultValue) {
+      updated = true;
+      if (limit.value) rule.daily_limit = Number(limit.value);
+      else delete rule.daily_limit;
+    }
+    for (const input of block.querySelectorAll('.client-price')) {
+      if (input.value === input.defaultValue) continue;
+      updated = true;
+      const price = rule[input.dataset.field] ??= {};
+      if (input.value) price[input.dataset.unit] = Number(input.value);
+      else delete price[input.dataset.unit];
+    }
+  }
+  return updated ? {...changes, rules} : changes;
+}
+
+function editClient(client, settings) {
+  editingClient = client;
+  clearClientSecret();
+  $('clientKeyForm').hidden = false;
+  $('clientFormStatus').textContent = '';
+  $('clientFormStatus').dataset.error = 'false';
+  $('clientAccessFields').hidden = $('clientAccessFields').disabled = settings;
+  $('clientSettingsFields').hidden = $('clientSettingsFields').disabled = !settings;
+  $('clientKeyFormTitle').textContent = settings ? 'Cài đặt khóa API' : ui(client ? 'editKey' : 'newKey');
+  $('clientSave').textContent = ui(client ? 'updateKey' : 'newKey');
+  $('clientKeyLabel').value = client?.label || '';
+  $('clientHistoryDays').value = client?.history_days ?? 0;
+  $('clientEnabled').checked = client?.enabled ?? true;
+  const groups = clientProviderGroups(client);
+  const options = settings ? [] : groups.map(clientProviderOption);
+  if (!settings && groups.some(group => group.legacy && !group.official)) {
+    options.push(clientElement('p', 'Khóa cũ dùng mọi tài khoản khả dụng. Khi đổi tài khoản hoặc thêm nhà cung cấp, khóa dùng các tài khoản đã chọn.', 'hint'));
+  }
+  $('clientRules').replaceChildren(...options);
+  const models = settings ? groups.flatMap(group => group.current) : [];
+  $('clientModelSettings').replaceChildren(...models.map(model => clientPolicySettings(model, client.rules[model.id])));
 }
 
 function getKeyState(client){
@@ -2975,6 +3085,7 @@ function paintClientKeys(page = 0){
     const endpoint = '/admin/client-keys/' + encodeURIComponent(client.id);
     if (!client.revoked_at) {
       actions.append(clientButton(ui('editKey'), () => openClientEditor(client)),
+        clientButton('Cài đặt khóa', () => openClientEditor(client, true)),
         clientButton(ui('rotateKey'), async () => {
           if (!confirm('Đổi mã khóa cho ' + client.label + '? Mã cũ sẽ hết hiệu lực ngay.')) return;
           const rotated = await api(endpoint + '/rotate', {method: 'POST'});
@@ -3050,10 +3161,10 @@ async function loadUsageView(){
   return loadApiUsage(0);
 }
 
-function openClientEditor(client){
-  editClient(client);
+function openClientEditor(client = null, settings = false){
+  editClient(client, settings);
   $('clientKeyDialog').showModal();
-  $('clientKeyLabel').focus();
+  $(settings ? 'clientHistoryDays' : 'clientKeyLabel').focus();
 }
 $('newClientKey').disabled = true;
 $('newClientKey').onclick = () => openClientEditor();
@@ -3069,26 +3180,16 @@ $('clientKeyDialog').addEventListener('cancel', event => {
 });
 $('clientKeyForm').addEventListener('submit', async event => {
   event.preventDefault();
-  const payload = {label: $('clientKeyLabel').value.trim(), enabled: $('clientEnabled').checked,
-                   history_days: Number($('clientHistoryDays').value)};
-  if (!$('clientLegacy').checked) {
-    payload.rules = {};
-    for (const block of $('clientRules').querySelectorAll('.client-rule')) {
-      if (!block.querySelector('.client-grant').checked) continue;
-      const accounts = Array.from(block.querySelectorAll('.client-account:checked'), input => input.value);
-      const rule = {accounts, charge: {}, upstream: {}};
-      const limit = block.querySelector('.client-limit').value;
-      if (limit) rule.daily_limit = Number(limit);
-      for (const input of block.querySelectorAll('.client-price')) {
-        if (input.value) rule[input.dataset.field][input.dataset.unit] = Number(input.value);
-      }
-      payload.rules[block.dataset.model] = rule;
-    }
-    if (!Object.keys(payload.rules).length) {
-      $('clientFormStatus').textContent = 'Hãy chọn ít nhất một mô hình.';
-      $('clientFormStatus').dataset.error = 'true';
-      return;
-    }
+  let payload;
+  try {
+    payload = $('clientSettingsFields').hidden
+      ? {label: $('clientKeyLabel').value.trim(), ...clientAccessChanges()}
+      : clientSettingsChanges();
+    if (editingClient) payload.expected_revision = editingClient.revision ?? 0;
+  } catch (error) {
+    $('clientFormStatus').textContent = error.message;
+    $('clientFormStatus').dataset.error = 'true';
+    return;
   }
   const button = $('clientSave');
   button.disabled = $('clientDismiss').disabled = true;
@@ -3109,6 +3210,7 @@ $('clientKeyForm').addEventListener('submit', async event => {
   } catch (error) {
     $('clientFormStatus').dataset.error = 'true';
     $('clientFormStatus').textContent = t(error.message);
+    if (editingClient && error.status === 409) await loadClientKeys();
   } finally { button.disabled = $('clientDismiss').disabled = false; }
 });
 

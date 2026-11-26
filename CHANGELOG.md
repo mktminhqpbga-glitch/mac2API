@@ -1,5 +1,10 @@
 # Nhật ký và bàn giao mac2API
 
+## Cấp khóa API theo nhà cung cấp và tài khoản
+
+- Chọn nhà cung cấp rồi chọn tài khoản trong cùng một hộp. Khóa mới dùng khả năng đã cấu hình của nhà cung cấp.
+- Hạn mức, giá và lưu lịch sử được chỉnh trong **Cài đặt khóa**. Quyền cũ theo từng mô hình được giữ khi đổi tên và có thể mở rộng bằng lựa chọn rõ ràng.
+
 ## Đơn giản hóa kết nối Chrome 1.0.8
 
 - Đặt kết nối trực tiếp và địa chỉ localhost làm mặc định cho ChatGPT Web và Gemini Web. Bảng quản trị có nút tải ZIP ghi rõ phiên bản và nút sao chép khóa quản trị.

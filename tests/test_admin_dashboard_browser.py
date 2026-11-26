@@ -84,22 +84,42 @@ def check_dashboard(app, page, url):
     page.js("""(() => {
       $('newClientKey').click();
       $('clientKeyLabel').value = 'Giao diện thử';
+      const block = $('clientRules').querySelector('[data-provider="muse"]');
+      block.querySelector('.client-provider-choice').click();
+      $('clientSave').click();
+    })()""")
+    assert page.js("$('clientFormStatus').textContent.includes('chọn ít nhất một tài khoản')")
+    assert page.js("!$('client-accounts-muse').hidden && $('client-accounts-chatgpt').hidden")
+    assert page.js("$('clientSettingsFields').hidden && !$('clientRules').querySelector('[data-model]')")
+    page.send("Emulation.setDeviceMetricsOverride",
+              {"width": 390, "height": 844, "deviceScaleFactor": 1, "mobile": False})
+    assert page.js("$('clientKeyDialog').scrollWidth <= $('clientKeyDialog').clientWidth + 1")
+    screenshot("create-key-mobile")
+    page.send("Emulation.setDeviceMetricsOverride",
+              {"width": 1600, "height": 1000, "deviceScaleFactor": 1, "mobile": False})
+    screenshot("create-key")
+    page.js("$('client-accounts-muse').querySelector('.client-account').click();$('clientSave').click()")
+    wait(lambda: page.js("$('clientKeyResult').value.startsWith('m2c_')"))
+    key = page.js("$('clientKeyResult').value")
+    client = app.store.find_client(key)
+    assert set(client["rules"]) == {"muse/text", "muse/image", "muse/video"}
+    assert all(rule["accounts"] == [app.store.accounts[0]["id"]] for rule in client["rules"].values())
+    page.js("$('closeClientSecret').click()")
+    wait(lambda: page.js("!$('clientKeyResult').value && $('clientKeyList').textContent.includes('Giao diện thử')"))
+
+    page.js("""Array.from($('clientKeyList').querySelectorAll('button')).find(b=>b.textContent==='Cài đặt khóa').click()""")
+    page.js("""(() => {
       $('clientHistoryDays').value = 7;
-      const block = document.querySelector('[data-model="muse/image"]');
-      block.querySelector('.client-grant').click();
-      block.querySelector('.client-account').click();
+      const block = $('clientModelSettings').querySelector('[data-model="muse/image"]');
+      block.open = true;
       block.querySelector('.client-limit').value = '5';
       block.querySelector('[data-field=charge][data-unit=image]').value = '42';
       $('clientSave').click();
     })()""")
-    wait(lambda: page.js("$('clientKeyResult').value.startsWith('m2c_')"))
-    key = page.js("$('clientKeyResult').value")
+    wait(lambda: page.js("!$('clientKeyDialog').open"))
     client = app.store.find_client(key)
-    assert set(client["rules"]) == {"muse/image"}
     assert client["rules"]["muse/image"]["charge"]["image"] == 42
     assert client["history_days"] == 7
-    page.js("$('closeClientSecret').click()")
-    wait(lambda: page.js("!$('clientKeyResult').value && $('clientKeyList').textContent.includes('Giao diện thử')"))
 
     job = app.client_usage.begin("use_ui_fixture", client, "muse/image", "image", "/muse/v1/images/tasks",
                                  prompt="Ảnh từ giao diện")
@@ -133,7 +153,7 @@ def check_dashboard(app, page, url):
     assert page.js("authOK === true && $('imgBtn').disabled")
     page.js(f"$('playKey').value={json.dumps(key)};$('playDiscover').click()")
     wait(lambda: page.js("!$('imgBtn').disabled"))
-    assert page.js("$('playImageModel').value === 'muse/image' && $('vidBtn').disabled && $('playTextSend').disabled")
+    assert page.js("$('playImageModel').value === 'muse/image' && !$('vidBtn').disabled && !$('playTextSend').disabled")
     page.js("goTab('overview')")
     wait(lambda: page.js("$('overviewKeys').textContent === '1' && $('overviewRequests').textContent === '1'"))
     assert page.js("$('playKey').value === ''")
@@ -154,6 +174,40 @@ def check_dashboard(app, page, url):
     screenshot("mobile")
     assert not page.js("window.__errors"), page.js("window.__errors")
     assert httpx.get(url + "/v1/usage", headers={"Authorization": "Bearer " + key}).status_code == 200
+
+    old_account = app.store.accounts[0]["id"]
+    other = app.store.add_account({"hatch_sess": "second-fixture-cookie"}, "Tài khoản thứ hai")["id"]
+    original = {"muse/text": {"accounts": [old_account]},
+                "muse/image": {"accounts": [other], "daily_limit": 3, "charge": {"image": 20}}}
+    headers = {"Authorization": "Bearer ui-fixture-only"}
+    old = httpx.post(url + "/admin/client-keys", headers=headers,
+                     json={"label": "Khóa cũ", "rules": original})
+    assert old.status_code == 201, old.text
+    old = old.json()
+    page.js("goTab('clients')")
+    wait(lambda: page.js("$('clientKeyList').textContent.includes('Khóa cũ')"))
+    open_old = """Array.from($('clientKeyList').rows).find(row=>row.cells[0].textContent.startsWith('Khóa cũ'))
+        .querySelector('button').click()"""
+    page.js(open_old)
+    assert page.js("$('clientRules').querySelector('[data-provider=muse] .client-provider-choice').indeterminate")
+    page.js("$('clientKeyLabel').value='Khóa cũ đã đổi tên';$('clientSave').click()")
+    wait(lambda: page.js("!$('clientKeyDialog').open && $('clientKeyList').textContent.includes('Khóa cũ đã đổi tên')"))
+    assert app.store.get_client(old["id"])["rules"] == old["rules"]
+    page.js(open_old)
+    page.js("$('clientRules').querySelector('[data-provider=muse] .client-provider-choice').click();$('clientSave').click()")
+    wait(lambda: page.js("!$('clientKeyDialog').open"))
+    expanded = app.store.get_client(old["id"])["rules"]
+    assert expanded["muse/text"] == old["rules"]["muse/text"]
+    assert expanded["muse/image"] == old["rules"]["muse/image"]
+    assert set(expanded["muse/video"]["accounts"]) == {old_account, other}
+    wait(lambda: page.js("clientKeys.find(key=>key.label==='Khóa cũ đã đổi tên')?.rules['muse/video'] !== undefined"))
+    page.js(open_old)
+    concurrent = httpx.patch(url + "/admin/client-keys/" + old["id"], headers=headers,
+                             json={"rules": original})
+    assert concurrent.status_code == 200, concurrent.text
+    page.js("$('clientKeyLabel').value='Lưu từ cửa sổ cũ';$('clientSave').click()")
+    wait(lambda: page.js("$('clientFormStatus').textContent.includes('Khóa đã được cập nhật')"))
+    assert app.store.get_client(old["id"])["rules"] == old["rules"]
 
 
 if __name__ == "__main__":

@@ -104,6 +104,10 @@ def _write(path: str, obj):
             os.unlink(tmp)
 
 
+class ClientRevisionConflict(RuntimeError):
+    """The saved key changed after the admin opened its editor."""
+
+
 class Store:
     def __init__(self, cfg):
         self.cfg = cfg
@@ -130,7 +134,8 @@ class Store:
         client_id = uuid.uuid4().hex[:16]
         token = f"m2c_{client_id}.{secrets.token_urlsafe(32)}"
         client = {**settings, "id": client_id, "label": label, "providers": providers,
-                  "digest": hashlib.sha256(token.encode()).hexdigest(), "created_at": int(time.time())}
+                  "digest": hashlib.sha256(token.encode()).hexdigest(), "created_at": int(time.time()),
+                  "revision": 0}
         with _LOCK:
             clients = {**self.clients, client_id: client}
             _write(self.clients_file, clients)
@@ -143,12 +148,15 @@ class Store:
             return self._public_client(client)
         return None
 
-    def update_client(self, client_id: str, *, rotate=False, revoke=False, **changes):
+    def update_client(self, client_id: str, *, rotate=False, revoke=False, expected_revision=None, **changes):
         with _LOCK:
             client = self.clients.get(client_id)
             if not client or client.get("revoked_at"):
                 return None
-            client = {**client, **changes, "updated_at": int(time.time())}
+            revision = client.get("revision", 0)
+            if expected_revision is not None and revision != expected_revision:
+                raise ClientRevisionConflict
+            client = {**client, **changes, "updated_at": int(time.time()), "revision": revision + 1}
             token = None
             if rotate:
                 token = f"m2c_{client_id}.{secrets.token_urlsafe(32)}"

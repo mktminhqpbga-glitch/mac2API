@@ -64,7 +64,7 @@ from engine import (ESSENTIAL_COOKIES, MAX_REFERENCE_IMAGE_BYTES,
                     REFERENCE_MIME_EXT, MuseAuthError, MuseEngine, MuseGenerationError,
                     MuseModelRefusalError, MusePostSendError, RefImageSafetyError, reference_kind)
 from engine import MusePageUnavailable, MuseProxyError, MuseReferenceUploadError, MuseSessionUnavailable
-from store import Store, account_expiry, min_expiry
+from store import ClientRevisionConflict, Store, account_expiry, min_expiry
 from generation_timing import QueuePolicy, QueueSettings, TaskNotQueued, TaskTiming
 from managed_web import ManagedWebAccounts, visible_chrome_available
 from proxy import normalize_server, request_proxy_context, split_proxy_url
@@ -3638,6 +3638,7 @@ class ClientKeyRequest(BaseModel):
     rules: dict[str, ClientModelRule] | None = Field(default=None, min_length=1, max_length=100)
     enabled: bool | None = None
     history_days: int | None = Field(default=None, ge=0, le=30)
+    expected_revision: int | None = Field(default=None, ge=0)
 
 
 def _client_key_catalog():
@@ -3655,7 +3656,7 @@ def _client_key_catalog():
 
 
 def _client_key_settings(req, existing=None):
-    changes = req.model_dump(exclude_none=True, exclude={"rules"})
+    changes = req.model_dump(exclude_none=True, exclude={"rules", "expected_revision"})
     if "label" in changes:
         changes["label"] = changes["label"].strip()
     if ("label" in changes and not changes["label"]) or (existing is None and not changes.get("label")):
@@ -3717,7 +3718,11 @@ def update_client_key(client_id: str, req: ClientKeyRequest, _=Depends(auth)):
     existing = store.get_client(client_id)
     if not existing or existing.get("revoked_at"):
         raise HTTPException(404, "Không tìm thấy khóa người dùng đang quản lý.")
-    changed = store.update_client(client_id, **_client_key_settings(req, existing))
+    try:
+        changed = store.update_client(client_id, expected_revision=req.expected_revision,
+                                      **_client_key_settings(req, existing))
+    except ClientRevisionConflict as exc:
+        raise HTTPException(409, "Khóa đã được cập nhật. Hãy đóng và mở lại để xem thiết lập mới nhất.") from exc
     if not changed:
         raise HTTPException(404, "Không tìm thấy khóa người dùng đang quản lý.")
     return changed
