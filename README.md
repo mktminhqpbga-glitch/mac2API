@@ -1,6 +1,6 @@
 # MUSE2API
 
-Bản tổng hợp mac2API 1.6.13 gồm mã máy chủ, bảng quản trị, tiện ích Chrome/Edge 1.0.8 và các adapter MacFlow/Toonflow. [Nhật ký phiên bản](CHANGELOG.md)
+Bản tổng hợp mac2API 1.6.14 gồm mã máy chủ, bảng quản trị, tiện ích Chrome/Edge 1.0.8 và các adapter MacFlow/Toonflow. [Nhật ký phiên bản](CHANGELOG.md)
 
 MUSE2API cung cấp API kiểu OpenAI để gọi các tính năng chat, tạo ảnh và tạo video của [Muse.ai](https://muse.ai/). Máy chủ Python chạy FastAPI và điều khiển Chromium qua Chrome DevTools Protocol (CDP). Muse.ai thực hiện việc tạo nội dung. Dịch vụ quản lý cookie, hàng đợi, tài khoản, proxy và kết quả tải về.
 
@@ -142,14 +142,14 @@ Dùng `images` để gửi ảnh tham chiếu cho video. Ảnh đầu tiên là 
 
 ## Ngôn ngữ chỉ dẫn Muse
 
-Trong **Quản lý tài khoản**, chọn **Ngôn ngữ chỉ dẫn Muse** rồi bấm **Lưu ngôn ngữ chỉ dẫn**. Có ba lựa chọn là tiếng Việt (mặc định), tiếng Anh và tiếng Trung. Cài đặt lưu trong `data/muse-prompt.json`, áp dụng cho yêu cầu Muse mới và giữ nguyên prompt đầu vào. Phần chỉ dẫn tạo ảnh/video đề nghị Muse xác nhận bằng ngôn ngữ đã chọn. Muse tự quyết định lời đáp thực tế. Chat chỉ có một tin nhắn người dùng vẫn gửi trực tiếp. Khóa và tin nhắn gửi tới OpenAI hoặc Gemini sử dụng luồng riêng.
+Trong **Muse → Cài đặt nâng cao**, chọn **Ngôn ngữ chỉ dẫn Muse** rồi bấm **Lưu ngôn ngữ chỉ dẫn**. Có ba lựa chọn là tiếng Việt (mặc định), tiếng Anh và tiếng Trung. Cài đặt lưu trong `data/muse-prompt.json`, áp dụng cho yêu cầu Muse mới và giữ nguyên prompt đầu vào. Phần chỉ dẫn tạo ảnh/video đề nghị Muse xác nhận bằng ngôn ngữ đã chọn. Muse tự quyết định lời đáp thực tế. Chat chỉ có một tin nhắn người dùng vẫn gửi trực tiếp. Khóa và tin nhắn gửi tới OpenAI hoặc Gemini sử dụng luồng riêng.
 
 ## Bảng quản trị API
 
 ### Luồng tự động
 
 1. Mở **Luồng tự động**. Nhập nội dung và ngữ cảnh chung. Ví dụ `[Sản phẩm A] [Sản phẩm B]` tạo hai mục khi **Tách mỗi cụm [ ... ]** đang bật.
-2. Thêm các bước theo thứ tự và chọn kết quả cần tạo ở mỗi bước. Ví dụ **Văn bản → Ảnh → Video**. Mỗi bước nhận nội dung của mục, ngữ cảnh chung, kết quả văn bản đã hoàn tất trước đó và chỉ dẫn riêng. Trong **Nâng cao**, chọn mô hình, tỉ lệ, thời lượng hoặc dùng ảnh của bước trước khi bước hiện tại chạy qua Muse.
+2. Thêm các bước theo thứ tự và chọn kết quả cần tạo ở mỗi bước. Ví dụ **Văn bản → Ảnh → Video**. Mỗi bước nhận nội dung của mục, ngữ cảnh chung, kết quả văn bản đã hoàn tất trước đó và chỉ dẫn riêng. Trong **Cài đặt nâng cao**, chọn mô hình, tỉ lệ, thời lượng hoặc dùng ảnh của bước trước khi bước hiện tại chạy qua Muse.
 3. Bấm **Chạy luồng**. **Tiến độ** hiển thị từng mục và bước. **Tạm dừng** để bước đang chạy kết thúc rồi mới dừng. Nếu một bước lỗi, các bước sau của mục đó chờ và các mục khác vẫn chạy. Bấm **Chạy lại bước này** sau khi xử lý nguyên nhân.
 4. Sao chép hoặc tải kết quả trong mục **Kết quả**. Dùng **Luồng đã lưu** để mở lại lần chạy trước. Bản nháp lưu trong trình duyệt và các lần chạy lưu trên máy chủ. Sau khi mac2API khởi động lại, bấm **Tiếp tục** để đọc lại biên nhận media. Bước văn bản bị gián đoạn cần xem lại rồi chạy lại thủ công.
 
@@ -157,7 +157,7 @@ Trong **Quản lý tài khoản**, chọn **Ngôn ngữ chỉ dẫn Muse** rồi
 
 Trang **Tổng quan** hiển thị trạng thái kết nối AI và báo cáo lượt API theo hôm nay, 7 ngày hoặc 30 ngày gần đây. Báo cáo gồm số lượt hoàn tất, ảnh tạo được, thời lượng video và token khi có số đo. Bảng khách hàng hiển thị lượt gọi gần nhất trong kỳ, tác vụ đang chờ hoặc chạy, tiền thu và hạn mức ngày đã dùng/còn lại theo mô hình. Bảng tài khoản AI dùng trạng thái và hạn mức đã ghi nhận, kèm thời điểm đọc hạn mức nếu có.
 
-**Khóa API** quản lý quyền của từng khách hàng. **Lịch sử API** đối chiếu kết quả và chi phí, còn **Tác vụ** lọc yêu cầu media theo nhà cung cấp, trạng thái hoặc mã. Bấm **Xem kết quả** ở Lịch sử API hoặc Lượt gọi gần đây để mở phản hồi đã lưu hoặc xem trước tệp. Quản trị viên có thể mở cả tệp ảnh/video còn trong kho của tác vụ bất đồng bộ. Phản hồi văn bản chỉ xem được nếu đã bật lưu nội dung lúc gọi và còn trong thời hạn lưu.
+**Quyền sử dụng** quản lý quyền của từng khách hàng. **Lịch sử sử dụng** đối chiếu kết quả và chi phí, còn **Tác vụ** lọc yêu cầu ảnh và video theo nhà cung cấp, trạng thái hoặc mã. Bấm **Xem kết quả** ở **Lịch sử sử dụng** hoặc **Lượt gọi gần đây** để mở phản hồi đã lưu hoặc xem trước tệp. Quản trị viên có thể mở cả tệp ảnh/video còn trong kho của tác vụ bất đồng bộ. Phản hồi văn bản chỉ xem được nếu đã bật lưu nội dung lúc gọi và còn trong thời hạn lưu.
 
 Chọn **API chính thức** để đặt model mặc định và lưu hoặc kiểm tra khóa OpenAI và Gemini. Khóa được cấp qua biến môi trường hiển thị nguồn cấu hình để quản trị viên biết cần đổi ở đâu. Trong **Thử API**, chọn **Khóa của người dùng**, nhập khóa của khách rồi bấm **Kiểm tra và tải mô hình** để kiểm tra đúng quyền trước khi gửi yêu cầu thử.
 

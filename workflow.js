@@ -16,6 +16,8 @@ let models = [];
 let loaded = false;
 let timer;
 let busy = false;
+let viewVersion = 0;
+let historyUnavailable = false;
 
 function readLocal(name, fallback) {
   try { return JSON.parse(localStorage.getItem('mac2apiWorkflow:' + name)) ?? fallback; }
@@ -101,7 +103,7 @@ function renderSteps() {
     row.append(header, basic, label('Yêu cầu ở bước này', instruction));
 
     const advanced = element('details');
-    const advancedHeading = element('summary', 'Nâng cao');
+    const advancedHeading = element('summary', 'Cài đặt nâng cao');
     const model = element('select');
     model.append(new Option('Muse mặc định', ''));
     const candidates = models.filter(candidate => candidate.type === step.kind);
@@ -116,13 +118,15 @@ function renderSteps() {
     reference.checked = step.input_image;
     reference.onchange = () => { step.input_image = reference.checked; writeLocal('draft', draft); };
     const referenceLabel = label('Dùng ảnh từ bước trước làm tham chiếu ', reference);
-    referenceLabel.hidden = index === 0 || step.kind === 'text' || Boolean(step.model && !step.model.startsWith('muse'));
+    const canUseReference = draft.steps.slice(0, index).some(previous => previous.kind === 'image');
+    referenceLabel.hidden = !step.input_image &&
+      (!canUseReference || Boolean(step.model && !step.model.startsWith('muse')));
     model.onchange = () => {
       step.model = model.value;
       if (step.model && !step.model.startsWith('muse')) {
         reference.checked = step.input_image = false;
         referenceLabel.hidden = true;
-      } else if (index > 0 && step.kind !== 'text') {
+      } else if (canUseReference) {
         referenceLabel.hidden = false;
       }
       writeLocal('draft', draft);
@@ -172,8 +176,9 @@ function selectRun(id) {
 }
 
 function renderRun(run, force = false) {
-  if (!force && lastRun?.id === run.id && lastRun.updated_at >= run.updated_at
-      && lastRun.state === run.state && lastRun.error === run.error) return;
+  if (lastRun?.id === run.id && (lastRun.updated_at > run.updated_at ||
+      (!force && lastRun.updated_at === run.updated_at &&
+       lastRun.state === run.state && lastRun.error === run.error))) return;
   lastRun = run;
   const runState = byId('workflowRunState');
   const indicator = badge(run.state);
@@ -209,9 +214,13 @@ function renderRun(run, force = false) {
       const row = element('div', undefined, 'workflow-step-state');
       const blocked = status.status === 'queued' && statuses.slice(0, stepIndex).includes('failed');
       row.append(element('strong', step.name), badge(blocked ? 'blocked' : status.status));
-      if (status.error) {
-        row.append(element('p', t(status.error)), button('Chạy lại bước này',
-          () => control('retry', {item: itemIndex, step: stepIndex})));
+      if (status.status === 'failed') {
+        row.append(element('p', friendlyFailure(status.error)), button('Chạy lại bước này',
+          () => {
+            if (status.check_before_retry && !confirm(
+              'Yêu cầu trước có thể đang được xử lý. Bạn đã kiểm tra và muốn gửi lại bước này?')) return;
+            return control('retry', {item: itemIndex, step: stepIndex});
+          }));
       }
       if (status.result) {
         outputs.push(renderResult(status.result, `Mục ${itemIndex + 1} · ${step.name}`,
@@ -246,7 +255,7 @@ function renderResult(result, title, filename) {
     open.target = '_blank';
     open.rel = 'noopener';
     const download = element('a', 'Tải tệp', 'btnlike ghostlike');
-    download.href = result.url;
+    download.href = result.download_url || result.url;
     download.download = result.filename;
     actions.append(open, download);
   } else {
@@ -258,23 +267,57 @@ function renderResult(result, title, filename) {
 
 async function refreshRun(force = false) {
   const id = selected;
+  const version = viewVersion;
   if (!id || busy) return;
   const run = await api('/admin/workflows/' + id);
-  if (id === selected) renderRun(run, force);
+  if (id === selected && version === viewVersion) {
+    renderRun(run, force);
+    byId('workflowConnection').textContent = '';
+  }
 }
 
 function setPoll() {
   clearTimeout(timer);
-  if (!byId('tab-workflows').classList.contains('active') || !['running', 'pausing'].includes(lastRun?.state)) return;
+  if (authOK === false || !byId('tab-workflows').classList.contains('active') ||
+      (!historyUnavailable && !['running', 'pausing'].includes(lastRun?.state))) return;
   timer = setTimeout(async () => {
+    if (historyUnavailable) {
+      await loadWorkflows();
+      return;
+    }
+    const version = viewVersion;
     try { await refreshRun(); }
-    catch { byId('workflowRunStatus').textContent = 'Chưa đọc được tiến độ. mac2API sẽ tiếp tục từ trạng thái đã lưu.'; }
+    catch {
+      if (version === viewVersion) byId('workflowConnection').textContent =
+        'Tạm mất kết nối. Tiến độ trước đó đã được lưu. Đang thử kết nối lại…';
+    }
     finally { setPoll(); }
-  }, 1600);
+  }, byId('workflowConnection').textContent ? 4000 : 1600);
 }
 
-async function loadHistory() {
+async function loadHistory({recoverPending = false} = {}) {
+  const version = viewVersion;
   const {runs} = await api('/admin/workflows');
+  if (version !== viewVersion) return;
+  const pending = recoverPending ? readLocal('pending', {}) : {};
+  const preferred = pending.id || selected;
+  if (preferred && (!runs.some(run => run.id === preferred) || pending.id)) {
+    try {
+      const run = await api('/admin/workflows/' + encodeURIComponent(preferred));
+      if (version !== viewVersion) return;
+      if (!runs.some(entry => entry.id === run.id)) runs.unshift({
+        id: run.id, state: run.state, title: run.config.title,
+      });
+      if (pending.id) {
+        writeLocal('pending', null);
+        selectRun(run.id);
+        renderRun(run, true);
+        byId('workflowDraftStatus').textContent = '';
+      }
+    } catch (error) {
+      if (error.status !== 404) throw error;
+    }
+  }
   if (!runs.some(run => run.id === selected)) selectRun(runs[0]?.id || null);
   byId('workflowRunSelect').replaceChildren(...runs.map(run => new Option(
     run.title + ' · ' + (states[run.state]?.[0] || 'Đã lưu'), run.id)));
@@ -285,12 +328,17 @@ async function loadHistory() {
 async function control(action, input) {
   if (busy || !selected) return;
   busy = true;
+  const version = viewVersion;
   try {
     const run = await api('/admin/workflows/' + selected + '/' + action,
-      {method: 'POST', body: JSON.stringify(input || {})});
-    if (run.id === selected) renderRun(run, true);
+      {method: 'POST', timeout:20000, body: JSON.stringify(input || {})});
+    if (run.id === selected && version === viewVersion) {
+      renderRun(run, true);
+      byId('workflowConnection').textContent = '';
+    }
   } catch (error) {
-    byId('workflowRunStatus').textContent = error.message;
+    if (version === viewVersion) byId('workflowConnection').textContent =
+      t(error.message) + ' Bấm Làm mới để xem trạng thái đã lưu.';
   } finally {
     busy = false;
     setPoll();
@@ -304,19 +352,28 @@ async function start(event) {
   byId('workflowStart').disabled = true;
   const status = byId('workflowDraftStatus');
   status.textContent = 'Đang lưu luồng…';
-  const raw = JSON.stringify({...draft, title: draft.title.trim() || 'Luồng mới'});
-  const pending = readLocal('pending', {});
-  const id = pending.raw === raw ? pending.id : crypto.randomUUID().replaceAll('-', '');
-  writeLocal('pending', {id, raw});
+  const version = viewVersion;
   try {
-    const run = await api('/admin/workflows', {method: 'POST', body: JSON.stringify({...JSON.parse(raw), id})});
+    const config = {...draft, title: draft.title.trim() || 'Luồng mới'};
+    const raw = JSON.stringify(config);
+    const pending = readLocal('pending', {});
+    const id = pending.raw === raw && pending.id ? pending.id : Array.from(
+      crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
+    writeLocal('pending', {id, raw});
+    const run = await api('/admin/workflows', {method:'POST', timeout:20000, body:JSON.stringify({...config, id})});
+    if (version !== viewVersion) return;
     writeLocal('pending', null);
     selectRun(run.id);
     renderRun(run, true);
-    await loadHistory();
-    status.textContent = '';
+    try {
+      await loadHistory();
+      if (status.textContent === 'Đang lưu luồng…') status.textContent = '';
+    } catch {
+      if (version === viewVersion) status.textContent =
+        'Luồng đã được lưu. Bấm Làm mới để cập nhật danh sách.';
+    }
   } catch (error) {
-    status.textContent = error.message;
+    if (version === viewVersion) status.textContent = t(error.message);
   } finally {
     busy = false;
     byId('workflowStart').disabled = false;
@@ -354,21 +411,48 @@ function initialize() {
     byId('workflowTitle').focus();
   };
   byId('workflowRunSelect').onchange = async event => {
+    if (busy) {
+      event.target.value = selected;
+      return;
+    }
     selectRun(event.target.value);
+    const version = viewVersion;
     try { await refreshRun(true); }
-    catch (error) { byId('workflowRunStatus').textContent = error.message; }
+    catch (error) {
+      if (version === viewVersion) byId('workflowConnection').textContent = t(error.message);
+    }
     finally { setPoll(); }
   };
+  window.addEventListener('online', () => {
+    if (byId('tab-workflows').classList.contains('active')) loadWorkflows();
+  });
+  window.addEventListener('mac2api:reset', () => {
+    viewVersion++;
+    clearTimeout(timer);
+    lastRun = undefined;
+    historyUnavailable = false;
+    models = [];
+    renderSteps();
+    for (const id of ['workflowRunSelect', 'workflowItems', 'workflowResults']) byId(id).replaceChildren();
+    for (const id of ['workflowHistory', 'workflowRunState', 'workflowProgress', 'workflowActions']) byId(id).hidden = true;
+    byId('workflowRunStatus').textContent = 'Nhập khóa quản trị để xem tiến độ và kết quả.';
+    byId('workflowConnection').textContent = '';
+  });
   showDraft();
 }
 
 export async function loadWorkflows() {
   if (!loaded) initialize();
+  const version = viewVersion;
   try {
-    await loadHistory();
+    await loadHistory({recoverPending: !busy});
     await refreshRun(true);
-    if (!models.length) {
+    if (version !== viewVersion) return;
+    historyUnavailable = false;
+    byId('workflowConnection').textContent = '';
+    if (!models.length && version === viewVersion) {
       const response = await api('/v1/models');
+      if (version !== viewVersion) return;
       models = response.data.filter(model => model.id.includes('/')).map(model => ({
         id: model.id,
         type: model.type || (['openai', 'gemini'].includes(model.owned_by) ? 'text' : ''),
@@ -376,6 +460,10 @@ export async function loadWorkflows() {
       renderSteps();
     }
   } catch {
-    byId('workflowRunStatus').textContent = 'Chưa đọc được luồng đã lưu. Kiểm tra khóa quản trị hoặc bấm Làm mới.';
+    if (version === viewVersion) {
+      historyUnavailable = true;
+      byId('workflowConnection').textContent =
+        'Chưa đọc được luồng đã lưu. Đang thử kết nối lại…';
+    }
   } finally { setPoll(); }
 }

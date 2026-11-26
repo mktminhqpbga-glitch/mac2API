@@ -1,4 +1,5 @@
-"""Exercise key management, the official API settings and all dashboard layouts in Chromium."""
+"""Exercise key management, dashboard layouts and workflow recovery in Chromium."""
+import asyncio
 import base64
 import json
 import os
@@ -23,7 +24,8 @@ def wait(predicate):
     end = time.monotonic() + 12
     while time.monotonic() < end:
         try:
-            if value := predicate():
+            value = predicate()
+            if value and not (isinstance(value, dict) and "exceptionDetails" in value):
                 return value
         except (httpx.HTTPError, StopIteration):
             pass
@@ -40,6 +42,10 @@ def check_dashboard(app, page, url):
     page.js("$('key').value='ui-fixture-only';saveKey()")
     wait(lambda: page.js("$('overviewProviders').childElementCount === 5"))
     assert page.js("$('overviewBase').value.endsWith('/v1')")
+    assert page.js("!$('overviewBase').getClientRects().length")
+    page.js("$('overviewBase').closest('details').querySelector('summary').click()")
+    assert page.js("Boolean($('overviewBase').getClientRects().length)")
+    page.js("$('overviewBase').closest('details').querySelector('summary').click()")
     assert page.js("document.querySelector('nav [aria-current=page]').dataset.t === 'overview'")
 
     for width, height in ((1600, 1000), (390, 844), (320, 760)):
@@ -49,7 +55,7 @@ def check_dashboard(app, page, url):
             page.js("$('mobileNav').value='clients';$('mobileNav').dispatchEvent(new Event('change'))")
             assert page.js("$('tab-clients').classList.contains('active')")
         for tab in ("overview", "clients", "usage", "pool", "openai", "gemini", "official",
-                    "cookie", "tasks", "media", "play", "docs"):
+                    "cookie", "tasks", "media", "workflows", "play", "docs"):
             page.js(f"goTab('{tab}')")
             wait(lambda: page.js(f"$('tab-{tab}').classList.contains('active')"))
             assert page.js("document.documentElement.scrollWidth <= innerWidth + 1"), (width, tab)
@@ -217,16 +223,57 @@ def check_dashboard(app, page, url):
     wait(lambda: app.store.get_task(queued["id"])["status"] == "cancelled")
     wait(lambda: page.js("$('taskBody').textContent.includes('Đã hủy')"))
 
-    async def workflow_fixture(run, item, _step, _checkpoint):
-        return {"kind": "text", "text": 'Kết quả ' + run["items"][item]["input"]}
+    release = threading.Event()
+    calls = []
+
+    async def workflow_fixture(run, item, step, _checkpoint):
+        calls.append((item, step))
+        if (item, step) == (0, 0):
+            while not release.is_set():
+                await asyncio.sleep(0.05)
+        if (item, step) == (0, 1) and calls.count((0, 1)) == 1:
+            raise app.WorkflowStepError("Hết hạn mức, vui lòng kiểm tra tài khoản.")
+        return {"kind": "text", "text": 'Kết quả ' + run["items"][item]["input"] + f' Bước {step + 1}'}
 
     with patch.object(app, "_execute_workflow_step", side_effect=workflow_fixture):
         page.js("goTab('workflows')")
         wait(lambda: page.js("$('workflowSteps').childElementCount === 1"))
-        page.js("""$('workflowInput').value='[một] [hai]';$('workflowInput').dispatchEvent(new Event('input'));
+        page.js("""$('workflowInput').value='[chưa đóng';$('workflowInput').dispatchEvent(new Event('input'));
             $('workflowStart').click()""")
-        wait(lambda: page.js("$('workflowResults').textContent.includes('Kết quả hai')"))
-        assert page.js("$('workflowProgress').value === 2 && $('workflowItems').children.length === 2")
+        wait(lambda: page.js("$('workflowDraftStatus').textContent.includes('chưa đóng')"))
+        assert not calls
+        page.js("""$('workflowInput').value='[một] [hai]';$('workflowInput').dispatchEvent(new Event('input'));
+            $('workflowAdd').click();
+            $('workflowStart').click()""")
+        wait(lambda: calls == [(0, 0)])
+        wait(lambda: page.js("$('workflowRunState').textContent === 'Đang chạy'"))
+        page.js("""window.__realFetch=window.fetch;
+            window.fetch=(url,opts)=>String(url).startsWith('/admin/workflows/')
+              ? Promise.reject(new TypeError('offline')) : __realFetch(url,opts)""")
+        wait(lambda: page.js("$('workflowConnection').textContent.includes('Tạm mất kết nối')"))
+        page.js("window.fetch=__realFetch;window.dispatchEvent(new Event('online'))")
+        wait(lambda: page.js("$('workflowConnection').textContent === ''"))
+        page.js("$('workflowPause').click()")
+        wait(lambda: page.js("$('workflowRunState').textContent === 'Đang tạm dừng'"))
+        release.set()
+        wait(lambda: page.js("$('workflowRunState').textContent === 'Đã tạm dừng'"))
+        assert calls == [(0, 0)]
+        page.js("$('workflowResume').click()")
+        wait(lambda: page.js("$('workflowRunState').textContent === 'Hoàn tất một phần'"))
+        assert page.js("$('workflowItems').innerText.includes('Hết hạn mức')")
+        assert page.js("$('workflowResults').textContent.includes('Kết quả hai Bước 2')")
+        page.js("$('workflowItems').querySelector('button').click()")
+        wait(lambda: page.js("$('workflowProgress').value === 4 && $('workflowItems').children.length === 2"))
+        assert calls == [(0, 0), (0, 1), (1, 0), (1, 1), (0, 1)]
+        page.js("""Object.defineProperty(navigator,'clipboard',{value:{writeText: async text=>window.__copied=text}});
+            $('workflowResults').querySelector('button').click()""")
+        wait(lambda: page.js("window.__copied === 'Kết quả một Bước 1'"))
+        download = Path(app.CFG.data_dir) / "browser-downloads"
+        page.send("Page.setDownloadBehavior", {"behavior": "allow", "downloadPath": str(download)})
+        page.js("$('workflowResults').querySelectorAll('button')[1].click()")
+        saved = download / "mac2api-muc-1-buoc-1.txt"
+        wait(saved.exists)
+        assert saved.read_text() == "Kết quả một Bước 1"
         screenshot("workflow-mobile")
         page.send("Emulation.setDeviceMetricsOverride",
                   {"width": 1600, "height": 1000, "deviceScaleFactor": 1, "mobile": False})
@@ -237,6 +284,39 @@ def check_dashboard(app, page, url):
         wait(lambda: page.js(f"performance.timeOrigin !== {opened_at} && "
                              "document.getElementById('workflowResults')?.textContent.includes('Kết quả hai') && "
                              "document.getElementById('workflowInput').value === '[một] [hai]'"))
+
+        page.js("""window.__realFetch=window.fetch;
+            window.fetch=async (url,options)=>{
+              const response=await __realFetch(url,options);
+              if (url==='/admin/workflows' && options.method==='POST') throw new TypeError('offline');
+              return response;
+            };
+            $('workflowInput').value='mục đã gửi';$('workflowInput').dispatchEvent(new Event('input'));
+            $('workflowStart').click()""")
+        wait(lambda: page.js("$('workflowDraftStatus').textContent.includes('Mất kết nối')"))
+        assert page.js("Boolean(JSON.parse(localStorage.getItem('mac2apiWorkflow:pending')).id)")
+        opened_at = page.js("performance.timeOrigin")
+        page.send("Page.reload")
+        wait(lambda: page.js(f"performance.timeOrigin !== {opened_at} && "
+                             "document.getElementById('workflowResults')?.textContent.includes('Kết quả mục đã gửi') && "
+                             "localStorage.getItem('mac2apiWorkflow:pending') === 'null'"))
+        assert calls.count((0, 0)) == 2
+        page.js("$('key').value='';saveKey()")
+        wait(lambda: page.js("!$('workflowResults').children.length && $('workflowHistory').hidden"))
+        assert page.js("$('workflowInput').value === 'mục đã gửi' && window.__errors.length === 0")
+
+        page.send("Page.addScriptToEvaluateOnNewDocument", {"source": """
+            if (location.search.includes('chan-luu')) {
+              for (const name of ['localStorage','sessionStorage']) {
+                Object.defineProperty(window,name,{get(){throw new DOMException('Restricted','SecurityError')}});
+              }
+            }
+        """})
+        page.send("Page.navigate", {"url": url + "/admin?chan-luu"})
+        wait(lambda: page.js("location.search.includes('chan-luu') && typeof goTab === 'function' && authOK === false"))
+        page.js("$('key').value='ui-fixture-only';saveKey()")
+        wait(lambda: page.js("$('overviewProviders').childElementCount === 5"))
+        assert page.js("window.__errors.length === 0")
 
 
 if __name__ == "__main__":

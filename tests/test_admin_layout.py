@@ -156,7 +156,10 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
               'zh': '参考素材上传未确认（0/1）'}[lang]
    wait(f"document.querySelector('#taskBody details[open]').innerText.includes({json.dumps(message)})")
    diagnostic=page.js("document.querySelector('#taskBody details[open]').innerText")
-   check('MUSE_REFERENCE_UPLOAD_UNCONFIRMED' in diagnostic, lang+': task code is missing')
+   check('MUSE_REFERENCE_UPLOAD_UNCONFIRMED' not in diagnostic, lang+': task code visible without opening advanced settings')
+   page.js("document.querySelector('#taskBody [data-task-diagnostic] summary').click()")
+   check(page.js("document.querySelector('#taskBody [data-task-diagnostic]').innerText.includes('MUSE_REFERENCE_UPLOAD_UNCONFIRMED')"),
+         lang+': task code is missing in advanced settings')
    if lang=='vi':
     check(all(label in diagnostic for label in ('Dừng trước khi gửi','Tệp tham chiếu API đã nhận 1','Tệp thấy trong ô nhập 0')),
           'vi: task stage or reference counts are missing')

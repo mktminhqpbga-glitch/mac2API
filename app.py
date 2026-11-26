@@ -1800,10 +1800,12 @@ def _media_access_query(name: str, *, admin: bool):
     return f"access={mode}.{expires}.{_media_signature(name, mode, expires)}"
 
 
-def media_url(name: str, *, admin: bool = False) -> str:
+def media_url(name: str, *, admin: bool = False, download: bool = False) -> str:
     from urllib.parse import quote
     url = f"{_public_base()}/v1/media/{quote(name, safe='')}"
     query = _media_access_query(name, admin=admin)
+    if download:
+        query = "&".join(filter(None, (query, "download=1")))
     return f"{url}?{query}" if query else url
 
 
@@ -3337,7 +3339,8 @@ async def _responses_api(req, prompt, owner, job):
 
 
 @app.get("/v1/media/{name}")
-def get_media(name: str, access: str = "", authorization: str | None = Header(default=None)):
+def get_media(name: str, access: str = "", authorization: str | None = Header(default=None),
+              download: bool = False):
     if name.startswith(".") or "/" in name or "\\" in name or ".." in name:
         raise HTTPException(400, "非法文件名")
     private = _check_media_access(name, access, authorization)
@@ -3349,7 +3352,7 @@ def get_media(name: str, access: str = "", authorization: str | None = Header(de
         headers["Cache-Control"] = "private, no-store"
     mime = mimetypes.guess_type(name)[0] or ""
     if mime.startswith(("image/", "video/", "audio/")) and mime != "image/svg+xml":
-        return FileResponse(p, media_type=mime, headers=headers)
+        return FileResponse(p, media_type=mime, filename=name if download else None, headers=headers)
     return FileResponse(p, media_type="application/octet-stream", filename=name, headers=headers)
 
 
@@ -4390,22 +4393,42 @@ async def _execute_workflow_step(run, item_index, index, checkpoint):
 
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
     async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as api:
-        async def call(method, path, **kwargs):
+        async def call(method, path, *, timeout=None, **kwargs):
             headers = {"Authorization": f"Bearer {CFG.api_key}", **kwargs.pop("headers", {})}
-            response = await api.request(method, path, headers=headers, **kwargs)
+            request = api.request(method, path, headers=headers, **kwargs)
+            try:
+                response = await asyncio.wait_for(request, timeout)
+            except (TimeoutError, httpx.RequestError) as exc:
+                raise WorkflowStepError(
+                    "Chưa nhận được phản hồi. Hãy kiểm tra kết nối rồi thử lại."
+                    if kind != "text" else
+                    "Mất kết nối khi chờ văn bản. Hãy kiểm tra tác vụ đã gửi trước khi chạy lại.",
+                    reuse_task=kind != "text", check_before_retry=kind == "text") from exc
             try:
                 body = response.json()
             except ValueError:
-                body = {}
+                body = None
+            transient = response.status_code == 429 or response.status_code >= 500
             if not response.is_success:
                 detail = None
                 if isinstance(body, dict):
-                    error = body.get("error")
-                    detail = error.get("message") if isinstance(error, dict) else body.get("detail")
-                fallback = f"mac2API chưa trả kết quả cho bước này (HTTP {response.status_code})."
-                raise WorkflowStepError(_redact_task_error(detail) if isinstance(detail, str) and detail else fallback)
+                    error = body.get("error") or body.get("detail")
+                    detail = error.get("message") if isinstance(error, dict) else error
+                fallback = {
+                    401: "Phiên đăng nhập đã hết hạn. Hãy kiểm tra kết nối tài khoản AI.",
+                    403: "Tài khoản chưa được phép xử lý bước này. Hãy kiểm tra quyền sử dụng.",
+                    404: "Không tìm thấy tác vụ đã gửi. Hãy kiểm tra mục Tác vụ trước khi chạy lại.",
+                    422: "Thông tin bước này chưa hợp lệ. Hãy kiểm tra thiết lập.",
+                    429: "Đã chạm hạn mức hoặc hàng chờ đang đầy. Hãy kiểm tra tài khoản và thử lại sau.",
+                }.get(response.status_code, "Dịch vụ chưa xử lý được bước này. Hãy thử lại sau.")
+                unknown = (kind == "text" and response.status_code in (500, 502, 503, 504)
+                           or kind != "text" and method == "GET" and response.status_code == 404)
+                message = _redact_task_error(detail) if isinstance(detail, str) and detail else fallback
+                raise WorkflowStepError(message, reuse_task=kind != "text" and transient,
+                                        check_before_retry=unknown)
             if not isinstance(body, dict):
-                raise WorkflowStepError("mac2API trả dữ liệu không đúng định dạng.")
+                raise WorkflowStepError("Chưa đọc được phản hồi. Hãy kiểm tra tác vụ trước khi chạy lại.",
+                                        reuse_task=kind != "text", check_before_retry=kind == "text")
             return body
 
         if kind == "text":
@@ -4419,22 +4442,49 @@ async def _execute_workflow_step(run, item_index, index, checkpoint):
         endpoint = "/v1/images/tasks" if kind == "image" else "/v1/videos"
         task_id = state.get("task_id")
         if not task_id:
-            receipt = await call("POST", endpoint, json=payload,
+            receipt = await call("POST", endpoint, timeout=30, json=payload,
                                  headers={"Idempotency-Key": f"flow-{run['id']}-{item_index}-{index}-{state['attempt']}"})
             task_id = receipt.get("task_id") or receipt.get("id")
-            if not task_id:
-                raise WorkflowStepError("Chưa nhận được mã tác vụ. Kiểm tra mục Tác vụ trước khi thử lại.")
+            if not isinstance(task_id, str) or not task_id:
+                raise WorkflowStepError("Chưa nhận được mã tác vụ. Bấm Chạy lại để tìm yêu cầu đã gửi.",
+                                        reuse_task=True)
             checkpoint(task_id)
+        retries = 0
+        queue_timeout = QUEUE_POLICY.settings()["queue_timeout"]
+        generation_timeout = CFG.image_timeout if kind == "image" else CFG.video_timeout
         while True:
-            result = await call("GET", f"{endpoint}/{task_id}")
+            try:
+                result = await call("GET", f"{endpoint}/{task_id}", timeout=10)
+            except WorkflowStepError as exc:
+                if not exc.reuse_task:
+                    raise
+                retries += 1
+                if retries >= 3:
+                    raise WorkflowStepError(
+                        "Chưa đọc được tiến độ. Bấm Chạy lại để kiểm tra tiếp tác vụ đã gửi.",
+                        reuse_task=True) from exc
+                await asyncio.sleep(retries * 1.5)
+                continue
+            retries = 0
             status = result.get("status")
             if status in ("completed", "succeeded", "done", "success"):
                 filename = (result.get("result") or {}).get("filename")
                 _workflow_media_path(filename)
                 return {"kind": kind, "filename": filename}
             if status not in ("queued", "processing"):
-                message = result.get("error") or "Tác vụ chưa hoàn tất. Kiểm tra mục Tác vụ để xem chi tiết."
-                raise WorkflowStepError(f"{_redact_task_error(message)} ({task_id})")
+                message = result.get("error")
+                unknown = result.get("needs_reconcile") or status == "interrupted"
+                if unknown:
+                    message = "Chưa xác định được kết quả. Hãy kiểm tra mục Tác vụ trước khi chạy lại."
+                elif not isinstance(message, str) or not message:
+                    message = "Tác vụ chưa hoàn tất. Kiểm tra mục Tác vụ để xem chi tiết."
+                raise WorkflowStepError(_redact_task_error(message), check_before_retry=bool(unknown))
+            updated = result.get("updated_at")
+            budget = queue_timeout if status == "queued" else generation_timeout * 2
+            if budget and isinstance(updated, (int, float)) and time.time() - updated > budget + 120:
+                raise WorkflowStepError(
+                    "Tác vụ đã lâu chưa cập nhật. Kiểm tra mục Tác vụ hoặc bấm Chạy lại để đọc tiếp.",
+                    reuse_task=True)
             await asyncio.sleep(1.5)
 
 
@@ -4446,6 +4496,7 @@ def _workflow_response(run, status_code=200):
                 try:
                     _workflow_media_path(result["filename"])
                     result["url"] = media_url(result["filename"], admin=True)
+                    result["download_url"] = media_url(result["filename"], admin=True, download=True)
                 except WorkflowStepError:
                     result["file_missing"] = True
     return JSONResponse(run, status_code=status_code, headers=NO_STORE)
@@ -4545,7 +4596,8 @@ def admin_media(_=Depends(auth)):
     for path, stat in reversed(entries):
         name = path.name
         is_video = path.suffix.lower() in VIDEO_FORMATS
-        item = {"name": name, "url": media_url(name, admin=True), "bytes": stat.st_size,
+        item = {"name": name, "url": media_url(name, admin=True),
+                "download_url": media_url(name, admin=True, download=True), "bytes": stat.st_size,
                 "mtime": int(stat.st_mtime), "kind": "video" if is_video else "image"}
         if is_video:
             from urllib.parse import quote

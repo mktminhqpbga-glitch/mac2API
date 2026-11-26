@@ -48,6 +48,11 @@
   nav.tabs{display:grid;gap:20px}
   .nav-group{display:grid;gap:4px}
   .nav-title{margin:0 0 3px;padding:0 11px;color:var(--muted);font-size:11px;font-weight:650}
+  .nav-advanced>.nav-title{cursor:pointer;padding-bottom:7px;font-size:12px}
+  .advanced-settings{padding:11px 0;border-top:1px solid var(--line)}
+  .advanced-settings>summary{cursor:pointer;color:var(--muted);font-weight:600}
+  .advanced-settings[open]>summary{margin-bottom:11px}
+  details:is(.advanced-settings,.nav-advanced,[data-task-diagnostic]):not([open])>:not(summary){display:none}
   nav.tabs button{background:transparent;border:1px solid transparent;color:var(--muted);
     padding:8px 11px;text-align:left;font-size:13px;min-height:37px;border-radius:9px}
   nav.tabs button:hover{color:var(--text);background:var(--panel2)}
@@ -68,6 +73,7 @@
     nav.tabs{display:flex;gap:17px;overflow-x:auto;padding:2px 2px 8px;scrollbar-width:thin;border-bottom:1px solid var(--line)}
     .nav-group{display:flex;gap:3px;align-items:center;flex:none}
     .nav-title{display:none}
+    .nav-advanced>.nav-title{display:list-item;margin:0;line-height:37px;padding-bottom:0}
     nav.tabs button{white-space:nowrap}
   }
   @media(max-width:760px){
@@ -352,8 +358,8 @@
       <span class="pill" id="pBr"><span class="led"></span>Muse 浏览器 <b>—</b></span>
       <span class="live" id="live"><span class="led"></span>自动刷新</span>
       <span class="keybox" id="keyBox">
-        <span class="lbl" id="keyLbl">API Key</span>
-        <input id="key" type="password" aria-label="Khóa quản trị" placeholder="粘贴 m2a_ 开头的密钥" autocomplete="off">
+        <span class="lbl" id="keyLbl">Khóa quản trị</span>
+        <input id="key" type="password" aria-label="Khóa quản trị" autocomplete="off">
         <button class="ghost mini" onclick="saveKey()">保存</button>
       </span>
       <select id="langSel" class="langsel" data-no-i18n onchange="setLang(this.value)" title="Ngôn ngữ / Language / 语言">
@@ -383,14 +389,14 @@
         <button type="button" data-t="pool">Muse</button>
         <button type="button" data-t="openai">ChatGPT Web</button>
         <button type="button" data-t="gemini">Gemini Web</button>
-        <button type="button" data-t="official" data-ui="official">API chính thức</button>
         <button type="button" data-t="cookie" data-ui="cookie">Tiện ích trình duyệt</button>
       </div>
-      <div class="nav-group">
-        <p class="nav-title" data-ui="integration">Tích hợp</p>
+      <details class="nav-group nav-advanced">
+        <summary class="nav-title" data-ui="advanced">Cài đặt nâng cao</summary>
+        <button type="button" data-t="official" data-ui="official">API chính thức</button>
         <button type="button" data-t="play" data-ui="play">Thử API</button>
         <button type="button" data-t="docs" data-ui="docs">Tài liệu API</button>
-      </div>
+      </details>
     </nav>
   </aside>
   <div class="workspace-content">
@@ -449,16 +455,17 @@
         <p class="hint" data-ui="accessHelp">Cấp một khóa cho mỗi khách hàng hoặc ứng dụng. Bạn có thể giới hạn mô hình, tài khoản và số lượt sử dụng.</p>
         <div class="acts">
           <button type="button" onclick="goTab('clients')" data-ui="manageKeys">Quản lý khóa</button>
-          <button type="button" class="ghost" onclick="goTab('play')" data-ui="play">Thử API</button>
+          <button type="button" class="ghost" onclick="goTab('workflows')">Mở luồng tự động</button>
         </div>
       </div>
-      <div>
-        <label for="overviewBase" data-ui="sharedBase">Base URL dùng chung</label>
+      <details class="advanced-settings">
+        <summary data-ui="advanced">Cài đặt nâng cao</summary>
+        <label for="overviewBase" data-ui="sharedBase">Địa chỉ kết nối dùng chung</label>
         <div class="copyline">
           <input type="text" id="overviewBase" readonly spellcheck="false">
           <button type="button" class="ghost" onclick="copyEl('overviewBase')" data-ui="copy">Sao chép</button>
         </div>
-      </div>
+      </details>
     </div>
     <div class="overview-stats">
       <div class="overview-stat"><span data-ui="providersReady">Kết nối khả dụng</span><strong id="overviewReady">—</strong></div>
@@ -649,11 +656,6 @@
     <div class="card">
       <h3 data-provider-title></h3>
       <p class="hint" data-provider-status role="status"></p>
-      <p class="hint" data-provider-model-id></p>
-      <div class="row">
-        <label style="flex:1;min-width:0">Base URL riêng <input type="text" data-provider-base readonly spellcheck="false" style="width:100%"></label>
-        <button type="button" class="ghost" data-provider-copy-base>Sao chép Base URL</button>
-      </div>
       <div data-web-extension>
         <div class="acts">
           <a class="btnlike" href="/admin/extension" download>Tải tiện ích Chrome 1.0.8</a>
@@ -662,8 +664,15 @@
         <p class="hint">Mở tab AI đã đăng nhập, mở tiện ích, dán khóa quản trị rồi bấm tên dịch vụ. Tiện ích mặc định dùng địa chỉ mac2API trên máy này.</p>
         <div data-web-extension-accounts></div>
       </div>
-      <details data-web-setup>
-        <summary>Kết nối qua Chrome DevTools</summary>
+      <details class="advanced-settings">
+        <summary data-ui="advanced">Cài đặt nâng cao</summary>
+        <p class="hint" data-provider-model-id></p>
+        <div class="copyline">
+          <label>Địa chỉ kết nối riêng <input type="text" data-provider-base readonly spellcheck="false"></label>
+          <button type="button" class="ghost" data-provider-copy-base>Sao chép địa chỉ</button>
+        </div>
+        <details data-web-setup>
+          <summary>Kết nối qua Chrome DevTools</summary>
         <ol>
           <li>Trong Chrome 144 trở lên, dán <code>chrome://inspect/#remote-debugging</code> vào thanh địa chỉ và bật gỡ lỗi từ xa.</li>
           <li>Bấm <b>Kết nối Chrome</b> bên dưới rồi chọn <b>Cho phép</b> khi Chrome hỏi.</li>
@@ -671,6 +680,7 @@
         </ol>
         <button type="button" class="ghost" data-web-copy>Sao chép địa chỉ cài đặt Chrome</button>
         <button type="button" data-web-connect>Kết nối Chrome</button>
+        </details>
       </details>
       <p class="hint" data-web-remote hidden>Chrome phải chạy cùng máy với mac2API. Bản trên Render không truy cập Chrome đang mở trên máy Mac của bạn.</p>
       <button type="button" class="ghost" data-provider-test>Kiểm tra phiên trình duyệt</button>
@@ -750,7 +760,8 @@
         <button class="ghost" onclick="document.getElementById('newCookie').value='';">清空</button>
       </div>
     </details>
-    <div class="card">
+    <details class="card disclosure-card">
+      <summary data-ui="advanced">Cài đặt nâng cao</summary>
       <form id="musePromptForm">
         <label for="musePromptLanguage">Muse 提示词指令语言</label>
         <div class="row">
@@ -764,18 +775,16 @@
         <p class="hint">仅更改 mac2API 添加的 Muse 指令，保留你发送的内容。</p>
         <p class="hint" id="musePromptStatus" role="status"></p>
       </form>
-    </div>
-
-    <div class="card" id="generationQueuePanel">
+      <div class="advanced-settings" id="generationQueuePanel">
       <h3>排队与生成时限</h3>
       <div class="hint">排队不占用生成时限。任务获得并发槽位和账号后开始计算生成时间；重试时等待账号也不计入。</div>
       <form id="generationQueueForm" onsubmit="event.preventDefault();saveGenerationQueue()">
         <div class="row"><div style="max-width:340px"><label for="generationQueueTimeout">独立排队时限（秒，0 为不限）</label><input id="generationQueueTimeout" type="number" min="0" max="86400" required value="3600"></div></div>
         <div style="display:flex;align-items:center;gap:12px;margin-top:12px"><button id="generationQueueSave" type="submit">保存排队设置</button><span class="hint" id="generationQueueSummary"></span></div>
       </form>
-    </div>
+      </div>
 
-    <details class="card disclosure-card">
+    <details class="advanced-settings">
       <summary data-ui="adminAccess">Kết nối và khóa quản trị</summary>
       <div class="hint" data-ui="adminAccessHelp">Dùng khóa quản trị cho bảng điều khiển và tiện ích. Cấp khóa riêng trong mục Khóa API cho ứng dụng và khách hàng.</div>
       <div class="row">
@@ -804,6 +813,7 @@
         完整调用示例见「接入文档」页签。
       </div>
     </details>
+    </details>
   </section>
 
   <!-- ==================== 获取 Cookie ==================== -->
@@ -811,13 +821,7 @@
     <div class="card" id="extensionUpgradeNotice" role="note" data-i18n="extension-upgrade-notice"><b>浏览器扩展 1.0.8</b><br><a href="/admin/extension">下载扩展</a>。如需更新解压的扩展，请替换文件后在 <code>chrome://extensions</code> 或 <code>edge://extensions</code> 点击重新加载。</div>
     <div class="card" style="border-color:rgba(52,211,153,.45)">
       <h3>方式一：浏览器扩展 <span class="tag">推荐 · 零命令行 · 全平台</span></h3>
-      <div class="hint" data-i18n="ext-why-hint">
-        用一个浏览器小扩展，把你<b>自己电脑上已经登录好的 muse.ai 登录态</b>同步过来。
-        不用装 Python、不用开终端、不用敲命令。<br>
-        <b>为什么必须用扩展</b>：muse.ai 的登录会话 cookie 带
-        <code>httpOnly</code> 标记，网页脚本（F12 里敲 <code>document.cookie</code>、
-        小书签）读不到；只有浏览器扩展的 <code>cookies</code> 接口能拿到。
-      </div>
+      <p class="hint">Dùng tiện ích để kết nối với Muse, ChatGPT hoặc Gemini đã đăng nhập trên Chrome.</p>
 
       <div class="stepbox">
         <div class="stepno">1</div>
@@ -827,8 +831,6 @@
             解压到一个你不会删掉的目录，比如 <code>D:\muse2api-extension</code>。
           </div>
           <a class="btnlike" href="/admin/extension" download>下载浏览器扩展 (ZIP)</a>
-          <button class="ghost mini" onclick="loadExtFiles()">查看包含哪些文件</button>
-          <span class="hint" id="extFiles" style="margin-left:8px"></span>
         </div>
       </div>
 
@@ -877,6 +879,10 @@
       </div>
     </div>
 
+    <details class="card disclosure-card">
+    <summary data-ui="advanced">Cài đặt nâng cao</summary>
+    <button class="ghost mini" onclick="loadExtFiles()">查看包含哪些文件</button>
+    <span class="hint" id="extFiles" style="margin-left:8px"></span>
     <div class="card">
       <h3>方式二：手动复制 <span class="tag">零安装 · 兜底</span></h3>
       <div class="hint" data-i18n="manual-copy-hint">
@@ -955,6 +961,7 @@
       </table></div>
       <div class="hint" style="margin:12px 0 0;line-height:1.85" data-i18n="lifetime-hint">登录会话是否有效以上游认证为准。hatch_vml 是可选工作区令牌，可能缺失或重新签发，不能仅凭缺少它或其到期时间判断账号失效。导入后请点击“测试”；收到 HTTP 401 时再重新登录并导入。</div>
     </div>
+    </details>
   </section>
 
   <!-- ==================== 任务记录 ==================== -->
@@ -972,7 +979,7 @@
       </div>
       <div class="tblwrap"><table>
         <thead><tr>
-          <th>任务 ID</th><th data-ui="providerType">AI và loại</th><th>提示词</th><th>状态</th>
+          <th data-ui="taskId">Mã tác vụ</th><th data-ui="providerType">AI và loại</th><th data-ui="taskInput">Yêu cầu</th><th>状态</th>
           <th>耗时</th><th>创建时间</th><th>结果 / 错误</th><th></th>
         </tr></thead>
         <tbody id="taskBody"><tr><td colspan="8" class="empty">加载中…</td></tr></tbody>
@@ -1228,6 +1235,7 @@ t = requests.post(<span class="s">"BASE/v1/videos"</span>, json={<span class="s"
           <div class="workflow-run-head"><h2>Tiến độ</h2><span id="workflowRunState" class="badge mute" hidden></span></div>
           <label id="workflowHistory" hidden>Luồng đã lưu<select id="workflowRunSelect"></select></label>
           <p class="hint" id="workflowRunStatus" role="status">Thiết lập rồi bấm Chạy luồng.</p>
+          <p class="hint status-text" id="workflowConnection" role="status" data-error="true"></p>
           <progress id="workflowProgress" hidden aria-label="Tiến độ luồng"></progress>
           <div class="acts" id="workflowActions" hidden>
             <button id="workflowPause" type="button" class="ghost">Tạm dừng</button>
@@ -2519,8 +2527,14 @@ if (LANG !== 'zh') {
 /* ================= 基础 ================= */
 const $ = id => document.getElementById(id);
 const KEY_STORE = 'muse2api_key';
-let KEY = sessionStorage.getItem(KEY_STORE) || '';
-localStorage.removeItem(KEY_STORE);
+function readStored(area, key){
+  try { return window[area].getItem(key) || ''; } catch { return ''; }
+}
+function writeStored(area, key, value){
+  try { window[area].setItem(key, value); return true; } catch { return false; }
+}
+let KEY = readStored('sessionStorage', KEY_STORE);
+try { localStorage.removeItem(KEY_STORE); } catch {}
 const adminUrl = new URL(location.href);
 if (adminUrl.searchParams.has('key')) {
   adminUrl.searchParams.delete('key');
@@ -2538,16 +2552,18 @@ function setAuth(ok){
   $('authBanner').classList.toggle('show', !ok);
   $('keyBox').classList.toggle('ok', ok);
   $('keyBox').classList.toggle('miss', !ok);
-  $('keyLbl').textContent = ok ? '✓ 已登录' : 'API Key 必填';
+  $('keyLbl').textContent = ok ? '✓ 已登录' : ui('adminKey');
   if (!ok) clearAdminView();
 }
 
 function saveKey(){
-  KEY = $('key').value.trim();
-  sessionStorage.setItem(KEY_STORE, KEY);
+  const next = $('key').value.trim();
+  if (next !== KEY) clearAdminView();
+  KEY = next;
+  const saved = writeStored('sessionStorage', KEY_STORE, KEY);
   if (!KEY){ setAuth(false); toast('已清除 API Key', 'warn'); return; }
-  toast('API Key 已保存到当前标签页', 'ok');
-  authOK = null;                 // 强制重新判定
+  if (!saved) toast('Trình duyệt chỉ giữ khóa đến khi tải lại trang.', 'warn');
+  authOK = null;
   refreshAll();
 }
 
@@ -2562,24 +2578,45 @@ function toast(msg, kind){
 }
 
 async function api(path, opts){
-  const {authKey, ...options} = opts || {};
+  const {authKey, timeout, ...options} = opts || {};
   const requestKey = authKey ?? KEY;
-  const updateAdminAuth = authKey === undefined;
+  const updateAdminAuth = authKey === undefined && path.startsWith('/admin/') &&
+    !/^\/admin\/(?:update\/check|repo\/status|extension\/files)(?:\?|$)/.test(path);
   options.headers = Object.assign({'Content-Type':'application/json'}, options.headers || {});
   if (requestKey) options.headers.Authorization = 'Bearer ' + requestKey;
-  const r = await fetch(path, options);
-  const txt = await r.text();
-  let data; try { data = JSON.parse(txt); } catch(e){ data = null; }
-  if (r.status === 401){
-    if (updateAdminAuth && KEY === requestKey) setAuth(false);
-    throw new Error('API Key 未填写或填写错误');
+  const limit = timeout ?? ((!options.method || options.method === 'GET') ? 20000 : 0);
+  if (limit && !options.signal && typeof AbortSignal !== 'undefined' && AbortSignal.timeout) {
+    options.signal = AbortSignal.timeout(limit);
   }
-  if (updateAdminAuth && KEY === requestKey) setAuth(true);
+  let r, txt;
+  try {
+    r = await fetch(path, options);
+    txt = await r.text();
+  } catch (cause) {
+    const timedOut = options.signal?.aborted;
+    const failure = new Error(timedOut
+      ? 'Chờ phản hồi quá lâu. Hãy kiểm tra kết nối rồi thử lại.'
+      : 'Mất kết nối với mac2API. Hãy kiểm tra ứng dụng đang mở rồi thử lại.', {cause});
+    failure.status = timedOut ? 408 : 0;
+    throw failure;
+  }
+  let data; try { data = JSON.parse(txt); } catch(e){ data = null; }
+  if (updateAdminAuth && KEY !== requestKey) throw new Error('Khóa quản trị đã đổi. Hãy thử lại.');
+  const authError = r.status === 401 && (/^缺少 Authorization|^API key 无效|^Unauthorized$/i.test(data?.detail || '')
+    || !requestKey || path.startsWith('/admin/status') || path === '/admin/apikey');
+  if (authError && updateAdminAuth) setAuth(false);
+  if (r.ok && updateAdminAuth && data !== null) setAuth(true);
+  if (r.ok && data === null) {
+    throw new Error('Ứng dụng chưa trả dữ liệu có thể đọc. Hãy thử lại sau.');
+  }
   if (!r.ok) {
     let msg = '';
     if (data) {
       if (typeof data.detail === 'string') msg = data.detail;
-      else if (Array.isArray(data.detail)) msg = data.detail.map(e => e.msg || 'Invalid value').join('; ');
+      else if (Array.isArray(data.detail)) msg = LANG === 'vi'
+        ? 'Thông tin nhập chưa đúng. Hãy kiểm tra các ô rồi thử lại.'
+        : data.detail.map(e => e.msg || 'Invalid value').join('; ');
+      else if (typeof data.detail?.message === 'string') msg = data.detail.message;
       else if (typeof data.message === 'string') msg = data.message;
       else if (data.error) msg = typeof data.error === 'string' ? data.error : (data.error.message || JSON.stringify(data.error));
     }
@@ -2599,11 +2636,38 @@ async function api(path, opts){
       };
       msg = statusHints[r.status] || ('服务返回了无法解析的响应 (HTTP ' + r.status + ')，请稍后重试或查看服务器日志');
     }
+    if (LANG === 'vi') {
+      msg = authError ? 'Khóa quản trị chưa đúng. Hãy kiểm tra rồi lưu lại.'
+        : friendlyFailure(msg, r.status, data?.error?.code || data?.detail?.code);
+    } else if (r.status === 401) msg = 'API Key 未填写或填写错误';
     const error = new Error(msg || ('HTTP ' + r.status));
     error.status = r.status;
     throw error;
   }
   return data;
+}
+
+function friendlyFailure(message, status, code){
+  const translated = t(String(message || ''));
+  if (LANG !== 'vi') return translated;
+  if (['CLIENT_DAILY_LIMIT', 'QUOTA_EXCEEDED'].includes(code)) {
+    return 'Đã hết lượt sử dụng. Hãy kiểm tra hạn mức của tài khoản.';
+  }
+  if (['QUEUE_FULL', 'CLIENT_PENDING_LIMIT'].includes(code)) {
+    return 'Hàng chờ đã đầy. Hãy đợi vài tác vụ hoàn tất rồi thử lại.';
+  }
+  if (translated && !HAN_RE.test(translated) && !/\bHTTP [45]\d\d\b/.test(translated)) return translated;
+  return ({
+    400: 'Thông tin nhập chưa đúng. Hãy kiểm tra rồi thử lại.',
+    401: 'Kết nối tài khoản cần được kiểm tra lại.',
+    403: 'Bạn chưa có quyền thực hiện thao tác này.',
+    404: 'Không tìm thấy mục này. Hãy làm mới danh sách.',
+    409: 'Mục này vừa thay đổi. Hãy làm mới rồi thử lại.',
+    413: 'Nội dung quá lớn. Hãy giảm kích thước hoặc số lượng tệp.',
+    422: 'Thông tin nhập chưa đúng. Hãy kiểm tra các ô rồi thử lại.',
+    429: 'Đã chạm giới hạn sử dụng. Hãy kiểm tra hạn mức rồi thử lại.',
+    504: 'Chờ phản hồi quá lâu. Hãy kiểm tra kết nối rồi thử lại.',
+  })[status] || 'Chưa xử lý được yêu cầu. Hãy thử lại hoặc kiểm tra tài khoản đã kết nối.';
 }
 
 function esc(s){
@@ -2639,20 +2703,20 @@ function cp(button){
 /* ================= 页签 ================= */
 const uiCopy = {
   navigate:['Chuyển trang','Go to','切换页面'],
-  operations:['Vận hành','Operations','运营'], overview:['Tổng quan','Overview','概览'],
-  clients:['Khóa API','API keys','API 密钥'], usage:['Lịch sử API','API usage','API 用量'],
-  tasks:['Tác vụ','Tasks','任务'], media:['Thư viện media','Media library','媒体库'],
+  operations:['Công việc','Operations','运营'], overview:['Tổng quan','Overview','概览'],
+  clients:['Quyền sử dụng','API keys','API 密钥'], usage:['Lịch sử sử dụng','API usage','API 用量'],
+  tasks:['Tác vụ','Tasks','任务'], media:['Thư viện ảnh và video','Media library','媒体库'],
   connections:['Kết nối AI','AI connections','AI 连接'], official:['API chính thức','Official APIs','官方 API'],
-  cookie:['Tiện ích trình duyệt','Browser extension','浏览器扩展'], integration:['Tích hợp','Integration','集成'],
+  cookie:['Tiện ích trình duyệt','Browser extension','浏览器扩展'], advanced:['Cài đặt nâng cao','Advanced settings','高级设置'],
   docs:['Tài liệu API','API documentation','API 文档'], play:['Thử API','API playground','API 测试'],
   refresh:['Làm mới','Refresh','刷新'], save:['Lưu','Save','保存'], send:['Gửi','Send','发送'],
-  access:['Cấp quyền truy cập API','Grant API access','授予 API 访问权限'],
+  access:['Cấp quyền sử dụng','Grant API access','授予 API 访问权限'],
   accessHelp:['Cấp một khóa cho mỗi khách hàng hoặc ứng dụng. Bạn có thể giới hạn mô hình, tài khoản và số lượt sử dụng.',
               'Give each customer or app its own key. Set model, account and usage limits.',
               '为每位客户或应用分配独立密钥。可限制模型、账号和调用次数。'],
-  manageKeys:['Quản lý khóa','Manage keys','管理密钥'], sharedBase:['Base URL dùng chung','Shared Base URL','通用 Base URL'],
+  manageKeys:['Quản lý khóa','Manage keys','管理密钥'], sharedBase:['Địa chỉ kết nối dùng chung','Shared Base URL','通用 Base URL'],
   copy:['Sao chép','Copy','复制'], providersReady:['Sẵn sàng / đã cấu hình','Ready / configured','就绪 / 已配置'],
-  activeKeys:['Khóa đang bật','Active keys','启用的密钥'], requestsToday:['Lượt API hôm nay','API requests today','今天的 API 调用'],
+  activeKeys:['Khóa đang bật','Active keys','启用的密钥'], requestsToday:['Lượt sử dụng hôm nay','API requests today','今天的 API 调用'],
   activeTasks:['Tác vụ chờ hoặc đang chạy','Queued or running jobs','排队或运行中的任务'],
   providers:['Nhà cung cấp AI','AI providers','AI 服务商'], adminAccess:['Kết nối và khóa quản trị','Connection and admin key','连接与管理密钥'],
   adminAccessHelp:['Dùng khóa quản trị cho bảng điều khiển và tiện ích. Cấp khóa riêng trong mục Khóa API cho ứng dụng và khách hàng.',
@@ -2672,7 +2736,8 @@ const uiCopy = {
   previous:['Trang trước','Previous','上一页'], next:['Trang sau','Next','下一页'],
   cancel:['Hủy','Cancel','取消'], done:['Xong','Done','完成'], copyKey:['Sao chép khóa','Copy key','复制密钥'],
   viewResult:['Xem kết quả','View result','查看结果'],
-  resultPrompt:['Prompt đã lưu','Saved prompt','已保存提示词'],
+  resultPrompt:['Nội dung đã gửi','Saved prompt','已保存提示词'],
+  taskId:['Mã tác vụ','Task ID','任务 ID'], taskInput:['Yêu cầu','Request','提示词'],
   resultOutput:['Phản hồi đã lưu','Saved response','已保存回复'],
   openResult:['Mở tệp kết quả','Open result file','打开结果文件'],
   pendingResult:['Lượt gọi vẫn đang chờ hoặc xử lý.','The request is still queued or processing.','请求仍在排队或处理中。'],
@@ -2729,10 +2794,10 @@ localizeUi();
 
 const pageContexts = {
   workflows: ['Chạy từng mục theo các bước đã thiết lập.', 'Run a saved sequence for each item.', '按已配置的步骤处理每一项。'],
-  overview: ['Theo dõi kết nối AI và việc sử dụng API trên một màn hình.', 'Monitor AI connections and API activity.', '查看 AI 连接与 API 活动。'],
+  overview: ['Theo dõi kết nối AI và lượt sử dụng trên một màn hình.', 'Monitor AI connections and API activity.', '查看 AI 连接与 API 活动。'],
   clients: ['Cấp quyền theo mô hình, tài khoản và hạn mức cho từng khách hàng.', 'Manage model access, accounts and usage limits for each customer.', '管理每位客户的模型、账号和用量限制。'],
   usage: ['Đối chiếu lượt gọi, chi phí AI và số tiền thu theo khóa.', 'Review requests, provider costs and customer charges.', '核对请求、服务商成本和客户费用。'],
-  pool: ['Quản lý tài khoản Muse, proxy và hàng đợi tạo nội dung.', 'Manage Muse accounts, proxies and generation queues.', '管理 Muse 账号、代理和生成队列。'],
+  pool: ['Quản lý tài khoản Muse và hàng chờ tạo nội dung.', 'Manage Muse accounts, proxies and generation queues.', '管理 Muse 账号、代理和生成队列。'],
   openai: ['Dùng phiên web đã đăng nhập để tạo văn bản và ảnh.', 'Use a signed-in web session for text and images.', '使用已登录的网页会话生成文本和图像。'],
   gemini: ['Dùng phiên web đã đăng nhập để tạo văn bản và ảnh.', 'Use a signed-in web session for text and images.', '使用已登录的网页会话生成文本和图像。'],
   official: ['Cấu hình khóa riêng của OpenAI và Google để gọi API văn bản.', 'Configure OpenAI and Google credentials for text APIs.', '配置 OpenAI 和 Google 凭据以调用文本 API。'],
@@ -2749,6 +2814,8 @@ function goTab(name){
 
 function showTab(name, {navigate = false, focus = false} = {}){
   const button = navButtons.find(item => item.dataset.t === name);
+  const advanced = button?.closest('.nav-advanced');
+  if (advanced) advanced.open = true;
   if (!button) return;
   closeMediaPreview();
   if (activeTab === 'clients' && name !== 'clients') $('clientKeyDialog').close();
@@ -3320,15 +3387,21 @@ async function showUsage(id, resultOnly = false) {
   if (request !== usageDetailRequest || activeTab !== tab || authOK === false) return;
   const view = $('usageDetails');
   view.replaceChildren();
+  const stages = {before_send: 'Trước khi gửi', muse_reply: 'Khi Muse phản hồi', delivery_unknown: 'Kiểm tra lại yêu cầu đã gửi'};
+  const advanced = clientElement('details', undefined, 'advanced-settings');
+  advanced.append(clientElement('summary', ui('advanced')));
+  if (item.error_code) usageDetailsText(advanced, 'Mã lỗi', item.error_code);
+  const errorText = item.error && friendlyFailure(item.error, undefined, item.error_code);
   $('usageDialogTitle').textContent = ui(resultOnly ? 'viewResult' : 'usageDetails');
   if (resultOnly) {
     view.append(clientElement('p', item.model + ' · ' + (usageStates[item.status] || item.status), 'hint'));
     renderUsageResult(view, item);
-    if (item.error) usageDetailsText(view, 'Chi tiết lỗi', [item.error_code, item.error].filter(Boolean).join(' · '));
+    if (errorText) usageDetailsText(view, 'Chi tiết lỗi', errorText);
+    if (item.error_code) view.append(advanced);
     $('usageDialog').showModal();
     return;
   }
-  usageDetailsText(view, 'Mã yêu cầu', item.id + ' · ' + item.route);
+  usageDetailsText(advanced, 'Mã yêu cầu và đường dẫn', item.id + ' · ' + item.route);
   usageDetailsText(view, 'Trạng thái', usageStates[item.status] || item.status);
   usageDetailsText(view, 'Thời gian chờ và chạy', item.queue_seconds + ' giây chờ · ' +
                    (item.run_seconds == null ? 'Chưa chạy' : item.run_seconds + ' giây chạy'));
@@ -3344,7 +3417,8 @@ async function showUsage(id, resultOnly = false) {
   ].filter(Boolean);
   usageDetailsText(view, 'Mức sử dụng', quantities.join(' · ') || 'Chưa có số đo');
   const params = Object.entries(item.parameters).map(([name, value]) => name + ' = ' + value);
-  usageDetailsText(view, 'Đầu vào', item.reference_count + ' tệp tham chiếu' + (params.length ? ' · ' + params.join(', ') : ''));
+  if (params.length) usageDetailsText(advanced, 'Thông số yêu cầu', params.join(', '));
+  usageDetailsText(view, 'Tư liệu đã gửi', item.reference_count + ' tệp tham chiếu');
   usageDetailsText(view, 'Tiền thu', clientMoney(item.charge));
   usageDetailsText(view, 'Chi phí AI', clientMoney(item.upstream, true));
   for (const [field, title] of [['charge', 'Giá khách lúc nhận'], ['upstream', 'Giá ước tính lúc nhận']]) {
@@ -3355,9 +3429,9 @@ async function showUsage(id, resultOnly = false) {
   if (item.confirmed_reference_count != null) {
     usageDetailsText(view, 'Tệp tham chiếu được xác nhận', item.confirmed_reference_count + '/' + item.reference_count);
   }
-  const stages = {before_send: 'Trước khi gửi', muse_reply: 'Khi Muse phản hồi', delivery_unknown: 'Cần đối chiếu sau khi gửi'};
-  usageDetailsText(view, 'Chi tiết lỗi', [stages[item.error_stage], item.error_code, item.error].filter(Boolean).join(' · '));
+  usageDetailsText(view, 'Chi tiết lỗi', [stages[item.error_stage], errorText].filter(Boolean).join(' · '));
   renderUsageResult(view, item);
+  view.append(advanced);
   $('usageDialog').showModal();
 }
 
@@ -3916,7 +3990,10 @@ async function copyText(v){
     const ta = document.createElement('textarea');   // 非 https 时的兜底
     ta.value = v; ta.style.position = 'fixed'; ta.style.opacity = '0';
     document.body.appendChild(ta); ta.select();
-    try { document.execCommand('copy'); toast('已复制到剪贴板', 'ok'); }
+    try {
+      if (!document.execCommand('copy')) throw new Error();
+      toast('已复制到剪贴板', 'ok');
+    }
     catch(_){ toast('复制失败，请手动选中复制', 'warn'); }
     ta.remove();
   }
@@ -3954,7 +4031,7 @@ async function rotateKey(){
     const d = await api('/admin/apikey/rotate', {method:'POST'});
     realKey = d.api_key;
     KEY = d.api_key;
-    sessionStorage.setItem(KEY_STORE, KEY);
+    writeStored('sessionStorage', KEY_STORE, KEY);
     $('key').value = KEY;
     keyShown = true; renderKey();
     $('cmdText').textContent = buildCmd($('inBase').value);
@@ -4326,7 +4403,7 @@ async function loadTasks(page = taskPage){
 }
 
 function paintTasks(ts){
-  const translateTaskText = t;
+  const translateTaskText = friendlyFailure;
   const errorLabels = {
     vi: {before_send: 'Dừng trước khi gửi', muse_reply: 'Muse đã phản hồi', delivery_unknown: 'Cần đối chiếu việc gửi',
          references: 'Tệp tham chiếu API đã nhận', confirmed: 'Tệp thấy trong ô nhập'},
@@ -4343,6 +4420,8 @@ function paintTasks(ts){
   if (!ts.length){ $('taskBody').innerHTML = '<tr><td colspan="8" class="empty">暂无任务记录</td></tr>'; return; }
   const openErrors = new Set([...$('taskBody').querySelectorAll('details[data-task-error][open]')]
       .map(detail => detail.dataset.taskError));
+  const openDiagnostics = new Set([...$('taskBody').querySelectorAll('details[data-task-diagnostic][open]')]
+      .map(detail => detail.dataset.taskDiagnostic));
     $('taskBody').innerHTML = ts.map(t => {
       const cls = (t.status === 'succeeded' || t.status === 'completed') ? 'ok' : t.status === 'failed' ? 'bad'
                 : t.status === 'processing' ? 'info' : 'warn';
@@ -4352,7 +4431,7 @@ function paintTasks(ts){
       if (t.result_available === false) out = `<span class="muted">${esc(ui('taskFileMissing'))}</span>`;
       else if (t.result && t.result.url) out = `<a href="${esc(t.result.url)}" target="_blank">查看结果</a> <span class="mono">${fmtBytes(t.result.bytes ?? t.result.size)}</span>`;
       else if (t.error || t.last_error) {
-        const message = translateTaskText(t.error || t.last_error);
+        const message = translateTaskText(t.error || t.last_error, undefined, t.error_code);
         const previous = t.last_error && translateTaskText(t.last_error);
         const detailLabel = LANG === 'vi' ? 'Chi tiết lỗi' : LANG === 'en' ? 'Error details' : '错误详情';
         const previousLabel = LANG === 'vi' ? 'Lỗi ở lần thử gần nhất' : LANG === 'en' ? 'Most recent attempt error' : '最近一次尝试的错误';
@@ -4362,7 +4441,8 @@ function paintTasks(ts){
           <div style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(message)}</div>
           ${Number.isInteger(t.reference_count) ? `<div class="muted">${esc(errorLabels.references)} ${t.reference_count}</div>` : ''}
           ${Number.isInteger(t.confirmed_reference_count) ? `<div class="muted">${esc(errorLabels.confirmed)} ${t.confirmed_reference_count}</div>` : ''}
-          ${t.error_code ? `<div class="mono muted">${esc(t.error_code)}</div>` : ''}
+          ${t.error_code ? `<details data-task-diagnostic="${esc(t.id)}"${openDiagnostics.has(t.id) ? ' open' : ''}>
+            <summary>${esc(ui('advanced'))}</summary><div class="mono muted">${esc(t.error_code)}</div></details>` : ''}
           ${previous && previous !== message ? `<div style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(previousLabel)}: ${esc(previous)}</div>` : ''}
         </details>`;
       }
@@ -4452,10 +4532,17 @@ function openMediaPreview(name){
 }
 
 $('mediaGrid').addEventListener('click', e => {
+  const tile = e.target.closest('.tile');
+  if (!tile) return;
+  if (e.target.closest('[data-delete-media]')) return delSingleMedia(tile.dataset.name);
   const trigger = e.target.closest('[data-play-video]');
   if (!trigger || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
   e.preventDefault();
-  openMediaPreview(trigger.closest('.tile').dataset.name);
+  openMediaPreview(tile.dataset.name);
+});
+
+$('mediaGrid').addEventListener('change', e => {
+  if (e.target.matches('.tile-check')) toggleMediaSelect(e.target.closest('.tile').dataset.name);
 });
 
 function updateMediaSelectionUI(){
@@ -4577,8 +4664,8 @@ async function loadMedia(){
       const isSel = _selectedMedia.has(m.name);
       return `
       <div class="tile ${isSel ? 'selected' : ''}" data-name="${esc(m.name)}">
-        <label class="check-tag" title="勾选以批量操作" onclick="event.stopPropagation()">
-          <input type="checkbox" class="tile-check" ${isSel ? 'checked' : ''} onchange="toggleMediaSelect('${esc(m.name)}')">
+        <label class="check-tag" title="勾选以批量操作">
+          <input type="checkbox" class="tile-check" ${isSel ? 'checked' : ''}>
         </label>
         ${m.kind === 'video'
           ? `<button type="button" class="thumb" data-play-video aria-label="播放视频" title="播放视频">
@@ -4591,8 +4678,8 @@ async function loadMedia(){
           <div style="margin-top:3px">${fmtBytes(m.bytes)} · ${fmtTime(m.mtime)}</div>
           <div class="ac">
             <a class="badge info" href="${esc(m.url)}" target="_blank" ${m.kind === 'video' ? 'data-play-video' : ''}>打开</a>
-            <a class="badge mute" href="${esc(m.url)}" download>下载</a>
-            <a class="badge bad" href="javascript:void(0)" onclick="delSingleMedia('${esc(m.name)}')">删除</a>
+            <a class="badge mute" href="${esc(m.download_url || m.url)}" download>下载</a>
+            <button type="button" class="badge bad" data-delete-media>删除</button>
           </div>
         </div>
       </div>`;
@@ -4793,8 +4880,7 @@ function runVideo(){
 }
 
 /* ================= 官方仓库实时更新检测、弹窗通知与一键升级 ================= */
-let _notifiedSha = localStorage.getItem('muse2api_notified_sha') || '';
-let _dismissedSha = localStorage.getItem('muse2api_dismissed_sha') || '';
+let _dismissedSha = readStored('localStorage', 'muse2api_dismissed_sha');
 let _lastRepoStatus = null;
 
 function toggleRepoPanel(){
@@ -4808,14 +4894,14 @@ function toggleRepoPanel(){
 function dismissUpdateBanner(){
   if (_lastRepoStatus && _lastRepoStatus.remote_sha){
     _dismissedSha = _lastRepoStatus.remote_sha;
-    localStorage.setItem('muse2api_dismissed_sha', _dismissedSha);
+    writeStored('localStorage', 'muse2api_dismissed_sha', _dismissedSha);
   }
   $('updateBanner').classList.remove('show');
 }
 
 async function loadRepoStatus(force){
   try{
-    let s = await api('/admin/update/check' + (force ? '?force=true' : ''));
+    let s = await api('/admin/update/check' + (force ? '?force=true' : ''), {authKey:'', timeout:45000});
     _lastRepoStatus = s;
     for (const id of ['repoHomeLink','repoPanelLink']) {
       const link=$(id); if(link){link.href=s.repo_url;link.title=s.repo_url;}
@@ -4998,6 +5084,7 @@ async function loadStatus(){
 }
 
 function clearAdminView(){
+  window.dispatchEvent(new Event('mac2api:reset'));
   realKey = '';
   keyShown = false;
   renderKey();

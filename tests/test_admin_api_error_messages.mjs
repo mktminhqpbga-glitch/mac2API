@@ -26,10 +26,13 @@ const lastBrace = body.lastIndexOf("}");
 assert.notEqual(lastBrace, -1);
 body = body.slice(0, lastBrace + 1);
 
-function makeApi({ status, text }) {
+function makeApi({ status, text, lang = "zh", setAuth = () => {} }) {
   const ctx = {
     KEY: "test-key",
-    setAuth: () => {},
+    LANG: lang,
+    t: value => value,
+    HAN_RE: /[㐀-鿿]/,
+    setAuth,
     fetch: async () => ({ status, ok: status >= 200 && status < 300, text: async () => text }),
   };
   vm.createContext(ctx);
@@ -106,6 +109,23 @@ await run("success response passthrough unchanged", async () => {
   const api = makeApi({ status: 200, text: payload });
   const data = await api("/admin/accounts/1/quota", { method: "POST" });
   assert.strictEqual(JSON.stringify(data), payload);
+});
+
+await run("Vietnamese failures explain the next action and omit HTTP codes", async () => {
+  const api = makeApi({status: 429, text: '{"detail":{"code":"CLIENT_DAILY_LIMIT","message":"Limit"}}', lang: "vi"});
+  await assert.rejects(() => api("/admin/workflows"), {message: "Đã hết lượt sử dụng. Hãy kiểm tra hạn mức của tài khoản."});
+  const invalid = makeApi({status: 422, text: '{"detail":"Có mục [ ... ] chưa đóng."}', lang: "vi"});
+  await assert.rejects(() => invalid("/admin/workflows"), {message: "Có mục [ ... ] chưa đóng."});
+});
+
+await run("a public update check or an error cannot mark the dashboard signed in", async () => {
+  const calls = [];
+  const setAuth = value => calls.push(value);
+  await makeApi({status: 200, text: '{"ok":true}', setAuth})("/admin/update/check");
+  await assert.rejects(() => makeApi({status: 503, text: cloudflareHtml, setAuth})("/admin/status"));
+  assert.deepEqual(calls, []);
+  await makeApi({status: 200, text: '{"ok":true}', setAuth})("/admin/status");
+  assert.deepEqual(calls, [true]);
 });
 
 console.log("ALL PASS");

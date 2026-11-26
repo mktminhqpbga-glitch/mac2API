@@ -1,5 +1,11 @@
 # Nhật ký và bàn giao mac2API
 
+## 1.6.14
+
+- Luồng tự động đọc lại tiến độ sau mất kết nối và tìm lại yêu cầu đã lưu nếu tải lại trang giữa lúc bấm Chạy. Nút Chạy lại tiếp tục kiểm tra tác vụ ảnh hoặc video đã gửi khi chưa đọc được kết quả.
+- Giao diện giữ các thao tác chính ở màn hình làm việc. Địa chỉ kết nối, thời gian chờ và mã lỗi hiển thị trong **Cài đặt nâng cao**.
+- Bảng điều khiển vẫn mở được khi trình duyệt chặn lưu dữ liệu cục bộ. Tệp ảnh và video tải xuống được khi dùng địa chỉ kết nối công khai.
+
 ## Luồng tự động và rà soát vận hành
 
 - Bảng quản trị chạy tuần tự từng mục theo các bước văn bản, ảnh hoặc video, kèm ngữ cảnh chung và kết quả bước trước. Tiến độ được lưu, lỗi được cô lập theo mục và có thể chạy lại đúng bước.

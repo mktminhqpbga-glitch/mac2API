@@ -40,6 +40,16 @@ class WorkflowRequest(BaseModel):
 class WorkflowStepError(RuntimeError):
     """A displayable failure for one step."""
 
+    def __init__(self, message, *, reuse_task=False, check_before_retry=False):
+        super().__init__(message)
+        self.reuse_task = reuse_task
+        self.check_before_retry = check_before_retry
+
+
+class WorkflowStorageError(HTTPException):
+    def __init__(self):
+        super().__init__(507, "Không lưu được tiến độ. Kiểm tra dung lượng ổ đĩa rồi thử lại.")
+
 
 def split_workflow_input(value, split):
     value = value.strip()
@@ -108,12 +118,24 @@ class Workflows:
     def list(self):
         if not self.directory.exists():
             return []
+        files = []
+        for path in self.directory.glob("*.json"):
+            try:
+                files.append((path.stat().st_mtime, path))
+            except OSError:
+                continue
         runs = []
-        for path in sorted(self.directory.glob("*.json"), key=lambda file: file.stat().st_mtime, reverse=True)[:30]:
+        for _, path in sorted(files, reverse=True):
             run = _read(str(path), None)
-            if isinstance(run, dict):
-                runs.append({"id": run["id"], "title": run["config"]["title"], "state": run["state"],
-                             "updated_at": run["updated_at"]})
+            if not isinstance(run, dict) or not isinstance(run.get("config"), dict):
+                continue
+            if not {"id", "state", "updated_at"} <= run.keys() or not isinstance(run["updated_at"], (float, int)):
+                continue
+            runs.append({"id": run["id"], "title": run["config"].get("title") or "Luồng đã lưu",
+                         "state": "paused" if run["id"] in self.errors else run["state"],
+                         "updated_at": run["updated_at"]})
+            if len(runs) == 30:
+                break
         return runs
 
     def save(self, run):
@@ -121,7 +143,7 @@ class Workflows:
         try:
             _write(str(self.directory / (run["id"] + ".json")), run)
         except OSError as exc:
-            raise HTTPException(507, "Không lưu được tiến độ luồng vào ổ đĩa.") from exc
+            raise WorkflowStorageError() from exc
         self.errors.pop(run["id"], None)
 
     def create(self, request, execute):
@@ -186,7 +208,13 @@ class Workflows:
                 raise HTTPException(404, "Không tìm thấy bước này.") from exc
             if state["status"] != "failed":
                 raise HTTPException(409, "Chỉ có thể chạy lại bước đang báo lỗi.")
-            run["items"][item]["steps"][step] = {"status": "queued", "attempt": state["attempt"] + 1}
+            if state.get("reuse_task"):
+                next_state = {"status": "queued", "attempt": state["attempt"]}
+                if state.get("task_id"):
+                    next_state["task_id"] = state["task_id"]
+            else:
+                next_state = {"status": "queued", "attempt": state["attempt"] + 1}
+            run["items"][item]["steps"][step] = next_state
             run["state"] = "running"
         self.save(run)
         if run["state"] == "running":
@@ -227,7 +255,8 @@ class Workflows:
             state = run["items"][item_index]["steps"][index]
             if state["status"] == "running" and run["config"]["steps"][index]["kind"] == "text":
                 self.update_step(run_id, item_index, index, status="failed",
-                                 error="Bước văn bản đã bị gián đoạn. Kiểm tra trước khi chạy lại.")
+                                 error="Bước văn bản đã bị gián đoạn. Kiểm tra trước khi chạy lại.",
+                                 check_before_retry=True)
                 continue
             self.update_step(run_id, item_index, index, status="running")
 
@@ -237,8 +266,9 @@ class Workflows:
             try:
                 result = await execute(run, item_index, index, checkpoint)
             except WorkflowStepError as exc:
-                self.update_step(run_id, item_index, index, status="failed", error=str(exc))
-            except HTTPException:
+                self.update_step(run_id, item_index, index, status="failed", error=str(exc),
+                                 reuse_task=exc.reuse_task, check_before_retry=exc.check_before_retry)
+            except WorkflowStorageError:
                 # Persistence failed while remembering a newly accepted task. The
                 # saved running step can recover with its original receipt key.
                 raise
@@ -261,7 +291,8 @@ class Workflows:
                     if state["status"] != "running":
                         continue
                     if run["config"]["steps"][index]["kind"] == "text":
-                        state.update(status="failed", error="mac2API đã khởi động lại giữa bước. Kiểm tra trước khi chạy lại.")
+                        state.update(status="failed", check_before_retry=True,
+                                     error="mac2API đã khởi động lại giữa bước. Kiểm tra trước khi chạy lại.")
                     else:
                         state["status"] = "queued"
             run["state"] = "paused"

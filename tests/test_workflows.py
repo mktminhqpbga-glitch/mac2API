@@ -37,7 +37,7 @@ async def check(data_dir):
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app.app), base_url="http://127.0.0.1") as client:
         async def await_state(run_id, want):
-            for _ in range(160):
+            for _ in range(320):
                 response = await client.get("/admin/workflows/" + run_id, headers=headers)
                 assert response.status_code == 200, response.text
                 run = response.json()
@@ -104,6 +104,11 @@ async def check(data_dir):
             done = await await_state(run_id, "completed")
             result = done["items"][0]["steps"][0]
             assert result["task_id"].startswith("task_") and "access=a." in result["result"]["url"]
+            preview = await client.get(result["result"]["url"])
+            download = await client.get(result["result"]["download_url"])
+            assert preview.content == download.content == image.read_bytes()
+            assert "content-disposition" not in preview.headers
+            assert download.headers["content-disposition"].startswith("attachment;")
             assert generate.call_count == 1
             interrupted = app.workflows.get(run_id)
             interrupted["state"] = result["status"] = "running"
@@ -116,6 +121,32 @@ async def check(data_dir):
             assert (await client.post(f"/admin/workflows/{run_id}/resume", headers=headers)).status_code == 200
             await await_state(run_id, "completed")
             assert generate.call_count == 1, "recovery should read the original task, never create another image"
+
+        original_request = httpx.ASGITransport.handle_async_request
+        poll_failures = 0
+
+        async def interrupted_poll(transport, req):
+            nonlocal poll_failures
+            if req.method == "GET" and req.url.path.startswith("/v1/images/tasks/") and poll_failures < 3:
+                poll_failures += 1
+                return httpx.Response(503)
+            return await original_request(transport, req)
+
+        run_id = "e" * 32
+        with patch.object(app, "_run_generation", return_value=(
+                {"filename": image.name, "size": image.stat().st_size, "kind": "image",
+                 "path": str(image)}, "fixture")) as generate, \
+             patch.object(httpx.ASGITransport, "handle_async_request", new=interrupted_poll):
+            response = await client.post("/admin/workflows", headers=headers, json={
+                "id": run_id, "input": "giữ biên nhận", "steps": [{"name": "Ảnh", "kind": "image"}]})
+            assert response.status_code == 201, response.text
+            failed = (await await_state(run_id, "errors"))["items"][0]["steps"][0]
+            assert failed["reuse_task"] and failed["task_id"] and generate.call_count == 1
+            response = await client.post(f"/admin/workflows/{run_id}/retry", headers=headers, json={"item": 0, "step": 0})
+            assert response.status_code == 200
+            done = (await await_state(run_id, "completed"))["items"][0]["steps"][0]
+            assert done["task_id"] == failed["task_id"] and done["attempt"] == failed["attempt"]
+            assert generate.call_count == 1
 
         video = Path(app.CFG.media_dir) / "workflow-fixture.mp4"
         video.write_bytes(b"fixture-video")

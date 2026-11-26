@@ -1,8 +1,9 @@
 {
-  "version": "1.6.13",
+  "version": "1.6.14",
   "updated_at": "2026-11-26",
   "repo": "https://github.com/mktminhqpbga-glitch/mac2API",
   "highlights": [
+    "工作流断线后重新读取进度，图片和视频优先恢复原任务。高级设置收纳连接参数和错误代码。",
     "管理页面支持逐项运行工作流，保存进度并重新运行失败步骤。",
     "扩展 1.0.8 可直接使用已登录的 Chrome 个人资料运行 ChatGPT 和 Gemini。手动安装的扩展可在原个人资料中重新加载。",
     "提供 Muse、ChatGPT 和 Gemini 的独立 API，支持按用户密钥限制服务，以及隔离任务与媒体访问。",
@@ -11,6 +12,7 @@
     "更新越南语界面、Muse 参考文件检查和 MacFlow/Toonflow 媒体适配器。"
   ],
   "highlights_en": [
+    "Reconnect to saved workflow progress and recover the original image or video task. Connection settings and error codes are under Advanced settings.",
     "Run multi-step batches in the dashboard, resume saved runs, and retry an individual failed step.",
     "Extension 1.0.8 runs ChatGPT and Gemini directly in signed-in Chrome profiles. Reload unpacked extensions in every browser profile where they are installed.",
     "Muse, ChatGPT and Gemini have separate API paths, provider-scoped user keys, and isolated task and media access.",
@@ -19,6 +21,7 @@
     "Includes the Vietnamese dashboard, Muse reference checks, and MacFlow/Toonflow media adapters."
   ],
   "highlights_vi": [
+    "Luồng tự động kết nối lại để đọc tiến độ đã lưu và kiểm tra tiếp tác vụ ảnh, video đã gửi. Thông số kết nối và mã lỗi nằm trong Cài đặt nâng cao.",
     "Luồng tự động lưu tiến độ từng mục và cho chạy lại đúng bước lỗi.",
     "Tiện ích 1.0.8 chạy ChatGPT và Gemini trực tiếp trong hồ sơ Chrome đã đăng nhập. Tải lại tiện ích đã giải nén trong từng hồ sơ đã cài.",
     "Muse, ChatGPT và Gemini có đường dẫn API riêng. Khóa người dùng giới hạn quyền truy cập dịch vụ, tác vụ và tệp kết quả.",
