@@ -1,5 +1,10 @@
 # Nhật ký và bàn giao mac2API
 
+## 1.6.15
+
+- Tiện ích Chrome 1.0.9 có nút **Kiểm tra kết nối**. Khi nhập Muse, tiện ích xác minh địa chỉ và khóa quản trị, rồi chỉ báo thành công khi nhận được mã tài khoản do mac2API trả về.
+- Sau khi mac2API khởi động lại, tác vụ ảnh và video đang chờ có dữ liệu tạm sẽ tiếp tục với mã cũ. Tác vụ có thể đã gửi cần đối chiếu. Tác vụ dùng khóa đã tắt lưu nội dung được báo dừng trước khi gửi.
+
 ## 1.6.14
 
 - Luồng tự động đọc lại tiến độ sau mất kết nối và tìm lại yêu cầu đã lưu nếu tải lại trang giữa lúc bấm Chạy. Nút Chạy lại tiếp tục kiểm tra tác vụ ảnh hoặc video đã gửi khi chưa đọc được kết quả.

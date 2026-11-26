@@ -84,3 +84,4 @@ data/api-clients.json
 data/api-usage.sqlite3*
 
 data/workflows/
+data/pending-media/

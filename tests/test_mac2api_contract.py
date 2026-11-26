@@ -341,10 +341,13 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
             await app._startup()
             try:
                 worker.assert_not_called()
-                for task in (first, second):
-                    restored = app.store.get_task(task["id"])
-                    self.assertEqual(restored["status"], "interrupted")
-                    self.assertTrue(restored["needs_reconcile"])
+                unrestored = app.store.get_task(first["id"])
+                self.assertEqual(unrestored["status"], "interrupted")
+                self.assertTrue(unrestored["needs_reconcile"])
+                unsent = app.store.get_task(second["id"])
+                self.assertEqual(unsent["status"], "failed")
+                self.assertEqual(unsent["error_code"], "SERVICE_RESTARTED_BEFORE_SEND")
+                self.assertFalse(unsent["needs_reconcile"])
                 receipt = await self.http.get("/v1/tasks/by-request", headers={**self.a, "Idempotency-Key": key})
                 self.assertEqual(receipt.json()["status"], "interrupted")
             finally:

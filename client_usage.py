@@ -174,7 +174,7 @@ class ClientUsage:
             db.execute("""UPDATE usage SET input=NULL, output=NULL, asset=NULL
                           WHERE expires_at<=? AND (input IS NOT NULL OR output IS NOT NULL OR asset IS NOT NULL)""", (time.time(),))
 
-    def reconcile(self, tasks, *, restarting=False):
+    def reconcile(self, tasks, *, restarting=False, resuming=()):
         with self._database() as db:
             pending = db.execute("SELECT id FROM usage WHERE status IN ('queued','processing')").fetchall()
         for row in pending:
@@ -191,7 +191,7 @@ class ClientUsage:
             elif status in ("failed", "cancelled", "interrupted"):
                 self.finish(row["id"], status, code=task.get("error_code"),
                             error=redact_content(task.get("error")), ended_at=ended_at)
-            elif restarting:
+            elif restarting and row["id"] not in resuming:
                 self.finish(row["id"], "interrupted", code="SERVICE_RESTARTED",
                             error="Dịch vụ đã khởi động lại. Cần đối chiếu kết quả.")
 

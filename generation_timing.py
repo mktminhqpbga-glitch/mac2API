@@ -3,10 +3,13 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+import re
 import tempfile
 import threading
 import time
 from pydantic import BaseModel, ConfigDict, Field
+
+from store import _write
 
 log = logging.getLogger("muse2api")
 
@@ -46,12 +49,64 @@ class TaskNotQueued(Exception):
     """The worker must exit before sending content upstream."""
 
 
+class PendingMedia(BaseModel):
+    prompt: str
+    model: str | None
+    timeout: int
+    references: list[str]
+
+
+class PendingMediaStore:
+    """Keep resumable input separate from public task records."""
+
+    def __init__(self, directory):
+        self.directory = Path(directory)
+
+    def _path(self, task_id):
+        if not re.fullmatch(r"task_[a-f0-9]{20}", task_id):
+            raise ValueError("Invalid task ID")
+        return self.directory / (task_id + ".json")
+
+    def save(self, task_id, payload):
+        self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        _write(str(self._path(task_id)), payload.model_dump())
+
+    def exists(self, task_id):
+        try:
+            path = self._path(task_id)
+            return path.is_file() and not path.is_symlink()
+        except (OSError, ValueError):
+            return False
+
+    def load(self, task_id):
+        return PendingMedia.model_validate_json(self._path(task_id).read_bytes())
+
+    def discard(self, task_id):
+        try:
+            self._path(task_id).unlink(missing_ok=True)
+        except (OSError, ValueError):
+            log.warning("Không dọn được dữ liệu tạm của tác vụ %s.", task_id)
+
+    def prune(self, queued_ids):
+        try:
+            for path in self.directory.iterdir():
+                if path.suffix != ".json" or path.stem not in queued_ids:
+                    try:
+                        path.unlink()
+                    except OSError:
+                        log.warning("Không dọn được một tệp dữ liệu hàng chờ.")
+        except FileNotFoundError:
+            pass
+        except OSError:
+            log.warning("Không đọc được thư mục dữ liệu hàng chờ.")
+
+
 class TaskTiming:
     """Store queue, generation and total durations with consistent meanings."""
-    def __init__(self, store, task_id):
+    def __init__(self, store, task_id, already_queued=0.0):
         self.store, self.task_id = store, task_id
-        self.created = time.monotonic()
-        self.queue_elapsed = 0.0
+        self.created = time.monotonic() - already_queued
+        self.queue_elapsed = already_queued
         self.started = False
 
     def queued(self, seconds):

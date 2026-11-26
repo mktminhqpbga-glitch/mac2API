@@ -283,14 +283,15 @@ async def check(source, home):
         full = await client.post("/v1/images/tasks", json={"prompt": "queue full"})
         assert full.status_code == 429
         print("bounded_queue=PASS")
-        pending = module.store.create_task("image", "interrupted fixture")
+        pending = module.store.create_task("image", "legacy queued fixture")
         await module._startup()
         try:
             restored = module.store.get_task(pending["id"])
-            assert restored["status"] == "interrupted" and restored["needs_reconcile"]
+            assert restored["status"] == "failed" and not restored["needs_reconcile"]
+            assert restored["error_stage"] == "before_send"
         finally:
             await module._shutdown()
-        print("restart_preserves_receipts_for_reconciliation=PASS")
+        print("restart_reports_legacy_queued_task_stopped_before_sending=PASS")
     print("PASS async image API regression")
 
 

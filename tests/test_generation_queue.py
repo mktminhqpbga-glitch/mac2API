@@ -110,6 +110,62 @@ class GenerationQueueTests(unittest.TestCase):
         self.assertEqual(failed["id"], task["id"])
         self.assertEqual(app.store.get_task(task["id"])["status"], "failed")
 
+    def test_restart_restores_queued_media_without_resending_inflight_work(self):
+        retained = app.store.create_client("retained fixture", ["muse"], history_days=1)
+        no_history = app.store.create_client("private fixture", ["muse"], history_days=0)
+        image = app.ImageRequest(prompt="fixture image", model="muse/image", timeout=30)
+        video = app.VideoRequest(prompt="fixture video", model="muse/video", timeout=40)
+        reference = "data:image/png;base64,ZmFrZQ=="
+        hold = lambda task, *_args: task
+        with patch.object(app, "_start_media_worker", side_effect=hold), \
+             patch.object(app, "_prepare_reference_images", return_value=[reference]):
+            img_id = json.loads(app.create_image_task(image, "restart-image", _=retained).body)["id"]
+            vid_id = asyncio.run(app.create_video(video, _=True))["id"]
+            private_id = json.loads(app.create_image_task(image, "restart-private", _=no_history).body)["id"]
+            sent_id = asyncio.run(app.create_video(video, _=True))["id"]
+            cancelled_id = asyncio.run(app.create_video(video, _=True))["id"]
+        app.store.transition_task(sent_id, "queued", status="processing", started_at=time.time())
+        app._cancel_queued_task(cancelled_id)
+        self.assertTrue(app.PENDING_MEDIA.exists(img_id))
+        self.assertFalse(app.PENDING_MEDIA.exists(private_id))
+        self.assertFalse(app.PENDING_MEDIA.exists(cancelled_id))
+        self.assertNotIn(reference, Path(app.CFG.tasks_file).read_text())
+
+        def run_inline(task, owner, worker, _job=None):
+            app._generate_owned(owner, worker)
+            return task
+
+        def generate(prompt, kind, timeout, *, reference_images, on_acquired, **options):
+            self.assertIn("fixture " + kind, prompt)
+            self.assertEqual(reference_images, [reference])
+            self.assertEqual(timeout, 30 if kind == "image" else 40)
+            self.assertIn("already_queued", options)
+            on_acquired()
+            return {"filename": f"{kind}.mock", "size": 12, "kind": kind}, self.accounts[0]["id"]
+
+        reopened = store.Store(app.CFG)
+        with patch.object(app, "store", reopened), patch.object(app, "_start_media_worker", side_effect=run_inline), \
+             patch.object(app, "_run_generation", side_effect=generate) as worker:
+            queued = app._recover_media_tasks()
+            self.assertEqual({task["id"] for task in queued}, {img_id, vid_id})
+            app.client_usage.reconcile(reopened.tasks, restarting=True, resuming={img_id, vid_id})
+            self.assertEqual(app.client_usage.detail(img_id, admin=True)["status"], "queued")
+            app._resume_media_tasks(queued)
+            self.assertEqual(worker.call_count, 2)
+            self.assertEqual(reopened.get_task(img_id)["status"], "completed")
+            self.assertEqual(reopened.get_task(vid_id)["status"], "completed")
+            self.assertEqual(reopened.get_task(cancelled_id)["status"], "cancelled")
+            self.assertTrue(reopened.get_task(sent_id)["needs_reconcile"])
+            self.assertEqual(reopened.get_task(sent_id)["status"], "interrupted")
+            self.assertEqual(reopened.get_task(private_id)["error_stage"], "before_send")
+            self.assertFalse(reopened.get_task(private_id)["needs_reconcile"])
+            self.assertEqual(app.client_usage.detail(img_id, admin=True)["status"], "completed")
+            self.assertEqual(app.client_usage.detail(private_id, admin=True)["charge"], 0)
+            reused = json.loads(app.create_image_task(image, "restart-image", _=retained).body)
+            self.assertEqual(reused["id"], img_id)
+            self.assertEqual(worker.call_count, 2)
+            self.assertFalse(list(app.PENDING_MEDIA.directory.iterdir()))
+
     def test_expired_base64_result_reports_gone(self):
         req = app.ImageRequest(prompt="fixture", response_format="b64_json")
         result = {"filename": "already-pruned.png", "kind": "image", "size": 10}

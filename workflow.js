@@ -176,6 +176,7 @@ function selectRun(id) {
 }
 
 function renderRun(run, force = false) {
+  if (authOK === false) return;
   if (lastRun?.id === run.id && (lastRun.updated_at > run.updated_at ||
       (!force && lastRun.updated_at === run.updated_at &&
        lastRun.state === run.state && lastRun.error === run.error))) return;
@@ -215,7 +216,17 @@ function renderRun(run, force = false) {
       const blocked = status.status === 'queued' && statuses.slice(0, stepIndex).includes('failed');
       row.append(element('strong', step.name), badge(blocked ? 'blocked' : status.status));
       if (status.status === 'failed') {
-        row.append(element('p', friendlyFailure(status.error)), button('Chạy lại bước này',
+        row.append(element('p', friendlyFailure(status.error)));
+        if (status.check_before_retry && status.task_id) {
+          row.append(button('Xem tác vụ đã gửi', () => {
+            byId('taskProvider').value = '';
+            byId('taskState').value = '';
+            byId('taskSearch').value = status.task_id;
+            byId('taskSearch').dispatchEvent(new Event('input'));
+            goTab('tasks');
+          }));
+        }
+        row.append(button('Chạy lại bước này',
           () => {
             if (status.check_before_retry && !confirm(
               'Yêu cầu trước có thể đang được xử lý. Bạn đã kiểm tra và muốn gửi lại bước này?')) return;
@@ -268,7 +279,7 @@ function renderResult(result, title, filename) {
 async function refreshRun(force = false) {
   const id = selected;
   const version = viewVersion;
-  if (!id || busy) return;
+  if (!id || busy || authOK === false) return;
   const run = await api('/admin/workflows/' + id);
   if (id === selected && version === viewVersion) {
     renderRun(run, force);
@@ -297,18 +308,18 @@ function setPoll() {
 
 async function loadHistory({recoverPending = false} = {}) {
   const version = viewVersion;
-  const {runs} = await api('/admin/workflows');
-  if (version !== viewVersion) return;
   const pending = recoverPending ? readLocal('pending', {}) : {};
+  const {runs} = await api('/admin/workflows');
+  if (version !== viewVersion || authOK === false || (recoverPending && busy)) return;
   const preferred = pending.id || selected;
   if (preferred && (!runs.some(run => run.id === preferred) || pending.id)) {
     try {
       const run = await api('/admin/workflows/' + encodeURIComponent(preferred));
-      if (version !== viewVersion) return;
+      if (version !== viewVersion || authOK === false || (recoverPending && busy)) return;
       if (!runs.some(entry => entry.id === run.id)) runs.unshift({
         id: run.id, state: run.state, title: run.config.title,
       });
-      if (pending.id) {
+      if (pending.id && readLocal('pending', {}).id === pending.id) {
         writeLocal('pending', null);
         selectRun(run.id);
         renderRun(run, true);
@@ -318,6 +329,7 @@ async function loadHistory({recoverPending = false} = {}) {
       if (error.status !== 404) throw error;
     }
   }
+  if (version !== viewVersion || authOK === false) return;
   if (!runs.some(run => run.id === selected)) selectRun(runs[0]?.id || null);
   byId('workflowRunSelect').replaceChildren(...runs.map(run => new Option(
     run.title + ' · ' + (states[run.state]?.[0] || 'Đã lưu'), run.id)));
@@ -443,9 +455,11 @@ function initialize() {
 
 export async function loadWorkflows() {
   if (!loaded) initialize();
+  if (authOK === false) return;
   const version = viewVersion;
   try {
     await loadHistory({recoverPending: !busy});
+    if (version !== viewVersion || authOK === false) return;
     await refreshRun(true);
     if (version !== viewVersion) return;
     historyUnavailable = false;

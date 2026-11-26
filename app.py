@@ -67,7 +67,7 @@ from engine import (ESSENTIAL_COOKIES, MAX_REFERENCE_IMAGE_BYTES,
                     MuseModelRefusalError, MusePostSendError, RefImageSafetyError, reference_kind)
 from engine import MusePageUnavailable, MuseProxyError, MuseReferenceUploadError, MuseSessionUnavailable
 from store import ClientRevisionConflict, Store, account_expiry, min_expiry
-from generation_timing import QueuePolicy, QueueSettings, TaskNotQueued, TaskTiming
+from generation_timing import PendingMedia, PendingMediaStore, QueuePolicy, QueueSettings, TaskNotQueued, TaskTiming
 from managed_web import ManagedWebAccounts, visible_chrome_available
 from proxy import normalize_server, request_proxy_context, split_proxy_url
 from media_storage import CAPACITY_BYTES, CLEANUP_BYTES, delete_media_file, media_entries, media_owner, new_media_name, save_media
@@ -242,8 +242,8 @@ class WebAccountChanged(Exception):
 
 
 def _run_web_generation(provider, prompt, *, image, timeout, on_acquired=None, on_queue=None, queue_guard=None,
-                        allowed_accounts=None, on_account=None):
-    queued_at = time.monotonic()
+                        allowed_accounts=None, on_account=None, already_queued=0.0):
+    queued_at = time.monotonic() - already_queued
     queue_timeout = QUEUE_POLICY.settings()["queue_timeout"]
     deadline = queued_at + queue_timeout if queue_timeout else None
     while True:
@@ -469,6 +469,7 @@ class AccountPoolManager:
 GEN_LOCK = ConcurrencyLock(limit=CFG.max_concurrency)
 ACCOUNT_POOL = AccountPoolManager(store)
 QUEUE_POLICY = QueuePolicy(os.path.join(CFG.data_dir, "generation-queue.json"))
+PENDING_MEDIA = PendingMediaStore(os.path.join(CFG.data_dir, "pending-media"))
 
 
 def _wait_for_generation_slot(timeout, guard):
@@ -1930,7 +1931,7 @@ def _run_generation(prompt: str, kind: str, timeout: int,
                     reference_image: str | None = None,
                     reference_images: list[str] | None = None,
                     on_acquired=None, on_account=None, on_queue=None, on_error=None,
-                    queue_guard=None, allowed_accounts=None) -> tuple[dict, str | None]:
+                    queue_guard=None, allowed_accounts=None, already_queued=0.0) -> tuple[dict, str | None]:
     def check_queue():
         if queue_guard:
             queue_guard()
@@ -1945,11 +1946,13 @@ def _run_generation(prompt: str, kind: str, timeout: int,
         return _run_generation_locked(
             prompt, kind, timeout, account_id, on_progress, reference_image, reference_images,
             on_acquired=on_acquired, on_account=on_account, on_queue=on_queue, on_error=on_error,
-            queue_timeout=queue_timeout, queue_guard=queue_guard, allowed_accounts=allowed_accounts,
+            queued=already_queued, queue_timeout=queue_timeout, queue_guard=queue_guard, allowed_accounts=allowed_accounts,
             pair_slot=True,
         )
-    t0 = time.monotonic()
-    acquired = _wait_for_generation_slot(queue_timeout, check_queue if queue_guard else None)
+    t0 = time.monotonic() - already_queued
+    remaining = queue_timeout - already_queued if queue_timeout else 0
+    acquired = (not queue_timeout or remaining > 0) and _wait_for_generation_slot(
+        remaining, check_queue if queue_guard else None)
     queued = time.monotonic() - t0
     _generation_callback(on_queue, queued)
     if not acquired:
@@ -2395,6 +2398,7 @@ def _cancel_queued_task(task_id):
     except OSError as exc:
         raise HTTPException(507, "Không lưu được trạng thái hủy.", headers=NO_STORE) from exc
     if cancelled:
+        PENDING_MEDIA.discard(task_id)
         ClientJob(client_usage, task_id, False).record("finish", "cancelled")
         return JSONResponse({"task_id": task_id, "status": "cancelled", "cancelled": True},
                             headers=NO_STORE)
@@ -2421,17 +2425,25 @@ def _media_parameters(req):
             for key in fields if (value := getattr(req, key, None)) is not None}
 
 
-def _admit_media_task(kind, req, prompt, route, owner, references, **metadata):
+def _admit_media_task(kind, req, payload, route, owner, **metadata):
     task_id = "task_" + uuid.uuid4().hex[:20]
     job = _begin_client_job(owner, req.model, kind, route, job_id=task_id, prompt=req.prompt,
-                            references=references, parameters=_media_parameters(req))
+                            references=len(payload.references), parameters=_media_parameters(req))
     private = bool(job and job.private)
+    resumable = job is None or job.capture
     try:
+        if resumable:
+            try:
+                PENDING_MEDIA.save(task_id, payload)
+            except OSError as exc:
+                raise HTTPException(507, "Không lưu được dữ liệu hàng chờ. Hãy kiểm tra ổ đĩa.") from exc
         task = _create_media_task(kind, "" if private else req.prompt, task_id=task_id, owner=owner,
-                                  reference_count=references, private_content=private,
-                                  **({} if private else {"api_prompt": prompt}),
+                                  reference_count=len(payload.references), private_content=private,
+                                  **({} if private else {"api_prompt": payload.prompt}),
                                   **metadata)
     except BaseException:
+        if resumable:
+            PENDING_MEDIA.discard(task_id)
         if job:
             job.record("discard")
         raise
@@ -2540,6 +2552,7 @@ def _start_media_worker(task, owner, worker, job=None):
     except (OSError, RuntimeError):
         error = RuntimeError("Không thể khởi động tác vụ trên máy chủ.")
         _finish_job_error(job, error)
+        PENDING_MEDIA.discard(task["id"])
         return _fail_media_task(TaskTiming(store, task["id"]), error) or task
     return task
 
@@ -2584,51 +2597,49 @@ def _fail_media_task(timing, exc):
     return store.get_task(timing.task_id)
 
 
-def _queue_image(req: ImageRequest, prompt: str, reference_images: list[str], *, owner=None, submission=None,
-                 route="/v1/images/tasks"):
-    web_provider = _image_module(req)
-    provider = web_provider or "muse"
-    with MEDIA_ADMISSION_LOCK:
-        tasks = store.tasks.values()
-        existing = _replayed_media_task(tasks, "image", provider, owner, submission, legacy=(req, reference_images))
-        if existing:
-            return JSONResponse(status_code=202, content=_task_receipt(existing))
-        _check_media_admission(tasks, "image", owner)
-        task, job = _admit_media_task(
-            "image", req, prompt, route, owner, len(reference_images),
-            size=req.size, provider=provider, response_format=req.response_format,
-            progress=0, queue_elapsed=0.0, **(submission or {}))
-        tid = task["id"]
+def _dispatch_media_task(task, payload, job=None, *, already_queued=0.0):
+    tid = task["id"]
+    owner = task.get("owner")
+    kind = task["kind"]
+    provider = task.get("provider") or "muse"
+    image = kind == "image"
 
     def worker():
-        timing = TaskTiming(store, tid)
-        access = _generation_access(owner, req.model, "image")
+        timing = TaskTiming(store, tid, already_queued)
 
         def acquired():
             timing.acquired()
+            PENDING_MEDIA.discard(tid)
             if job:
                 job.record("started")
-            store.update_task(tid, progress=5)
+            store.update_task(tid, progress=5 if image else 15)
 
         try:
             timing.check_queued()
-            if web_provider:
-                res = _run_web_image(web_provider, prompt, req.timeout or CFG.image_timeout,
+            queue_timeout = QUEUE_POLICY.settings()["queue_timeout"]
+            if queue_timeout and already_queued >= queue_timeout:
+                raise _backpressure("QUEUE_TIMEOUT", "Hết thời gian chờ trước khi gửi tác vụ.", 1)
+            options = _generation_access(owner, payload.model, kind)
+            if already_queued:
+                options["already_queued"] = already_queued
+            if provider != "muse":
+                res = _run_web_image(provider, payload.prompt, payload.timeout,
                                      on_acquired=acquired, on_queue=timing.queued,
                                      on_account=lambda aid, label: _media_account(timing, job, aid, label=label),
-                                     queue_guard=timing.check_queued, **access)
+                                     queue_guard=timing.check_queued, **options)
                 acc_id = (store.get_task(tid) or {}).get("account")
             else:
                 res, acc_id = _run_generation(
-                    prompt, "image", req.timeout or CFG.image_timeout, reference_images=reference_images,
+                    payload.prompt, kind, payload.timeout, reference_images=payload.references,
                     on_progress=lambda p: store.update_task(tid, progress=p),
                     on_acquired=acquired, on_account=lambda aid, attempt: _media_account(timing, job, aid, attempt),
                     on_queue=timing.queued,
                     on_error=None if task.get("private_content") else lambda message: timing.error(_redact_task_error(message)),
-                    queue_guard=timing.check_queued, **access)
-            usage = {"images": 1}
+                    queue_guard=timing.check_queued, **options)
+            usage = {"images": 1} if image else (_asset_usage(res) if job else {})
+            result = {"filename": res["filename"], "kind": res["kind"], ("size" if image else "bytes"): res["size"]}
             store.update_task(tid, status="completed", progress=100, account=acc_id, usage=usage,
-                              **timing.finish(), result={k: res[k] for k in ("filename", "size", "kind")})
+                              **timing.finish(), result=result)
             if job:
                 job.record("finish", "completed", usage=usage, asset=res["filename"])
         except TaskNotQueued:
@@ -2636,8 +2647,29 @@ def _queue_image(req: ImageRequest, prompt: str, reference_images: list[str], *,
         except Exception as exc:
             _fail_media_task(timing, exc)
             _finish_job_error(job, exc)
+        finally:
+            PENDING_MEDIA.discard(tid)
 
-    return JSONResponse(status_code=202, content=_task_receipt(_start_media_worker(task, owner, worker, job)))
+    return _start_media_worker(task, owner, worker, job)
+
+
+def _queue_image(req: ImageRequest, prompt: str, reference_images: list[str], *, owner=None, submission=None,
+                 route="/v1/images/tasks"):
+    web_provider = _image_module(req)
+    provider = web_provider or "muse"
+    payload = PendingMedia(prompt=prompt, model=req.model, timeout=req.timeout or CFG.image_timeout,
+                           references=reference_images)
+    with MEDIA_ADMISSION_LOCK:
+        tasks = store.tasks.values()
+        existing = _replayed_media_task(tasks, "image", provider, owner, submission, legacy=(req, reference_images))
+        if existing:
+            return JSONResponse(status_code=202, content=_task_receipt(existing))
+        _check_media_admission(tasks, "image", owner)
+        task, job = _admit_media_task(
+            "image", req, payload, route, owner,
+            size=req.size, provider=provider, response_format=req.response_format,
+            progress=0, queue_elapsed=0.0, **(submission or {}))
+    return JSONResponse(status_code=202, content=_task_receipt(_dispatch_media_task(task, payload, job)))
 
 
 @app.post("/muse/v1/images/tasks")
@@ -2704,7 +2736,7 @@ async def images_generations(req: ImageRequest, _=Depends(api_auth), request: Re
     if provider:
         prompt = _web_image_prompt(req)
         if req.async_:
-            return _queue_image(req, prompt, [], owner=owner, route=route, submission=submission)
+            return await asyncio.to_thread(_queue_image, req, prompt, [], owner=owner, route=route, submission=submission)
         return await _sync_image(req, prompt, [], owner, route)
     ref_images = await asyncio.to_thread(
         _prepare_reference_images, _image_references(req), **({"public_only": True} if owner else {}))
@@ -2712,7 +2744,8 @@ async def images_generations(req: ImageRequest, _=Depends(api_auth), request: Re
     _validate_muse_references(req.prompt, kinds)
     prompt = build_image_prompt(req, kinds, language=store.muse_prompt_language())
     if req.async_:
-        return _queue_image(req, prompt, ref_images, owner=owner, route=route, submission=submission)
+        return await asyncio.to_thread(_queue_image, req, prompt, ref_images, owner=owner, route=route,
+                                       submission=submission)
     return await _sync_image(req, prompt, ref_images, owner, route)
 
 
@@ -2814,7 +2847,8 @@ async def images_edits(request: Request, _=Depends(api_auth),
     full_prompt = build_image_prompt(req_obj, kinds, language=store.muse_prompt_language())
     route = getattr(getattr(request, "url", None), "path", "/v1/images/edits")
     if req_obj.async_:
-        return _queue_image(req_obj, full_prompt, ref_image_data, owner=owner, route=route, submission=submission)
+        return await asyncio.to_thread(_queue_image, req_obj, full_prompt, ref_image_data, owner=owner, route=route,
+                                       submission=submission)
     return await _sync_image(req_obj, full_prompt, ref_image_data, owner, route)
 
 
@@ -2851,50 +2885,23 @@ async def create_video(req: VideoRequest, _=Depends(api_auth), request: Request 
     kinds = _reference_kinds(ref_images)
     _validate_muse_references(req.prompt, kinds)
     prompt = build_video_prompt(req, kinds, language=store.muse_prompt_language())
-    timeout = req.timeout or CFG.video_timeout
-    with MEDIA_ADMISSION_LOCK:
-        tasks = store.tasks.values()
-        existing = _replayed_media_task(tasks, "video", "muse", owner, submission)
-        if existing:
-            return _task_receipt(existing)
-        _check_media_admission(tasks, "video", owner)
-        task, job = _admit_media_task(
-            "video", req, prompt, request.url.path if request else "/v1/videos", owner, len(ref_images),
-            provider="muse", queue_elapsed=0.0, progress=10, **submission)
-    tid = task["id"]
+    payload = PendingMedia(prompt=prompt, model=req.model, timeout=req.timeout or CFG.video_timeout,
+                           references=ref_images)
+    route = request.url.path if request else "/v1/videos"
 
-    def worker():
-        timing = TaskTiming(store, tid)
+    def enqueue():
+        with MEDIA_ADMISSION_LOCK:
+            tasks = store.tasks.values()
+            existing = _replayed_media_task(tasks, "video", "muse", owner, submission)
+            if existing:
+                return _task_receipt(existing)
+            _check_media_admission(tasks, "video", owner)
+            task, job = _admit_media_task(
+                "video", req, payload, route, owner,
+                provider="muse", queue_elapsed=0.0, progress=10, **submission)
+        return _task_receipt(_dispatch_media_task(task, payload, job))
 
-        def acquired():
-            timing.acquired()
-            if job:
-                job.record("started")
-            store.update_task(tid, progress=15)
-
-        try:
-            timing.check_queued()
-            res, acc_id = _run_generation(
-                prompt, "video", timeout,
-                on_progress=lambda p: store.update_task(tid, progress=p),
-                reference_images=ref_images, on_acquired=acquired,
-                on_account=lambda aid, attempt: _media_account(timing, job, aid, attempt),
-                on_queue=timing.queued,
-                on_error=None if task.get("private_content") else lambda message: timing.error(_redact_task_error(message)),
-                queue_guard=timing.check_queued, **_generation_access(owner, req.model, "video"))
-            usage = _asset_usage(res) if job else {}
-            store.update_task(tid, status="completed", progress=100, account=acc_id, usage=usage,
-                              **timing.finish(), result={"filename": res["filename"],
-                                                         "bytes": res["size"], "kind": res["kind"]})
-            if job:
-                job.record("finish", "completed", usage=usage, asset=res["filename"])
-        except TaskNotQueued:
-            return
-        except Exception as exc:
-            _fail_media_task(timing, exc)
-            _finish_job_error(job, exc)
-
-    return _task_receipt(_start_media_worker(task, owner, worker, job))
+    return await asyncio.to_thread(enqueue)
 
 
 @app.get("/muse/v1/videos/{task_id}")
@@ -5261,24 +5268,69 @@ async def _usage_maintenance_loop():
         await asyncio.sleep(60)
 
 
+def _record_media_restart(task, *, uncertain):
+    if uncertain:
+        changes = {"status": "interrupted", "needs_reconcile": True, "error_stage": "delivery_unknown",
+                   "error_code": "SERVICE_RESTARTED",
+                   "error": "Dịch vụ đã khởi động lại. Hãy đối chiếu kết quả trước khi gửi yêu cầu mới."}
+    else:
+        changes = {"status": "failed", "needs_reconcile": False, "error_stage": "before_send",
+                   "error_code": "SERVICE_RESTARTED_BEFORE_SEND",
+                   "error": "Tác vụ dừng trong hàng chờ khi dịch vụ khởi động lại. Hãy gửi lại yêu cầu."}
+    try:
+        store.transition_task(task["id"], task["status"], **changes)
+    except OSError:
+        store.update_task(task["id"], expected_status=task["status"], **changes)
+
+
+def _recover_media_tasks():
+    queued = []
+    for task in list(store.tasks.values()):
+        if task.get("kind") not in ("image", "video") or task.get("receipt_only"):
+            continue
+        status = task.get("status")
+        if status == "queued" and not task.get("started_at") and PENDING_MEDIA.exists(task["id"]):
+            queued.append(task)
+        elif status in ("queued", "processing"):
+            _record_media_restart(task, uncertain=status == "processing" or bool(task.get("started_at")))
+    PENDING_MEDIA.prune({task["id"] for task in queued})
+    return sorted(queued, key=lambda task: task.get("created_at") or 0)
+
+
+def _resume_media_tasks(queued):
+    for task in queued:
+        task_id = task["id"]
+        try:
+            payload = PENDING_MEDIA.load(task_id)
+        except (OSError, ValueError):
+            _record_media_restart(task, uncertain=False)
+            PENDING_MEDIA.discard(task_id)
+            if task.get("owner"):
+                saved = store.get_task(task_id)
+                ClientJob(client_usage, task_id, False).record(
+                    "finish", "failed", code=saved["error_code"], error=saved["error"])
+            continue
+        job = ClientJob(client_usage, task_id, True, private=task.get("private_content", False)) if task.get("owner") else None
+        elapsed = max(task.get("queue_elapsed") or 0, time.time() - (task.get("created_at") or time.time()))
+        _dispatch_media_task(task, payload, job, already_queued=elapsed)
+
+
 @app.on_event("startup")
 async def _startup():
-    for task in list(store.tasks.values()):
-        if task.get("kind") in ("image", "video") and task.get("status") in ("queued", "processing"):
-            store.transition_task(task["id"], task["status"], status="interrupted", needs_reconcile=True,
-                                  error_code="SERVICE_RESTARTED",
-                                  error="Dịch vụ đã khởi động lại. Hãy đối chiếu kết quả trước khi gửi yêu cầu mới.")
     CFG.api_key = store.load_admin_key(CONFIGURED_ADMIN_KEY)
     workflows.recover()
+    queued = await asyncio.to_thread(_recover_media_tasks)
     if not CONFIGURED_ADMIN_KEY:
         log.info("Đọc khóa quản trị tại %s", os.path.join(CFG.data_dir, "admin-key.json"))
     try:
-        await asyncio.to_thread(client_usage.reconcile, store.tasks, restarting=True)
+        await asyncio.to_thread(client_usage.reconcile, store.tasks, restarting=True,
+                                resuming={task["id"] for task in queued})
         labels = {account["id"]: account.get("label") or account["id"] for account in store.accounts}
         labels.update({account["id"]: account["label"] for account in managed_web.list_accounts()})
         await asyncio.to_thread(client_usage.import_media, list(store.tasks.values()), labels)
     except (OSError, sqlite3.Error):
         log.exception("Không đối chiếu được lịch sử API khi khởi động.")
+    await asyncio.to_thread(_resume_media_tasks, queued)
     app.state.usage_maintenance_task = asyncio.create_task(_usage_maintenance_loop())
     app.state.keepalive_task = asyncio.create_task(_keepalive_loop())
     if CFG.chromium_idle_seconds:

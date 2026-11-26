@@ -28,6 +28,16 @@ function setLang(v) {
 
 /* 整句：中文 → 英文 */
 const I18N_EN = {
+  '检查连接': 'Check connection',
+  '正在检查 mac2API…': 'Checking mac2API…',
+  '服务地址无效。请从 mac2API 管理页面复制地址。': 'Invalid service URL. Copy it from the mac2API dashboard.',
+  '无法连接 mac2API。请检查地址和应用是否已启动。': 'Cannot reach mac2API. Check the address and whether the app is running.',
+  '管理密钥无效。请从 mac2API 管理页面复制正确的密钥。': 'Invalid admin key. Copy the correct key from the mac2API dashboard.',
+  '此地址未返回有效的 mac2API 状态。请检查服务地址。': 'This address did not return mac2API status. Check the service URL.',
+  'mac2API 地址和管理密钥有效。打开已登录的 AI 标签页后可检查该账号。': 'The mac2API address and admin key are valid. Open a signed-in AI tab to check the account.',
+  'mac2API 连接正常，找到 Muse 登录信息。导入后请在 mac2API 检查账号。': 'mac2API is reachable and Muse sign-in data is present. Test the account in mac2API after import.',
+  'mac2API 连接正常，已验证 {site} 的登录标签页。': 'mac2API is reachable and the signed-in {site} tab was verified.',
+  'mac2API 未确认保存 Muse 账号。请在管理页面检查后再重试。': 'mac2API did not confirm the Muse account was saved. Check the dashboard before retrying.',
   '高级连接设置': 'Advanced connection settings',
   '使用扩展直接运行 ChatGPT 和 Gemini': 'Run ChatGPT and Gemini directly in Chrome',
   '已连接 {site}。请保持 Chrome 打开，并在 mac2API 中试聊。': 'Connected {site}. Keep Chrome open and try chat in mac2API.',
@@ -92,6 +102,16 @@ const I18N_EN_PATTERNS = [
 ];
 
 const I18N_VI = {
+  '检查连接': 'Kiểm tra kết nối',
+  '正在检查 mac2API…': 'Đang kiểm tra kết nối mac2API…',
+  '服务地址无效。请从 mac2API 管理页面复制地址。': 'Địa chỉ chưa hợp lệ. Hãy sao chép địa chỉ từ bảng quản trị mac2API.',
+  '无法连接 mac2API。请检查地址和应用是否已启动。': 'Chưa kết nối được mac2API. Hãy kiểm tra địa chỉ và mở ứng dụng.',
+  '管理密钥无效。请从 mac2API 管理页面复制正确的密钥。': 'Khóa quản trị chưa đúng. Hãy sao chép lại từ bảng quản trị mac2API.',
+  '此地址未返回有效的 mac2API 状态。请检查服务地址。': 'Địa chỉ này chưa trả về thông tin của mac2API. Hãy kiểm tra lại địa chỉ.',
+  'mac2API 地址和管理密钥有效。打开已登录的 AI 标签页后可检查该账号。': 'Địa chỉ và khóa quản trị hợp lệ. Mở tab AI đã đăng nhập để kiểm tra tài khoản.',
+  'mac2API 连接正常，找到 Muse 登录信息。导入后请在 mac2API 检查账号。': 'Đã kết nối mac2API và tìm thấy thông tin đăng nhập Muse. Sau khi nhập, hãy kiểm tra tài khoản trong mac2API.',
+  'mac2API 连接正常，已验证 {site} 的登录标签页。': 'Đã kết nối mac2API và xác minh tab {site} đã đăng nhập.',
+  'mac2API 未确认保存 Muse 账号。请在管理页面检查后再重试。': 'mac2API chưa xác nhận lưu tài khoản Muse. Hãy xem danh sách tài khoản trước khi thử lại.',
   '高级连接设置': 'Tùy chọn kết nối nâng cao',
   '使用扩展直接运行 ChatGPT 和 Gemini': 'Chạy ChatGPT và Gemini trực tiếp bằng tiện ích',
   '已连接 {site}。请保持 Chrome 打开，并在 mac2API 中试聊。': 'Đã liên kết {site}. Hãy giữ Chrome mở rồi thử chat trong mac2API.',
@@ -182,6 +202,59 @@ function normBase(v) {
   return s;
 }
 
+async function checkServer(base, key) {
+  let url;
+  try { url = new URL(base); } catch {}
+  if (!url || !['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+    throw new Error(t('服务地址无效。请从 mac2API 管理页面复制地址。'));
+  }
+  const response = await fetch(base + '/admin/status?compact=1', {
+    redirect: 'error', cache: 'no-store', credentials: 'omit',
+    headers: {Authorization: 'Bearer ' + key}, signal: AbortSignal.timeout(8000),
+  }).catch(() => {
+    throw new Error(t('无法连接 mac2API。请检查地址和应用是否已启动。'));
+  });
+  const info = await response.json().catch(() => null);
+  if (response.status === 401 && ['API key 无效', '缺少 Authorization: Bearer <key>'].includes(info?.detail)) {
+    throw new Error(t('管理密钥无效。请从 mac2API 管理页面复制正确的密钥。'));
+  }
+  if (!response.ok || typeof info?.browser_running !== 'boolean' ||
+      !Array.isArray(info.essential_cookies) || !info.essential_cookies.includes('hatch_sess')) {
+    throw new Error(t('此地址未返回有效的 mac2API 状态。请检查服务地址。'));
+  }
+}
+
+async function checkConnection() {
+  const base = normBase($('base').value) || LOCAL_BASE;
+  const key = $('key').value.trim();
+  if (!key) return log(t('请先填 API Key'), 'bad');
+  $('checkConnection').disabled = true;
+  log(t('正在检查 mac2API…'));
+  try {
+    await checkServer(base, key);
+    const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
+    if (tabAtOrigin(tab, ['https://muse.ai', 'https://www.muse.ai'])) {
+      const {cookies} = await grabCookies(true);
+      if (!cookies.hatch_sess) {
+        return log(t('没读到 muse.ai 的 Cookie。\n请先在这个浏览器里打开并登录 https://muse.ai/ ，再回来点一次。'), 'warn');
+      }
+      return log(t('mac2API 连接正常，找到 Muse 登录信息。导入后请在 mac2API 检查账号。'), 'ok');
+    }
+    const provider = Object.entries(WEB_BUTTONS).find(([, site]) => tabAtOrigin(tab, [site.origin]));
+    if (provider) {
+      const [id, {site}] = provider;
+      const result = await chrome.runtime.sendMessage({type:'mac2apiChromeCheck', provider:id, tabId:tab.id,
+        base, direct:$('directChrome').checked});
+      if (!result?.ok) throw new Error(result?.error || t('连接失败 (HTTP {status})', {status: '?'}));
+      return log(t('mac2API 连接正常，已验证 {site} 的登录标签页。', {site}), 'ok');
+    }
+    log(t('mac2API 地址和管理密钥有效。打开已登录的 AI 标签页后可检查该账号。'), 'ok');
+  } catch (error) {
+    log(error.message, 'bad');
+  } finally {
+    $('checkConnection').disabled = false;
+  }
+}
 async function loadCfg() {
   const o = await chrome.storage.local.get([STORE, BRIDGE_STORE]);
   const c = o[STORE] || {};
@@ -210,14 +283,8 @@ async function loadCfg() {
   }
 }
 
-async function saveCfg() {
-  await chrome.storage.local.set({
-    [STORE]: {
-      base: normBase($('base').value),
-      key: $('key').value.trim(),
-      label: $('label').value.trim(),
-    },
-  });
+async function saveCfg(base, key, label) {
+  await chrome.storage.local.set({[STORE]: {base, key, label}});
 }
 
 async function grabCookies(requireMuseTab = false) {
@@ -247,17 +314,17 @@ async function grabCookies(requireMuseTab = false) {
 }
 
 async function run() {
-  const base = normBase($('base').value);
+  const base = normBase($('base').value) || LOCAL_BASE;
   const key = $('key').value.trim();
   const label = $('label').value.trim();
 
-  if (!base) return log(t('请先填服务地址'), 'bad');
   if (!key) return log(t('请先填 API Key'), 'bad');
 
   $('go').disabled = true;
-  log(t('正在读取 muse.ai 的 Cookie…'));
+  log(t('正在检查 mac2API…'));
 
   try {
+    await checkServer(base, key);
     const { cookies, expires, windowKind } = await grabCookies(true);
     const names = Object.keys(cookies);
     if (!names.length) {
@@ -277,6 +344,8 @@ async function run() {
     const r = await fetch(base + '/admin/accounts', {
       method: 'POST',
       redirect: 'error',
+      credentials: 'omit',
+      signal: AbortSignal.timeout(12000),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ' + key,
@@ -289,16 +358,18 @@ async function run() {
     try { data = JSON.parse(text); } catch (e) { data = { raw: text }; }
 
     if (r.status === 401) {
-      return log(t('API Key 不对（服务返回 401）。\n'
-                 + '请到管理页「账号池」页顶部复制正确的 API Key。'), 'bad');
+      return log(t('管理密钥无效。请从 mac2API 管理页面复制正确的密钥。'), 'bad');
     }
     if (!r.ok) {
-      const body = typeof data.detail === 'string' ? t(data.detail) : text.slice(0, 300);
-      return log(t('导入失败：HTTP {status}\n{body}', { status: r.status, body }), 'bad');
+      return log(typeof data?.detail === 'string' ? t(data.detail)
+        : t('mac2API 未确认保存 Muse 账号。请在管理页面检查后再重试。'), 'bad');
     }
 
-    const a = (data.added && data.added[0]) || {};
-    await saveCfg();
+    const a = Array.isArray(data?.added) && data.added[0];
+    if (data?.count !== 1 || typeof a?.id !== 'string' || !a.id.trim()) {
+      return log(t('mac2API 未确认保存 Muse 账号。请在管理页面检查后再重试。'), 'bad');
+    }
+    await saveCfg(base, key, label).catch(() => {});
     log(t('✓ 导入成功\n账号标签：{label}\n账号 ID：{id}\nCookie 条数：{count}\n有效期到：{expires}\n', {
           label: a.label || label || t('(自动)'),
           id: a.id || '?',
@@ -308,10 +379,8 @@ async function run() {
         + t('\nCookie 来源：当前{window}窗口。导入仅保存登录态，请到管理页测试账号。', { window: windowKind })
         + (data.warning ? t('\n注意：{warning}', { warning: t(data.warning) }) : ''), 'ok');
   } catch (e) {
-    log(t('出错了：{msg}\n\n常见原因：\n'
-        + '· 服务地址填错或服务没启动\n'
-        + '· 这个地址不是 https（或证书不被信任）\n'
-        + '· 浏览器拦截了跨域请求', { msg: e && e.message ? e.message : String(e) }), 'bad');
+    log(e instanceof TypeError || e.name === 'TimeoutError'
+      ? t('mac2API 未确认保存 Muse 账号。请在管理页面检查后再重试。') : e.message, 'bad');
   } finally {
     $('go').disabled = false;
   }
@@ -332,6 +401,7 @@ async function linkWebProvider(provider) {
   const direct = $('directChrome').checked;
   const base = normBase($('base').value) || (direct ? LOCAL_BASE : '');
   const key = $('key').value.trim();
+  const label = $('label').value.trim();
   if (!base) return log(t('请先填服务地址'), 'bad');
   if (!key) return log(t('请先填 API Key'), 'bad');
   $(button).disabled = true;
@@ -345,7 +415,7 @@ async function linkWebProvider(provider) {
     log(t('正在验证 {site} 标签页…', {site}));
     if (direct) {
       const result = await chrome.runtime.sendMessage({type: 'mac2apiChromeConnect', provider, tabId: tab.id,
-        base, key, label: $('label').value.trim()});
+        base, key, label});
       if (!result?.ok) return log(t(result?.error || '连接失败 (HTTP {status})', {status: '?'}), 'bad');
       log(t('已连接 {site}。请保持 Chrome 打开，并在 mac2API 中试聊。', {site}), 'ok');
       return;
@@ -366,6 +436,8 @@ async function linkWebProvider(provider) {
     const response = await fetch(base + '/admin/web-providers/' + provider + '/link', {
       method: 'POST',
       redirect: 'error',
+      credentials: 'omit',
+      signal: AbortSignal.timeout(12000),
       headers: {'Content-Type': 'application/json', Authorization: 'Bearer ' + key},
       body: JSON.stringify({marker, extension_version: chrome.runtime.getManifest().version}),
     });
@@ -374,7 +446,7 @@ async function linkWebProvider(provider) {
       return log(typeof data.detail === 'string' ? t(data.detail)
         : t('连接失败 (HTTP {status})', {status: response.status}), 'bad');
     }
-    await saveCfg();
+    await saveCfg(base, key, label);
     log(t('已验证 {site} 标签页。请在控制台对应页签试聊。', {site}), 'ok');
   } catch (error) {
     log(error.message, 'bad');
@@ -402,7 +474,8 @@ $('directChrome').addEventListener('change', () => {
 });
 $('langSel').addEventListener('change', (e) => setLang(e.target.value));
 $('go').addEventListener('click', run);
+$('checkConnection').addEventListener('click', checkConnection);
 for (const [provider, {button}] of Object.entries(WEB_BUTTONS)) {
   $(button).addEventListener('click', () => linkWebProvider(provider));
 }
-loadCfg();
+loadCfg().catch(error => log(error.message, 'bad'));

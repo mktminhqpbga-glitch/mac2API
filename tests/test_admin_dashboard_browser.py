@@ -301,8 +301,9 @@ def check_dashboard(app, page, url):
                              "document.getElementById('workflowResults')?.textContent.includes('Kết quả mục đã gửi') && "
                              "localStorage.getItem('mac2apiWorkflow:pending') === 'null'"))
         assert calls.count((0, 0)) == 2
-        page.js("$('key').value='';saveKey()")
-        wait(lambda: page.js("!$('workflowResults').children.length && $('workflowHistory').hidden"))
+        cleared = page.js("(() => {$('key').value=''; saveKey(); return KEY === '' && authOK === false;})()")
+        assert cleared is True, cleared
+        wait(lambda: page.js("!$('workflowResults').querySelector('article') && $('workflowHistory').hidden"))
         assert page.js("$('workflowInput').value === 'mục đã gửi' && window.__errors.length === 0")
 
         page.send("Page.addScriptToEvaluateOnNewDocument", {"source": """

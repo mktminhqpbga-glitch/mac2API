@@ -261,7 +261,17 @@ async function wake() {
 
 let pairing = Promise.resolve();
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
-  if (message?.type !== 'mac2apiChromeConnect' || sender.id !== chrome.runtime.id) return false;
+  if (sender.id !== chrome.runtime.id) return false;
+  if (message?.type === 'mac2apiChromeCheck') {
+    const site = bridgeSites[message.provider];
+    if (!site) return false;
+    Promise.resolve().then(() => {
+      if (message.direct) localBase(message.base);
+      return verifyTab(message.tabId, site);
+    }).then(() => respond({ok: true}), error => respond({error: error.message}));
+    return true;
+  }
+  if (message?.type !== 'mac2apiChromeConnect') return false;
   pairing = pairing.then(() => connect(message));
   pairing.then(() => respond({ok: true}), error => respond({error: error.message}));
   pairing = pairing.catch(() => {});

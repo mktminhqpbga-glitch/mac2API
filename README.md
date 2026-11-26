@@ -1,6 +1,6 @@
 # MUSE2API
 
-Bản tổng hợp mac2API 1.6.14 gồm mã máy chủ, bảng quản trị, tiện ích Chrome/Edge 1.0.8 và các adapter MacFlow/Toonflow. [Nhật ký phiên bản](CHANGELOG.md)
+Bản tổng hợp mac2API 1.6.15 gồm mã máy chủ, bảng quản trị, tiện ích Chrome/Edge 1.0.9 và các adapter MacFlow/Toonflow. [Nhật ký phiên bản](CHANGELOG.md)
 
 MUSE2API cung cấp API kiểu OpenAI để gọi các tính năng chat, tạo ảnh và tạo video của [Muse.ai](https://muse.ai/). Máy chủ Python chạy FastAPI và điều khiển Chromium qua Chrome DevTools Protocol (CDP). Muse.ai thực hiện việc tạo nội dung. Dịch vụ quản lý cookie, hàng đợi, tài khoản, proxy và kết quả tải về.
 
@@ -59,9 +59,9 @@ Nếu Chromium nằm ngoài PATH, đặt `MUSE2API_CHROMIUM` thành đường d�
 ## Nhập tài khoản Muse
 
 1. Tải tiện ích từ bảng quản trị hoặc nạp [thư mục tiện ích](extension/) dưới dạng tiện ích đã giải nén trong Chrome hoặc Edge.
-2. Đăng nhập Muse.ai và mở tiện ích **v1.0.8** trong chính cửa sổ đó. Với chế độ ẩn danh hoặc InPrivate, hãy cấp quyền chạy tiện ích trong chế độ tương ứng.
-3. Điền địa chỉ dịch vụ và API Key, rồi bấm **Đọc và nhập**.
-4. Trong mục **Quản lý tài khoản**, bấm **Kiểm tra** để mở Muse bằng Chromium trên máy chủ và xác minh phiên.
+2. Đăng nhập Muse.ai và mở tiện ích **v1.0.9** trong chính cửa sổ đó. Với chế độ ẩn danh hoặc InPrivate, hãy cấp quyền chạy tiện ích trong chế độ tương ứng.
+3. Điền địa chỉ dịch vụ và khóa quản trị. Bấm **Kiểm tra kết nối**, rồi **Muse** để nhập tài khoản.
+4. Trong mục **Muse**, bấm **Kiểm tra** để mở Muse bằng Chromium trên máy chủ và xác minh phiên.
 
 Cookie bắt buộc là `hatch_sess`. `hatch_vml` và `hatch_gw` có thể vắng mặt. Bạn cũng có thể dùng [tập lệnh Tampermonkey](tools/muse2api_cookie_importer.user.js), [tập lệnh Python](tools/get_muse_cookie.py) hoặc biểu mẫu dán cookie trong bảng quản trị. Sau khi cập nhật máy chủ, hãy tải lại tiện ích đã giải nén trong từng hồ sơ trình duyệt.
 
@@ -198,7 +198,7 @@ Các mô-đun mới dùng một Base URL và khóa mac2API. `muse/text`, `chatgp
 
 ### Kết nối trực tiếp bằng tiện ích Chrome
 
-1. Chạy mac2API và Chrome trên cùng máy. Trong mac2API, vào **Nhập cookie → Tải tiện ích**. Giải nén rồi chọn thư mục có `manifest.json` tại `chrome://extensions`. Nếu đã cài, thay tệp trong thư mục cũ rồi bấm **Tải lại** để giữ thiết lập của tiện ích. Mở popup và kiểm tra hiện **v1.0.8**.
+1. Chạy mac2API và Chrome trên cùng máy. Trong mac2API, vào **Nhập cookie → Tải tiện ích**. Giải nén rồi chọn thư mục có `manifest.json` tại `chrome://extensions`. Nếu đã cài, thay tệp trong thư mục cũ rồi bấm **Tải lại** để giữ thiết lập của tiện ích. Mở popup và kiểm tra hiện **v1.0.9**.
 2. Trong tab **ChatGPT Web** hoặc **Gemini Web** của mac2API, bấm **Sao chép khóa quản trị**. Mở tab AI đã đăng nhập trong Chrome, dán khóa vào tiện ích rồi bấm **ChatGPT** hoặc **Gemini**. Địa chỉ mặc định là `http://127.0.0.1:18610`. Nếu ô địa chỉ đang dùng máy chủ Muse từ xa hoặc mac2API chạy ở cổng khác, nhập địa chỉ mac2API trên máy này.
 3. Mở tab **ChatGPT Web** hoặc **Gemini Web** trong mac2API. Hồ sơ xuất hiện trong danh sách và có nút **Ngắt liên kết**. Bấm **Thử chat** để kiểm tra kết quả. Trong **Khóa người dùng**, chọn các hồ sơ mà từng khóa được phép sử dụng.
 

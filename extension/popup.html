@@ -24,6 +24,7 @@
     font-size:13px;font-weight:650;cursor:pointer}
   button:hover{background:#4674eb}
   button:disabled{opacity:.5;cursor:default}
+  #checkConnection{margin-top:8px;width:100%;background:var(--panel);border-color:var(--line)}
   .steps{padding:11px 12px;margin-top:12px;background:var(--panel);border:1px solid var(--line);border-radius:9px;
     color:var(--muted);font-size:11.5px}
   .steps b{color:var(--text)}
@@ -38,7 +39,7 @@
 </style>
 </head>
 <body>
-  <h1><span class="dot" aria-hidden="true"></span><span data-i18n-text>mac2API 账号连接</span><span id="extensionVersion" style="font-size:11px;color:var(--muted)">v1.0.8</span>
+  <h1><span class="dot" aria-hidden="true"></span><span data-i18n-text>mac2API 账号连接</span><span id="extensionVersion" style="font-size:11px;color:var(--muted)">v1.0.9</span>
     <select id="langSel" class="langsel" title="Ngôn ngữ / Language / 语言">
       <option value="vi">Tiếng Việt</option>
       <option value="zh">中文</option>
@@ -61,6 +62,7 @@
     <button id="linkChatGPT" type="button">ChatGPT</button>
     <button id="linkGemini" type="button">Gemini</button>
   </div>
+  <button id="checkConnection" type="button" data-i18n-text>检查连接</button>
 
   <div class="steps" id="directSteps" data-i18n="direct-steps"><b>打开已登录的 ChatGPT 或 Gemini 标签页。</b><br>输入管理密钥，点击对应按钮。默认连接本机 mac2API。</div>
 
