@@ -1,5 +1,10 @@
 # Nhật ký và bàn giao mac2API
 
+## Đơn giản hóa kết nối Chrome 1.0.8
+
+- Đặt kết nối trực tiếp và địa chỉ localhost làm mặc định cho ChatGPT Web và Gemini Web. Bảng quản trị có nút tải ZIP ghi rõ phiên bản và nút sao chép khóa quản trị.
+- Tiện ích đợi ô chat xuất hiện và báo riêng lỗi quyền truy cập trang, đăng nhập hoặc máy chủ cũ. Yêu cầu liên kết từ tiện ích cũ vẫn có hướng dẫn cập nhật nếu xảy ra lỗi.
+
 ## Kết nối trực tiếp qua tiện ích Chrome 1.0.7
 
 - ChatGPT Web và Gemini Web dùng hồ sơ Chrome đã đăng nhập thông qua tiện ích trên cùng máy. Mỗi tác vụ có tab riêng và kiểm tra quyền của khóa trước khi gửi.

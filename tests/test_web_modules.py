@@ -226,7 +226,11 @@ async def check_existing_profile(port_file):
             endpoint = "/admin/web-providers/chatgpt/link"
             linked = await client.post(endpoint, headers=headers, json={"marker": marker})
             assert linked.status_code == 200, linked.text
-            assert (await client.post(endpoint, headers=headers, json={"marker": marker})).status_code == 409
+            old = await client.post(endpoint, headers=headers, json={"marker": marker})
+            assert old.status_code == 409 and "Tải tiện ích" in old.json()["detail"], old.text
+            modern = await client.post(endpoint, headers=headers,
+                                       json={"marker": marker, "extension_version": "1.0.8"})
+            assert modern.status_code == 409 and "Tải tiện ích" not in modern.json()["detail"], modern.text
             status = (await client.get("/admin/web-providers", headers=headers)).json()
             assert status["ready"] == ["chatgpt"]
             key = app.store.create_client("capability fixture", ["chatgpt", "gemini-web"])["api_key"]

@@ -33,15 +33,8 @@ async function execute(tabId, func, args) {
 async function connect(message) {
   const site = bridgeSites[message.provider];
   if (!site) throw new Error('Không tìm thấy dịch vụ đã chọn.');
-  const tab = await chrome.tabs.get(message.tabId);
-  if (tab.incognito || new URL(tab.url).origin !== site.origin) {
-    throw new Error('Mở đúng tab AI đã đăng nhập trong cửa sổ Chrome thường.');
-  }
-  const status = await execute(tab.id, bridgeSiteAction, [site, 'verify']);
-  if (!status?.signedIn) {
-    throw new Error('Chưa xác minh được phiên đăng nhập. Hãy mở trang chat mới của dịch vụ rồi thử lại.');
-  }
   const base = localBase(message.base);
+  const tab = await verifyTab(message.tabId, site);
   const stored = await chrome.storage.local.get(BRIDGE_CONFIG);
   const config = stored[BRIDGE_CONFIG] || {profile: crypto.randomUUID().replaceAll('-', ''), providers: {}};
   const response = await bridgeFetch(base, message.key, '/admin/web-providers/' + message.provider + '/extension', {
@@ -49,13 +42,38 @@ async function connect(message) {
   }).catch(() => {
     throw new Error('Tiện ích chưa kết nối được mac2API. Hãy kiểm tra địa chỉ localhost và dịch vụ đang chạy.');
   });
+  if (response.status === 404) {
+    throw new Error('Máy chủ mac2API chưa có đường dẫn kết nối trực tiếp. Hãy cập nhật và khởi động lại mac2API rồi thử lại.');
+  }
   const data = await response.json().catch(() => ({}));
   if (response.status !== 201 || !data.token) {
     throw new Error(typeof data.detail === 'string' ? data.detail : 'Không liên kết được tiện ích (HTTP ' + response.status + ').');
   }
-  config.providers[message.provider] = {base, token: data.token, windowId: tab.windowId};
+  config.providers[message.provider] = {base, token: data.token, windowId: tab.windowId, label: message.label};
   await chrome.storage.local.set({[BRIDGE_CONFIG]: config});
   await wake();
+}
+
+async function verifyTab(tabId, site) {
+  const deadline = Date.now() + 6000;
+  let status;
+  do {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab?.url || tab.incognito || new URL(tab.url).origin !== site.origin) {
+      throw new Error('Mở đúng tab AI đã đăng nhập trong cửa sổ Chrome thường.');
+    }
+    if (tab.status === 'complete') {
+      status = await execute(tab.id, bridgeSiteAction, [site, 'verify']).catch(() => {
+        throw new Error('Chrome chưa cho tiện ích đọc tab này. Kiểm tra Quyền truy cập trang web trong chrome://extensions.');
+      });
+      if (status?.signedIn && status.composerReady) return tab;
+    }
+    await sleep(250);
+  } while (Date.now() < deadline);
+  if (!status?.composerReady) {
+    throw new Error('Không tìm thấy ô chat trên tab đang mở. Hãy tải lại trang AI rồi bấm tên dịch vụ để thử lại.');
+  }
+  throw new Error('Đã thấy ô chat nhưng chưa xác minh được đăng nhập. Hãy kiểm tra hồ sơ Chrome và mở một cuộc trò chuyện mới.');
 }
 
 function jobAction(connection, id, action, report) {

@@ -4,7 +4,7 @@
     "description": "Extension name"
   },
   "extDesc": {
-    "message": "Import your muse.ai login cookies into your muse2api service in one click. No Python or terminal needed.",
+    "message": "Connect signed-in ChatGPT and Gemini profiles, or import your Muse.ai login into mac2API.",
     "description": "Extension description"
   }
 }

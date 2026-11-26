@@ -4,7 +4,7 @@
     "description": "Extension name"
   },
   "extDesc": {
-    "message": "一键把 muse.ai 的登录 Cookie 导入到你的 muse2api 服务。不用装 Python、不用开终端。",
+    "message": "连接已登录的 ChatGPT 和 Gemini 浏览器个人资料，或将 Muse.ai 会话导入 mac2API。",
     "description": "Extension description"
   }
 }

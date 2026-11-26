@@ -8,6 +8,8 @@
 
 const $ = (id) => document.getElementById(id);
 const STORE = 'muse2api_ext_cfg';
+const BRIDGE_STORE = 'mac2apiChromeBridge';
+const LOCAL_BASE = 'http://127.0.0.1:18610';
 
 const ESSENTIAL = ['hatch_sess'];
 
@@ -26,6 +28,7 @@ function setLang(v) {
 
 /* 整句：中文 → 英文 */
 const I18N_EN = {
+  '高级连接设置': 'Advanced connection settings',
   '使用扩展直接运行 ChatGPT 和 Gemini': 'Run ChatGPT and Gemini directly in Chrome',
   '已连接 {site}。请保持 Chrome 打开，并在 mac2API 中试聊。': 'Connected {site}. Keep Chrome open and try chat in mac2API.',
   "选择当前标签页对应的服务。": "Select the service in the active tab.",
@@ -77,7 +80,7 @@ const I18N_EN = {
 
 /* 含富文本的块：data-i18n="key" → 英文 innerHTML */
 const I18N_EN_HTML = {
-  'direct-steps': '<b>Open a signed-in ChatGPT or Gemini tab.</b><br>Enter the local mac2API URL and select the service. Keep a regular Chrome window open.',
+  'direct-steps': '<b>Open a signed-in ChatGPT or Gemini tab.</b><br>Enter the admin key and select the service. The default address is the local mac2API.',
   'bridge-foot': 'Muse imports cookies. The direct extension mode runs jobs in the signed-in Chrome profile and returns their results to mac2API.',
   "steps": "<b>Open the signed-in tab and select its service.</b><br>Muse imports cookies. ChatGPT and Gemini verify the signed-in Chrome tab on the mac2API machine.",
   "foot": "Only Muse cookies are sent to the configured service. ChatGPT and Gemini send a one-time verification marker."
@@ -89,6 +92,7 @@ const I18N_EN_PATTERNS = [
 ];
 
 const I18N_VI = {
+  '高级连接设置': 'Tùy chọn kết nối nâng cao',
   '使用扩展直接运行 ChatGPT 和 Gemini': 'Chạy ChatGPT và Gemini trực tiếp bằng tiện ích',
   '已连接 {site}。请保持 Chrome 打开，并在 mac2API 中试聊。': 'Đã liên kết {site}. Hãy giữ Chrome mở rồi thử chat trong mac2API.',
   "选择当前标签页对应的服务。": "Chọn dịch vụ tương ứng với tab đang mở.",
@@ -127,7 +131,7 @@ const I18N_VI = {
   "API key 无效": "API key không hợp lệ"
 };
 const I18N_VI_HTML = {
-  'direct-steps': '<b>Mở tab ChatGPT hoặc Gemini đã đăng nhập.</b><br>Nhập địa chỉ mac2API trên máy này rồi bấm đúng tên dịch vụ. Hãy giữ cửa sổ Chrome thường mở.',
+  'direct-steps': '<b>Mở tab ChatGPT hoặc Gemini đã đăng nhập.</b><br>Nhập khóa quản trị rồi bấm đúng tên dịch vụ. Địa chỉ mặc định là mac2API trên máy này.',
   'bridge-foot': 'Muse nhập cookie. Chế độ kết nối trực tiếp chạy tác vụ trong hồ sơ Chrome đã đăng nhập và gửi kết quả về mac2API.',
   "steps": "<b>Mở tab đã đăng nhập rồi chọn đúng nút.</b><br>Muse nhập cookie. ChatGPT và Gemini xác minh tab trong Chrome đã cấp quyền trên cùng máy với mac2API.",
   "foot": "Tiện ích chỉ gửi cookie Muse tới địa chỉ dịch vụ bạn nhập. Với ChatGPT và Gemini, tiện ích gửi mã xác minh một lần."
@@ -179,15 +183,23 @@ function normBase(v) {
 }
 
 async function loadCfg() {
-  const o = await chrome.storage.local.get(STORE);
+  const o = await chrome.storage.local.get([STORE, BRIDGE_STORE]);
   const c = o[STORE] || {};
+  const [tab] = await chrome.tabs.query({active: true, currentWindow: true}).catch(() => []);
+  const service = Object.entries(WEB_BUTTONS).find(([, site]) => tabAtOrigin(tab, [site.origin]))?.[0];
+  const bridge = o[BRIDGE_STORE]?.providers?.[service];
+  if (bridge) {
+    $('base').value = bridge.base;
+    $('label').value = bridge.label || '';
+    if (c.base === bridge.base && c.key) $('key').value = c.key;
+    return;
+  }
   if (c.base) $('base').value = c.base;
   if (c.key) $('key').value = c.key;
   if (c.label) $('label').value = c.label;
   // 没有配置过就尝试从当前标签页猜一个（用户在管理页上时）
   if (!c.base) {
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       const u = tab && tab.url ? new URL(tab.url) : null;
       if (u && /\/admin/.test(u.pathname)) {
         $('base').value = u.origin;
@@ -317,7 +329,8 @@ const WEB_BUTTONS = {
 
 async function linkWebProvider(provider) {
   const {button, site, origin} = WEB_BUTTONS[provider];
-  const base = normBase($('base').value);
+  const direct = $('directChrome').checked;
+  const base = normBase($('base').value) || (direct ? LOCAL_BASE : '');
   const key = $('key').value.trim();
   if (!base) return log(t('请先填服务地址'), 'bad');
   if (!key) return log(t('请先填 API Key'), 'bad');
@@ -330,7 +343,7 @@ async function linkWebProvider(provider) {
     }
     if (tab.incognito) return log(t('请在已授权 Chrome 的普通窗口中连接网页服务。'), 'bad');
     log(t('正在验证 {site} 标签页…', {site}));
-    if ($('directChrome').checked) {
+    if (direct) {
       const result = await chrome.runtime.sendMessage({type: 'mac2apiChromeConnect', provider, tabId: tab.id,
         base, key, label: $('label').value.trim()});
       if (!result?.ok) return log(t(result?.error || '连接失败 (HTTP {status})', {status: '?'}), 'bad');
@@ -354,7 +367,7 @@ async function linkWebProvider(provider) {
       method: 'POST',
       redirect: 'error',
       headers: {'Content-Type': 'application/json', Authorization: 'Bearer ' + key},
-      body: JSON.stringify({marker}),
+      body: JSON.stringify({marker, extension_version: chrome.runtime.getManifest().version}),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || data.ok !== true || data.provider !== provider) {
@@ -382,6 +395,7 @@ async function linkWebProvider(provider) {
 }
 
 applyLang();
+$('extensionVersion').textContent = 'v' + chrome.runtime.getManifest().version;
 $('directChrome').addEventListener('change', () => {
   $('directSteps').hidden = !$('directChrome').checked;
   $('cdpSteps').hidden = $('directChrome').checked;

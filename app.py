@@ -3511,6 +3511,7 @@ async def connect_web_chrome_profile(_=Depends(auth)):
 
 class WebProviderLink(BaseModel):
     marker: str = Field(pattern=r"^[a-f0-9]{32}$")
+    extension_version: str | None = Field(default=None, max_length=32)
 
 
 class WebAccountCreate(BaseModel):
@@ -3589,7 +3590,14 @@ def test_managed_web_proxy(provider: str, aid: str, req: ProxyTestRequest, _=Dep
 async def link_web_provider(provider: str, req: WebProviderLink, _=Depends(auth)):
     if provider not in WEB_PROVIDERS:
         raise HTTPException(404, "Không tìm thấy nhà cung cấp web.")
-    linked_at = await asyncio.to_thread(_web_call, web_providers.link, provider, req.marker)
+    try:
+        linked_at = await asyncio.to_thread(_web_call, web_providers.link, provider, req.marker)
+    except HTTPException as exc:
+        if req.extension_version is None and isinstance(exc.__cause__, WebProviderError):
+            raise HTTPException(exc.status_code, f"{exc.detail} Tiện ích đang dùng luồng Chrome cũ. "
+                                "Trong mac2API, mở Nhập cookie → Tải tiện ích, cập nhật trong chrome://extensions, "
+                                "rồi mở lại tab AI và bấm tên dịch vụ để kết nối trực tiếp.") from exc
+        raise
     return {"ok": True, "provider": provider, "linked_at": linked_at}
 
 
@@ -4263,13 +4271,17 @@ def cookie_helper(download: int = 0):
 
 @app.get("/admin/extension")
 def extension_zip():
-    """把浏览器扩展打包成 zip 返回（推荐方式，零命令行）。
-
-    用户下载后解压 → chrome://extensions 开发者模式加载 → 点一下就导入 cookie。
-    """
+    """Package the browser extension for unpacked installation."""
     src = os.path.join(BASE_DIR, "extension")
     if not os.path.isdir(src):
-        raise HTTPException(404, "扩展目录缺失")
+        raise HTTPException(404, "Bản mac2API này thiếu thư mục tiện ích Chrome.")
+    try:
+        with open(os.path.join(src, "manifest.json"), encoding="utf-8") as manifest:
+            version = json.load(manifest)["version"]
+        if not isinstance(version, str) or not re.fullmatch(r"\d+(?:\.\d+){1,3}", version):
+            raise ValueError("Invalid extension version")
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        raise HTTPException(503, "Bản mac2API này thiếu thông tin phiên bản của tiện ích Chrome.") from exc
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for root, dirs, names in os.walk(src):
@@ -4283,7 +4295,7 @@ def extension_zip():
         content=buf.getvalue(),
         media_type="application/zip",
         headers={"Content-Disposition":
-                 'attachment; filename="muse2api-extension.zip"',
+                 f'attachment; filename="mac2api-chrome-{version}.zip"',
                  "Cache-Control": "no-store"})
 
 

@@ -4,7 +4,7 @@
   "repo": "https://github.com/mktminhqpbga-glitch/mac2API",
   "highlights": [
     "整合 mac2API 修复。Chrome 144 及以上可授权使用已登录的 ChatGPT 和 Gemini 个人资料。",
-    "扩展 1.0.7 可直接使用已登录的 Chrome 个人资料运行 ChatGPT 和 Gemini。手动安装的扩展可在原个人资料中重新加载。",
+    "扩展 1.0.8 可直接使用已登录的 Chrome 个人资料运行 ChatGPT 和 Gemini。手动安装的扩展可在原个人资料中重新加载。",
     "提供 Muse、ChatGPT 和 Gemini 的独立 API，支持按用户密钥限制服务，以及隔离任务与媒体访问。",
     "图片与视频任务支持 Idempotency-Key。重试相同请求可返回原任务 ID。",
     "DevTools 请求受时限约束。队列配置损坏时使用默认值，存储和工作线程启动失败会报告错误。",
@@ -12,7 +12,7 @@
   ],
   "highlights_en": [
     "This mac2API release bundles the fixes. Chrome 144 and later supports connecting the existing signed-in ChatGPT and Gemini profiles.",
-    "Extension 1.0.7 runs ChatGPT and Gemini directly in signed-in Chrome profiles. Reload unpacked extensions in every browser profile where they are installed.",
+    "Extension 1.0.8 runs ChatGPT and Gemini directly in signed-in Chrome profiles. Reload unpacked extensions in every browser profile where they are installed.",
     "Muse, ChatGPT and Gemini have separate API paths, provider-scoped user keys, and isolated task and media access.",
     "Image and video tasks accept Idempotency-Key so retries can recover the original task ID.",
     "DevTools operations have deadlines, malformed queue settings fall back to defaults, and storage or worker startup failures surface as errors.",
@@ -20,7 +20,7 @@
   ],
   "highlights_vi": [
     "Bản tổng hợp mac2API. ChatGPT Web và Gemini Web dùng hồ sơ đang đăng nhập trên Chrome 144 trở lên.",
-    "Tiện ích 1.0.7 chạy ChatGPT và Gemini trực tiếp trong hồ sơ Chrome đã đăng nhập. Tải lại tiện ích đã giải nén trong từng hồ sơ đã cài.",
+    "Tiện ích 1.0.8 chạy ChatGPT và Gemini trực tiếp trong hồ sơ Chrome đã đăng nhập. Tải lại tiện ích đã giải nén trong từng hồ sơ đã cài.",
     "Muse, ChatGPT và Gemini có đường dẫn API riêng. Khóa người dùng giới hạn quyền truy cập dịch vụ, tác vụ và tệp kết quả.",
     "Yêu cầu tạo ảnh và video hỗ trợ Idempotency-Key để lấy lại mã tác vụ khi gửi lại cùng nội dung.",
     "Lệnh DevTools có thời hạn. Cài đặt hàng đợi hỏng dùng giá trị mặc định, còn lỗi lưu hoặc khởi tạo tác vụ được báo rõ.",

@@ -1,6 +1,6 @@
 # MUSE2API
 
-Bản tổng hợp mac2API 1.6.12 gồm mã máy chủ, bảng quản trị, tiện ích Chrome/Edge 1.0.7 và các adapter MacFlow/Toonflow. [Nhật ký phiên bản](CHANGELOG.md)
+Bản tổng hợp mac2API 1.6.12 gồm mã máy chủ, bảng quản trị, tiện ích Chrome/Edge 1.0.8 và các adapter MacFlow/Toonflow. [Nhật ký phiên bản](CHANGELOG.md)
 
 MUSE2API cung cấp API kiểu OpenAI để gọi các tính năng chat, tạo ảnh và tạo video của [Muse.ai](https://muse.ai/). Máy chủ Python chạy FastAPI và điều khiển Chromium qua Chrome DevTools Protocol (CDP). Muse.ai thực hiện việc tạo nội dung. Dịch vụ quản lý cookie, hàng đợi, tài khoản, proxy và kết quả tải về.
 
@@ -55,7 +55,7 @@ Nếu Chromium nằm ngoài PATH, đặt `MUSE2API_CHROMIUM` thành đường d�
 ## Nhập tài khoản Muse
 
 1. Tải tiện ích từ bảng quản trị hoặc nạp [thư mục tiện ích](extension/) dưới dạng tiện ích đã giải nén trong Chrome hoặc Edge.
-2. Đăng nhập Muse.ai và mở tiện ích **v1.0.7** trong chính cửa sổ đó. Với chế độ ẩn danh hoặc InPrivate, hãy cấp quyền chạy tiện ích trong chế độ tương ứng.
+2. Đăng nhập Muse.ai và mở tiện ích **v1.0.8** trong chính cửa sổ đó. Với chế độ ẩn danh hoặc InPrivate, hãy cấp quyền chạy tiện ích trong chế độ tương ứng.
 3. Điền địa chỉ dịch vụ và API Key, rồi bấm **Đọc và nhập**.
 4. Trong mục **Quản lý tài khoản**, bấm **Kiểm tra** để mở Muse bằng Chromium trên máy chủ và xác minh phiên.
 
@@ -185,15 +185,15 @@ Các mô-đun mới dùng một Base URL và khóa mac2API. `muse/text`, `chatgp
 
 ### Kết nối trực tiếp bằng tiện ích Chrome
 
-1. Chạy mac2API và Chrome trên cùng máy. Trong mac2API, vào **Nhập cookie → Tải tiện ích**. Giải nén rồi chọn thư mục có `manifest.json` tại `chrome://extensions`. Nếu đã cài, thay tệp trong thư mục cũ rồi bấm **Tải lại**.
-2. Mở tab ChatGPT hoặc Gemini đã đăng nhập trong hồ sơ Chrome muốn dùng. Trong tiện ích 1.0.7, nhập `http://127.0.0.1:18610`, khóa quản trị mac2API và một nhãn dễ nhận biết. Để bật **Chạy ChatGPT và Gemini trực tiếp bằng tiện ích**, rồi bấm tên dịch vụ.
+1. Chạy mac2API và Chrome trên cùng máy. Trong mac2API, vào **Nhập cookie → Tải tiện ích**. Giải nén rồi chọn thư mục có `manifest.json` tại `chrome://extensions`. Nếu đã cài, thay tệp trong thư mục cũ rồi bấm **Tải lại** để giữ thiết lập của tiện ích. Mở popup và kiểm tra hiện **v1.0.8**.
+2. Trong tab **ChatGPT Web** hoặc **Gemini Web** của mac2API, bấm **Sao chép khóa quản trị**. Mở tab AI đã đăng nhập trong Chrome, dán khóa vào tiện ích rồi bấm **ChatGPT** hoặc **Gemini**. Địa chỉ mặc định là `http://127.0.0.1:18610`. Nếu ô địa chỉ đang dùng máy chủ Muse từ xa hoặc mac2API chạy ở cổng khác, nhập địa chỉ mac2API trên máy này.
 3. Mở tab **ChatGPT Web** hoặc **Gemini Web** trong mac2API. Hồ sơ xuất hiện trong danh sách và có nút **Ngắt liên kết**. Bấm **Thử chat** để kiểm tra kết quả. Trong **Khóa người dùng**, chọn các hồ sơ mà từng khóa được phép sử dụng.
 
 Chế độ này dùng phiên đăng nhập của chính hồ sơ Chrome và không yêu cầu bật Chrome DevTools. Mỗi tài khoản đã liên kết chạy một tác vụ tại một thời điểm. Tiện ích mở tab riêng, đóng tab khi xong và trả văn bản hoặc ảnh về mac2API. Bạn có thể đóng popup tiện ích, nhưng cần giữ một cửa sổ Chrome thường mở. Nếu phiên hết hạn, đăng nhập và bấm lại nút dịch vụ. Tiện ích ghép nối trực tiếp qua localhost, phù hợp với bản mac2API chạy trên cùng máy với Chrome.
 
 ### Kết nối qua Chrome DevTools
 
-Máy có Chrome 144 trở lên có thể dùng luồng Chrome DevTools sẵn có. Bật gỡ lỗi từ xa tại `chrome://inspect/#remote-debugging`, mở **Kết nối qua Chrome DevTools** trong tab dịch vụ của mac2API và bấm **Kết nối Chrome → Cho phép**. Trong tiện ích, bỏ chọn chế độ chạy trực tiếp trước khi bấm **ChatGPT** hoặc **Gemini** để xác minh tab đã đăng nhập. Cấu hình cổng cục bộ `MUSE2API_WEB_CDP_PORT` cũng được hỗ trợ.
+Máy có Chrome 144 trở lên có thể dùng luồng Chrome DevTools sẵn có. Bật gỡ lỗi từ xa tại `chrome://inspect/#remote-debugging`, mở **Kết nối qua Chrome DevTools** trong tab dịch vụ của mac2API và bấm **Kết nối Chrome → Cho phép**. Trong **Tùy chọn kết nối nâng cao** của tiện ích, bỏ chọn chế độ chạy trực tiếp trước khi bấm **ChatGPT** hoặc **Gemini** để xác minh tab đã đăng nhập. Cấu hình cổng cục bộ `MUSE2API_WEB_CDP_PORT` cũng được hỗ trợ.
 
 Các mô-đun web tạo một ảnh từ mô tả, tùy quyền của tài khoản. Chat web lấy câu trả lời hoàn chỉnh rồi mới trả về, kể cả khi client yêu cầu SSE. Mỗi yêu cầu mở và đóng tab riêng. mac2API xóa bản nháp và kiểm tra ô nhập trước khi gửi. Muse thử mở một phiên riêng mới nếu vẫn còn tệp hoặc nội dung cũ. Nếu còn bị kẹt, tác vụ dừng và giải thích trong phần **Chi tiết lỗi**. Chỉ các tệp trong ô nhập của tác vụ mới được dọn.
 

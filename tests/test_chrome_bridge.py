@@ -102,7 +102,9 @@ def serve_job(api, browser, origin, pool, app, auth, bridge, prefix, provider, k
             page.js(script)
             page.js(f"const site = {{...bridgeSites[{json.dumps(provider)}], origin: location.origin}}")
             call = "bridgeSiteAction(site, '{}', " + json.dumps(job["prompt"]) + ")"
-            assert page.js(call.format("verify"), await_promise=True)["signedIn"]
+            page.js("document.querySelector(site.account).hidden = true")
+            verified = page.js(call.format("verify"), await_promise=True)
+            assert verified["signedIn"] and verified["composerReady"]
             page.js("document.querySelector(site.composer).innerText = 'previous draft'")
             assert page.js(call.format("prepare"), await_promise=True)["dirty"]
             page.js("document.querySelector(site.composer).innerText = ''")

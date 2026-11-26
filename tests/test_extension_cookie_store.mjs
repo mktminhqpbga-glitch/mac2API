@@ -8,7 +8,7 @@ const cookie = (value, extra = {}) => ({name: 'hatch_sess', value, domain: '.mus
 function fixture({incognito = false, tab = true, stores, cookies, locale = null, url = "https://muse.ai/"} = {}) {
   const active = tab ? {id: 27, incognito, url} : undefined;
   const storeId = incognito ? 'private-7' : 'regular-3';
-  const calls = {reads: [], uploads: []};
+  const calls = {reads: [], uploads: [], messages: []};
   const elements = new Map();
   const element = id => {
     if (!elements.has(id)) elements.set(id, {value: '', innerHTML: '', addEventListener() {}});
@@ -22,6 +22,10 @@ function fixture({incognito = false, tab = true, stores, cookies, locale = null,
     URL,
     crypto: {getRandomValues: bytes => bytes.fill(0xab)},
     chrome: {
+      runtime: {
+        getManifest: () => ({version: '1.0.8'}),
+        sendMessage: async message => {calls.messages.push(message); return {ok: true};},
+      },
       storage: {local: {get: async () => ({}), set: async () => {}}},
       tabs: {query: async () => active ? [active] : []},
       scripting: {executeScript: async () => [{result: true}]},
@@ -111,7 +115,7 @@ for (const [provider, origin, prefix] of [['chatgpt', 'https://chatgpt.com', 'ch
   assert.equal(f.calls.uploads.length, 1);
   assert.equal(f.calls.uploads[0].url, `https://test.invalid/admin/web-providers/${provider}/link`);
   assert.equal(f.calls.uploads[0].body.marker, 'ab'.repeat(16));
-  assert.deepEqual(Object.keys(f.calls.uploads[0].body), ['marker']);
+  assert.equal(f.calls.uploads[0].body.extension_version, '1.0.8');
   assert.match(f.element('log').innerHTML, /Đã xác minh tab/);
 }
 for (const url of ['https://chatgpt.com.example/', 'https://gemini.google.com/']) {
@@ -120,5 +124,16 @@ for (const url of ['https://chatgpt.com.example/', 'https://gemini.google.com/']
   await f.run('run()');
   assert.equal(f.calls.uploads.length, 0);
   assert.equal(f.calls.reads.length, 0);
+}
+{
+  const f = fixture({url: 'https://chatgpt.com/'});
+  f.element('base').value = '';
+  f.element('directChrome').checked = true;
+  await f.run("linkWebProvider('chatgpt')");
+  assert.equal(f.calls.messages.length, 1);
+  assert.equal(f.calls.messages[0].base, 'http://127.0.0.1:18610');
+  assert.equal(f.calls.messages[0].provider, 'chatgpt');
+  assert.equal(f.calls.uploads.length, 0);
+  assert.match(f.element('log').innerHTML, /Đã liên kết ChatGPT/);
 }
 console.log('PASS: exact provider origin, matching route and no web cookie import');

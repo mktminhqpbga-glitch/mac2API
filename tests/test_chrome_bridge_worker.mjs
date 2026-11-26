@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const root = new URL('../extension/', import.meta.url);
 const worker = fs.readFileSync(new URL('bridge-worker.js', root), 'utf8');
 
-async function runFixture(permit) {
+async function runFixture(permit, verifyStates) {
   const events = [];
   let now = 0;
   const listener = {addListener() {}};
@@ -41,6 +41,7 @@ async function runFixture(permit) {
         },
         update: async (id, options) => {events.push(['navigate', id, options.url]);},
         get: async id => {
+          if (id === 27 && verifyStates) return {id, status: 'complete', url: 'https://gemini.google.com/app'};
           assert.equal(id, 101);
           return {status: 'complete', url: 'https://gemini.google.com/app'};
         },
@@ -48,6 +49,11 @@ async function runFixture(permit) {
       },
       scripting: {
         executeScript: async ({target, args}) => {
+          if (target.tabId === 27 && verifyStates) {
+            assert.equal(args[1], 'verify');
+            events.push(['probe']);
+            return [{result: verifyStates.shift() || {signedIn: true, composerReady: true}}];
+          }
           assert.equal(target.tabId, 101);
           const action = args[1];
           if (action === 'prepare' || action === 'send') {
@@ -63,6 +69,11 @@ async function runFixture(permit) {
     },
   });
   vm.runInContext(worker, context);
+  if (verifyStates) {
+    const tab = await vm.runInContext("verifyTab(27, bridgeSites['gemini-web'])", context);
+    assert.equal(tab.id, 27);
+    return events;
+  }
   await vm.runInContext(`runJob('gemini-web', {base: 'http://127.0.0.1:18610', token: 'scoped-bridge-key', windowId: 2},
     {id: 'test', image: false, prompt: 'Prompt mới', remaining_ms: 15000})`, context);
   assert.deepEqual(events.find(event => event[0] === 'open'), ['open', 3, false]);
@@ -81,4 +92,12 @@ test('Chrome bridge closes the task tab when permission was revoked before Send'
   const events = await runFixture(false);
   assert.ok(!events.some(event => event[0] === 'send'));
   assert.deepEqual(events.at(-1), ['finish', {error: 'interrupted'}]);
+});
+
+test('Chrome bridge waits for both the account and composer on the already-open tab', async () => {
+  const events = await runFixture(true, [
+    {signedIn: true, composerReady: false},
+    {signedIn: false, composerReady: true},
+  ]);
+  assert.deepEqual(events, [['probe'], ['probe'], ['probe']]);
 });

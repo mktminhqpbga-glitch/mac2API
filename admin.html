@@ -631,7 +631,11 @@
         <button type="button" class="ghost" data-provider-copy-base>Sao chép Base URL</button>
       </div>
       <div data-web-extension>
-        <p class="hint">Cài <a href="/admin/extension">tiện ích Chrome</a> vào hồ sơ đã đăng nhập. Mở tab AI, nhập địa chỉ localhost và khóa quản trị của mac2API vào tiện ích rồi bấm tên dịch vụ.</p>
+        <div class="acts">
+          <a class="btnlike" href="/admin/extension" download>Tải tiện ích Chrome 1.0.8</a>
+          <button type="button" class="ghost" data-web-copy-key>Sao chép khóa quản trị</button>
+        </div>
+        <p class="hint">Mở tab AI đã đăng nhập, mở tiện ích, dán khóa quản trị rồi bấm tên dịch vụ. Tiện ích mặc định dùng địa chỉ mac2API trên máy này.</p>
         <div data-web-extension-accounts></div>
       </div>
       <details data-web-setup>
@@ -639,7 +643,7 @@
         <ol>
           <li>Trong Chrome 144 trở lên, dán <code>chrome://inspect/#remote-debugging</code> vào thanh địa chỉ và bật gỡ lỗi từ xa.</li>
           <li>Bấm <b>Kết nối Chrome</b> bên dưới rồi chọn <b>Cho phép</b> khi Chrome hỏi.</li>
-          <li>Vào tab đã đăng nhập, mở tiện ích và bấm đúng nút <b data-web-extension-button></b>.</li>
+          <li>Mở tiện ích trong tab đã đăng nhập. Vào <b>Tùy chọn kết nối nâng cao</b>, bỏ chọn chế độ chạy trực tiếp rồi bấm <b data-web-extension-button></b>.</li>
         </ol>
         <button type="button" class="ghost" data-web-copy>Sao chép địa chỉ cài đặt Chrome</button>
         <button type="button" data-web-connect>Kết nối Chrome</button>
@@ -780,7 +784,7 @@
 
   <!-- ==================== 获取 Cookie ==================== -->
   <section class="tab" id="tab-cookie">
-    <div class="card" id="extensionUpgradeNotice" role="note" data-i18n="extension-upgrade-notice"><b>浏览器扩展 1.0.7</b><br><a href="/admin/extension">下载扩展</a>。如需更新解压的扩展，请替换文件后在 <code>chrome://extensions</code> 或 <code>edge://extensions</code> 点击重新加载。</div>
+    <div class="card" id="extensionUpgradeNotice" role="note" data-i18n="extension-upgrade-notice"><b>浏览器扩展 1.0.8</b><br><a href="/admin/extension">下载扩展</a>。如需更新解压的扩展，请替换文件后在 <code>chrome://extensions</code> 或 <code>edge://extensions</code> 点击重新加载。</div>
     <div class="card" style="border-color:rgba(52,211,153,.45)">
       <h3>方式一：浏览器扩展 <span class="tag">推荐 · 零命令行 · 全平台</span></h3>
       <div class="hint" data-i18n="ext-why-hint">
@@ -798,7 +802,7 @@
           <div class="hint" style="margin:4px 0 9px" data-i18n="ext-unzip-hint">
             解压到一个你不会删掉的目录，比如 <code>D:\muse2api-extension</code>。
           </div>
-          <a class="btnlike" href="/admin/extension" download>⬇ 下载 muse2api-extension.zip</a>
+          <a class="btnlike" href="/admin/extension" download>下载浏览器扩展 (ZIP)</a>
           <button class="ghost mini" onclick="loadExtFiles()">查看包含哪些文件</button>
           <span class="hint" id="extFiles" style="margin-left:8px"></span>
         </div>
@@ -1380,7 +1384,7 @@ const I18N_EN = {
   "方式一：浏览器扩展": "Option 1: Browser extension",
   "推荐 · 零命令行 · 全平台": "Recommended · No command line · All platforms",
   "下载并解压扩展": "Download and unzip the extension",
-  "⬇ 下载 muse2api-extension.zip": "⬇ Download muse2api-extension.zip",
+  "下载浏览器扩展 (ZIP)": "Download browser extension (ZIP)",
   "查看包含哪些文件": "Show included files",
   "在浏览器里加载扩展": "Load the extension in your browser",
   "以 Chrome 为例（Edge / Brave / 360 极速 等 Chromium 内核浏览器步骤类似）：": "Using Chrome as an example (Edge / Brave / 360 and other Chromium-based browsers are similar):",
@@ -1674,7 +1678,7 @@ const I18N_EN = {
 };
 /* 含富文本的块：data-i18n="key" → 英文 innerHTML（须保留原有子元素的 id/class/属性） */
 const I18N_EN_HTML = {
-  "extension-upgrade-notice": "<b>Browser extension 1.0.7</b><br><a href=\"/admin/extension\">Download the extension</a>. To update an unpacked installation, replace its files and click Reload at <code>chrome://extensions</code> or <code>edge://extensions</code>.",
+  "extension-upgrade-notice": "<b>Browser extension 1.0.8</b><br><a href=\"/admin/extension\">Download the extension</a>. To update an unpacked installation, replace its files and click Reload at <code>chrome://extensions</code> or <code>edge://extensions</code>.",
   "repo-status-desc": "Comparing your local version with the latest version in the official GitHub repository… (online upgrades keep your <code>.env</code> keys and the <code>data/</code> Account Pool and media data)",
   "auth-banner": "\n      <b>Enter your API Key first so the page can load data</b><br>\n      <span style=\"color:var(--muted)\">\n        The API Key is this service's own \"access password\". It stops other people from using your Muse account quota.\n        It is <b style=\"color:var(--text)\">not</b> your Muse password. It is a random string generated at deploy time (it starts with <code>m2a_</code>).<br>\n        Paste it into the box at the top right and click \"Save\". Your browser remembers it, so you won't need to enter it again.\n      </span>\n    ",
   "model-names-hint": "\n        Model names: <code>muse-spark</code> (chat/code), <code>muse-image</code> (images), <code>muse-video</code> (videos).\n        See the \"Integration Docs\" tab for full examples.\n      ",
@@ -2069,7 +2073,7 @@ const I18N_VI = {
   "方式一：浏览器扩展": "Cách 1: Tiện ích trình duyệt",
   "推荐 · 零命令行 · 全平台": "Khuyên dùng · Không cần dòng lệnh · Đa nền tảng",
   "下载并解压扩展": "Tải và giải nén tiện ích",
-  "⬇ 下载 muse2api-extension.zip": "⬇ Tải muse2api-extension.zip",
+  "下载浏览器扩展 (ZIP)": "Tải tiện ích trình duyệt (ZIP)",
   "查看包含哪些文件": "Xem các tệp trong gói",
   "在浏览器里加载扩展": "Nạp tiện ích vào trình duyệt",
   "以 Chrome 为例（Edge / Brave / 360 极速 等 Chromium 内核浏览器步骤类似）：": "Ví dụ trên Chrome (Edge, Brave và các trình duyệt Chromium khác có thao tác tương tự):",
@@ -2362,7 +2366,7 @@ const I18N_VI = {
   "✗ 保活失败: 未知错误": "✗ Duy trì phiên thất bại do lỗi chưa xác định"
 };
 const I18N_VI_HTML = {
-  "extension-upgrade-notice": "<b>Tiện ích trình duyệt 1.0.7</b><br><a href=\"/admin/extension\">Tải tiện ích</a>. Để cập nhật bản giải nén, thay tệp rồi bấm Tải lại tại <code>chrome://extensions</code> hoặc <code>edge://extensions</code>.",
+  "extension-upgrade-notice": "<b>Tiện ích trình duyệt 1.0.8</b><br><a href=\"/admin/extension\">Tải tiện ích</a>. Để cập nhật bản giải nén, thay tệp rồi bấm Tải lại tại <code>chrome://extensions</code> hoặc <code>edge://extensions</code>.",
   "repo-status-desc": "Đang đối chiếu phiên bản đã cài với kho cập nhật. Cấu hình <code>.env</code> và dữ liệu trong <code>data/</code> được giữ lại khi cập nhật.",
   "auth-banner": "<b>Nhập API Key để tải dữ liệu</b><br><span style=\"color:var(--muted)\">Dùng khóa truy cập của dịch vụ Muse2API và bấm Lưu.</span>",
   "model-names-hint": "Model: <code>muse-spark</code> (chat và mã), <code>muse-image</code> (ảnh), <code>muse-video</code> (video). Xem mục Hướng dẫn tích hợp để biết ví dụ.",
@@ -3559,6 +3563,7 @@ const chatProviderPanels = new Map([
   const accountForm = panel.querySelector('[data-web-account-create]');
   const accountsPath = '/admin/web-providers/' + id + '/accounts';
   panel.querySelector('[data-web-extension-button]').textContent = id === 'chatgpt' ? 'ChatGPT' : 'Gemini';
+  panel.querySelector('[data-web-copy-key]').onclick = () => copyKey();
   panel.querySelector('[data-web-copy]').onclick = () => copyText('chrome://inspect/#remote-debugging');
 
   async function accountAction(path, options, message) {

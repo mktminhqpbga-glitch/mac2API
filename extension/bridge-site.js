@@ -5,7 +5,7 @@ const bridgeSites = {
     origin: 'https://chatgpt.com',
     path: '/',
     account: '[data-testid="accounts-profile-button"], [data-testid="profile-button"], [data-testid="profile-menu-button"]',
-    composer: '#prompt-textarea',
+    composer: '#prompt-textarea, [data-testid="prompt-textarea"][contenteditable="true"], textarea[data-testid="prompt-textarea"]',
     send: '[data-testid="send-button"], #composer-submit-button[data-testid="send-button"]',
     reply: '[data-message-author-role="assistant"]',
     stop: '[data-testid="stop-button"]',
@@ -29,7 +29,9 @@ async function bridgeSiteAction(site, action, prompt) {
   const visible = element => Boolean(element?.getClientRects().length);
   const find = selector => [...document.querySelectorAll(selector)].find(visible);
   const editor = find(site.composer);
-  if (action === 'verify') return {signedIn: Boolean(editor && find(site.account))};
+  // A collapsed sidebar can hide the account control in a signed-in profile.
+  const signedIn = Boolean(document.querySelector(site.account));
+  if (action === 'verify') return {signedIn, composerReady: Boolean(editor)};
   const replies = [...document.querySelectorAll(site.reply)].filter(element =>
     visible(element) && !element.parentElement?.closest(site.reply)
   );
@@ -38,7 +40,7 @@ async function bridgeSiteAction(site, action, prompt) {
     visible(element) && !element.disabled && element.getAttribute('aria-disabled') !== 'true'
   );
   if (action === 'prepare' || action === 'send') {
-    if (!find(site.account)) return {signedIn: false};
+    if (!signedIn) return {signedIn: false};
     if (!editor) return {ready: false};
     if (location.pathname.replace(/\/$/, '') !== site.path.replace(/\/$/, '') || replies.length || stopping) {
       return {dirty: true};
