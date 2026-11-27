@@ -1,5 +1,9 @@
 # Nhật ký và bàn giao mac2API
 
+## 1.6.16
+
+- Tải lại Muse một lần trong cùng phiên nếu ô nhập đã xuất hiện nhưng còn bị khóa. Chỉ gửi mô tả khi ô nhập thật sự sẵn sàng.
+
 ## 1.6.15
 
 - Tiện ích Chrome 1.0.9 có nút **Kiểm tra kết nối**. Khi nhập Muse, tiện ích xác minh địa chỉ và khóa quản trị, rồi chỉ báo thành công khi nhận được mã tài khoản do mac2API trả về.

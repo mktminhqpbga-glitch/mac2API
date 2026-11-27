@@ -753,16 +753,21 @@ class MuseEngine:
             out[name] = {"value": c.get("value", ""), "expires": exp}
         return out
 
-    _COMPOSER_FIELD_JS = """(() => {
-        function usable(field) {
-            return field?.matches('textarea') && !field.matches(':disabled') && !field.readOnly
-                && field.getClientRects().length > 0 && getComputedStyle(field).visibility === 'visible'
-                && !field.closest('[inert],aside,nav,[role="navigation"],div[class*="chat-user-bubble"],'
-                    + 'div[class*="group/msg"],div[class*="hatch-chat-groupable-bubble"]');
+    _FIND_COMPOSER_JS = """((editableOnly) => {
+        function matchesComposer(field) {
+            if (!field?.matches('textarea') || !field.getClientRects().length
+                || getComputedStyle(field).visibility !== 'visible'
+                || field.closest('aside,nav,[role="navigation"],dialog,[role="dialog"],'
+                    + 'div[class*="chat-user-bubble"],div[class*="group/msg"],'
+                    + 'div[class*="hatch-chat-groupable-bubble"]')) return false;
+            return !editableOnly || (!field.matches(':disabled') && !field.readOnly
+                && !field.closest('[inert],[aria-disabled="true"],[aria-readonly="true"]'));
         }
         const active = document.activeElement;
-        return usable(active) ? active : Array.from(document.querySelectorAll('textarea')).find(usable);
-    })()"""
+        return matchesComposer(active) ? active : Array.from(document.querySelectorAll('textarea')).find(matchesComposer);
+    })(%s)"""
+    _COMPOSER_FIELD_JS = _FIND_COMPOSER_JS % "true"
+    _COMPOSER_PRESENT_JS = _FIND_COMPOSER_JS % "false"
 
     _COMPOSER_READY_JS = r"""(function(){
         if (document.readyState === 'loading') return 'loading';
@@ -772,7 +777,7 @@ class MuseEngine:
         var b = document.body ? (document.body.innerText || '') : '';
         if (/^\s*(?:Connecting(?:\.\.\.|…)|Đang kết nối(?:\.\.\.|…)|正在连接(?:\.\.\.|…))\s*$/im.test(b)) return 'connecting';
         if (""" + _COMPOSER_FIELD_JS + """) return 'ready';
-        return document.querySelector('textarea') ? 'input-disabled' : 'no-ta';
+        return (""" + _COMPOSER_PRESENT_JS + """) ? 'input-disabled' : 'no-ta';
     })()"""
 
     def _wait_ws_ready(self, page: CDP, timeout: float = 15.0) -> bool:
@@ -823,7 +828,7 @@ class MuseEngine:
             state = page.js("""(() => ({
                 hostname: location.hostname, path: location.pathname,
                 readyState: document.readyState,
-                hasComposer: Boolean(document.querySelector('textarea')),
+                hasComposer: Boolean(""" + MuseEngine._COMPOSER_PRESENT_JS + """),
                 loginForm: Boolean(document.querySelector('input[type="password"]')),
                 body: document.body ? document.body.innerText.slice(0,1200) : ''
             }))()""", timeout=timeout)
@@ -834,20 +839,23 @@ class MuseEngine:
         if proxy and re.search(r"err_(?:proxy|tunnel)|proxy authentication|代理认证失败", body, re.I):
             raise MuseProxyError("Chrome không kết nối được qua proxy của tài khoản Muse. Hãy kiểm tra proxy và thông tin xác thực.")
         path = str(state.get("path") or "")
-        if state.get("hostname") in {"muse.ai", "www.muse.ai"} and (
+        is_muse = state.get("hostname") in {"muse.ai", "www.muse.ai"}
+        if is_muse and (
             re.match(r"^/(?:log-?in|sign-?in|auth/(?:login|signin))(?:/|$)", path, re.I)
             or state.get("loginForm")
         ):
             raise MuseAuthError("Muse.ai đã mở trang đăng nhập. Hãy đăng nhập lại và nhập lại cookie của tài khoản.")
         if re.search(r"^\s*(?:Connecting|Đang kết nối|正在连接)(?:\.\.\.|…)\s*$", body, re.I | re.M):
             raise MusePageUnavailable("Muse.ai vẫn đang kết nối với không gian làm việc. Tác vụ dừng trước khi gửi yêu cầu.")
+        retry_reload = is_muse and state.get("readyState") in {"interactive", "complete"}
         if state.get("hasComposer"):
-            raise MusePageUnavailable("Ô chat Muse.ai đã xuất hiện nhưng chưa cho phép nhập. Tác vụ dừng trước khi gửi yêu cầu.")
+            raise MusePageUnavailable(
+                "Ô chat Muse.ai đã xuất hiện nhưng chưa cho phép nhập. Tác vụ dừng trước khi gửi yêu cầu. "
+                "Hãy bấm Kiểm tra tài khoản Muse rồi thử lại.", retry_reload=retry_reload)
         raise MusePageUnavailable(
             "Hết thời gian tải Muse.ai vì ô chat chưa xuất hiện. Tác vụ dừng trước khi gửi yêu cầu. "
             "Hãy kiểm tra mạng hoặc proxy của máy chạy mac2API. Chưa xác định phiên đăng nhập hết hiệu lực.",
-            retry_reload=(state.get("hostname") in {"muse.ai", "www.muse.ai"}
-                          and state.get("readyState") in {"interactive", "complete"}),
+            retry_reload=retry_reload,
         )
 
     def _wait_muse_composer(self, page: CDP, remaining: float, proxy: dict | None):
@@ -869,7 +877,8 @@ class MuseEngine:
             self._muse_page_not_ready(page, proxy)
         except MusePageUnavailable as exc:
             if reloaded:
-                raise MusePageUnavailable(f"{exc} Đã tải lại trang một lần trong cùng phiên.") from exc
+                raise MusePageUnavailable(f"{exc} Đã tải lại trang một lần trong cùng phiên.",
+                                          code=exc.code, confirmed=exc.confirmed) from exc
             raise
 
     def reset_thread(self, for_chat: bool = False):

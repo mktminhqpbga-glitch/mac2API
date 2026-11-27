@@ -1,8 +1,9 @@
 {
-  "version": "1.6.15",
+  "version": "1.6.16",
   "updated_at": "2026-11-27",
   "repo": "https://github.com/mktminhqpbga-glitch/mac2API",
   "highlights": [
+    "Muse 输入框出现但无法编辑时，在同一会话中重新加载一次。",
     "扩展 1.0.9 新增连接检查。重启后恢复仍未发送且保有临时输入的图片和视频任务。",
     "工作流断线后重新读取进度，图片和视频优先恢复原任务。高级设置收纳连接参数和错误代码。",
     "管理页面支持逐项运行工作流，保存进度并重新运行失败步骤。",
@@ -13,6 +14,7 @@
     "更新越南语界面、Muse 参考文件检查和 MacFlow/Toonflow 媒体适配器。"
   ],
   "highlights_en": [
+    "Retry the Muse page once in the same session when its composer appears but remains locked.",
     "Extension 1.0.9 checks the connection and validates Muse import receipts. Recover queued image and video jobs that still have their temporary input after a restart.",
     "Reconnect to saved workflow progress and recover the original image or video task. Connection settings and error codes are under Advanced settings.",
     "Run multi-step batches in the dashboard, resume saved runs, and retry an individual failed step.",
@@ -23,6 +25,7 @@
     "Includes the Vietnamese dashboard, Muse reference checks, and MacFlow/Toonflow media adapters."
   ],
   "highlights_vi": [
+    "Tải lại Muse một lần trong cùng phiên nếu ô chat đã xuất hiện nhưng vẫn chưa cho phép nhập.",
     "Tiện ích 1.0.9 kiểm tra kết nối và xác nhận đã lưu tài khoản Muse. Khi khởi động lại, khôi phục tác vụ ảnh và video đang chờ có đủ dữ liệu tạm.",
     "Luồng tự động kết nối lại để đọc tiến độ đã lưu và kiểm tra tiếp tác vụ ảnh, video đã gửi. Thông số kết nối và mã lỗi nằm trong Cài đặt nâng cao.",
     "Luồng tự động lưu tiến độ từng mục và cho chạy lại đúng bước lỗi.",

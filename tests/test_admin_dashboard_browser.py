@@ -25,7 +25,9 @@ def wait(predicate):
     while time.monotonic() < end:
         try:
             value = predicate()
-            if value and not (isinstance(value, dict) and "exceptionDetails" in value):
+            missing_value = isinstance(value, dict) and (
+                "exceptionDetails" in value or value.get("result", {}).get("type") == "undefined")
+            if value and not missing_value:
                 return value
         except (httpx.HTTPError, StopIteration):
             pass
@@ -279,9 +281,10 @@ def check_dashboard(app, page, url):
                   {"width": 1600, "height": 1000, "deviceScaleFactor": 1, "mobile": False})
         assert page.js("$('tab-workflows').closest('.workspace-content') && $('workflowForm').clientWidth > 350")
         screenshot("workflow")
-        opened_at = page.js("performance.timeOrigin")
+        page.js("window.__workflowBeforeReload = true")
         page.send("Page.reload")
-        wait(lambda: page.js(f"performance.timeOrigin !== {opened_at} && "
+        wait(lambda: page.js("window.__workflowBeforeReload === undefined && "
+                             "typeof document.getElementById('workflowForm')?.onsubmit === 'function' && "
                              "document.getElementById('workflowResults')?.textContent.includes('Kết quả hai') && "
                              "document.getElementById('workflowInput').value === '[một] [hai]'"))
 
@@ -295,9 +298,10 @@ def check_dashboard(app, page, url):
             $('workflowStart').click()""")
         wait(lambda: page.js("$('workflowDraftStatus').textContent.includes('Mất kết nối')"))
         assert page.js("Boolean(JSON.parse(localStorage.getItem('mac2apiWorkflow:pending')).id)")
-        opened_at = page.js("performance.timeOrigin")
+        page.js("window.__workflowBeforeReload = true")
         page.send("Page.reload")
-        wait(lambda: page.js(f"performance.timeOrigin !== {opened_at} && "
+        wait(lambda: page.js("window.__workflowBeforeReload === undefined && "
+                             "typeof document.getElementById('workflowForm')?.onsubmit === 'function' && "
                              "document.getElementById('workflowResults')?.textContent.includes('Kết quả mục đã gửi') && "
                              "localStorage.getItem('mac2apiWorkflow:pending') === 'null'"))
         assert calls.count((0, 0)) == 2

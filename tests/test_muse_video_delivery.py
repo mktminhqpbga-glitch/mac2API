@@ -66,19 +66,21 @@ with tempfile.TemporaryDirectory() as profile:
 
 print("PASS: composer readiness and undelivered video fast-fail")
 
-for body, second_ready, expected_load, error_type in (
-    ("", True, True, None),
-    ("", False, True, engine_module.MusePageUnavailable),
-    ("Đang kết nối…", True, False, None),
-    ("Connecting...", False, False, engine_module.MusePageUnavailable),
-    ("Proxy authentication required", False, False, engine_module.MuseProxyError),
+for body, composer, second_ready, expected_load, error_type in (
+    ("", False, True, True, None),
+    ("", False, False, True, engine_module.MusePageUnavailable),
+    ("", True, True, True, None),
+    ("", True, False, True, engine_module.MusePageUnavailable),
+    ("Đang kết nối…", True, True, False, None),
+    ("Connecting...", True, False, False, engine_module.MusePageUnavailable),
+    ("Proxy authentication required", True, False, False, engine_module.MuseProxyError),
 ):
     clock = SimpleNamespace(now=0.0)
     engine = engine_module.MuseEngine(SimpleNamespace(profile_dir=tempfile.gettempdir()))
     proxy = {"server": "http://fixture-proxy.test"}
     page = Mock()
     page.js.return_value = {"hostname": "muse.ai", "path": "/thread/new",
-                            "readyState": "interactive", "body": body}
+                            "readyState": "interactive", "body": body, "hasComposer": composer}
     page.send.return_value = {"result": {"frameId": "fixture"}}
     budgets = []
 
@@ -105,7 +107,7 @@ for body, second_ready, expected_load, error_type in (
         assert page.send.call_args.args == ("Page.navigate", {"url": "https://muse.ai/thread/new"})
         assert 0 < page.send.call_args.kwargs["timeout"] <= 20
 
-print("PASS: bounded composer reload on the same page and no reload for workspace/proxy failures")
+print("PASS: a missing or locked composer retries within its budget, with no reload for workspace/proxy failures")
 
 
 class FakeClock:

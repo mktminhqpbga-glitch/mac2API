@@ -13,6 +13,7 @@ import sys
 import tempfile
 import time
 from types import SimpleNamespace
+from unittest.mock import patch
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root', type=Path, default=Path(__file__).resolve().parents[1])
@@ -178,6 +179,43 @@ with tempfile.TemporaryDirectory(prefix='muse-send-test-', dir=Path.home()) as h
             if discard_draft:
                 assert page.js('window.draftWrites') == 2
         print('PASS: task deadline limits the wait, with specific readiness errors and zero clicks')
+
+        fixture()
+        page.js("""
+            document.querySelector('#composer textarea').setAttribute('aria-readonly', 'true');
+            document.body.insertAdjacentHTML('afterbegin',
+                '<div role="dialog"><textarea id="dialog-note"></textarea></div>' +
+                '<textarea id="hidden-note" hidden></textarea>');
+        """)
+        assert page.js('(' + engine._COMPOSER_PRESENT_JS + ')?.closest("#composer")?.id') == 'composer'
+        assert page.js('Boolean(' + engine._COMPOSER_FIELD_JS + ')') is False
+
+        class MuseFixturePage:
+            def __init__(self):
+                self.navigations = 0
+
+            def js(self, script, **kwargs):
+                return page.js(script.replace('location.hostname', '"muse.ai"')
+                               .replace('location.pathname', '"/thread/new"'), **kwargs)
+
+            def send(self, method, params, **_kwargs):
+                assert method == 'Page.navigate' and params == {'url': 'https://muse.ai/thread/new'}
+                self.navigations += 1
+                page.js("document.querySelector('#composer textarea').removeAttribute('aria-readonly')")
+                return {'result': {'frameId': 'fixture'}}
+
+        muse_page = MuseFixturePage()
+        clock = SimpleNamespace(now=0.0)
+        with patch.object(module, 'time', SimpleNamespace(
+                monotonic=lambda: clock.now, sleep=lambda seconds: setattr(clock, 'now', clock.now + seconds))):
+            engine._wait_muse_composer(muse_page, 9, None)
+        assert muse_page.navigations == 1
+        assert engine._send('Video after recovery', expected_references=0,
+                            deadline=time.monotonic() + 3) == 'clicked'
+        assert_accepted('Video after recovery')
+        assert page.js("document.querySelector('#dialog-note').value") == ''
+        assert page.js("document.querySelector('#hidden-note').value") == ''
+        print('PASS: a locked Muse composer reloads once before sending one prompt to the editable composer')
     finally:
         engine.stop()
         # Chromium subprocesses may finish writing the profile after the parent exits.
