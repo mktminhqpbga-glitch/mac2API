@@ -1,5 +1,11 @@
 # Nhật ký và bàn giao mac2API
 
+## 1.6.18
+
+- Kết nối ChatGPT qua máy chủ ChatGPT2API. Vào tab ChatGPT để lưu địa chỉ, khóa và kiểm tra mô hình.
+- Giữ địa chỉ `/chatgpt/v1` cùng hai mô-đun `chatgpt/text` và `chatgpt/image`. Chọn ChatGPT2API trong phần quyền của khóa từng dùng hồ sơ Chrome được chỉ định.
+- Tiện ích Chrome 1.0.11 hỗ trợ kết nối Muse và Gemini.
+
 ## 1.6.17
 
 - Tiện ích Chrome 1.0.10 mở lại với chiều rộng đầy đủ. Phiên bản và ngôn ngữ nằm trên hàng riêng, còn thông báo kết nối nằm ngay dưới các nút.

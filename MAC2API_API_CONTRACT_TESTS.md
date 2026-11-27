@@ -8,9 +8,9 @@ MacFlow dùng khóa người dùng `m2c_…` và HTTPS khi gọi qua mạng. HTT
 
 `contractVersion` là 1. `serverVersion` đọc từ `version.json`. `configured` phản ánh cấu hình đã có, `connected` phản ánh kết nối quan sát được, `ready` phản ánh điều kiện cần để nhận tác vụ và `busy` phản ánh khe hoạt động. Các mã `reason` gồm `not_configured`, `session_unverified`, `browser_unavailable`, `browser_idle`, `browser_disconnected`, `credentials_unverified`, `busy` và `ready`.
 
-Khi hết khe Chromium, máy chủ dùng lần xác minh gần nhất của kết nối ChatGPT Web và Gemini Web hiện tại. `ready: true` cùng `busy: true` cho phép gửi vào hàng đợi nếu còn chỗ. Worker kiểm tra tab khi đến lượt thực thi.
+Khi hết khe Chromium, máy chủ dùng lần xác minh gần nhất của kết nối Gemini Web hiện tại. `ready: true` cùng `busy: true` cho phép gửi vào hàng đợi nếu còn chỗ. Worker kiểm tra tab khi đến lượt thực thi.
 
-Muse đã xác minh tài khoản và có Chromium khả dụng có thể báo `ready: true`, `connected: false`, `reason: "browser_idle"`. mac2API mở Chromium khi thực sự chạy tác vụ. ChatGPT Web và Gemini Web cần kết nối Chrome cục bộ và phiên đã được xác minh đúng nhà cung cấp. Khi hết khe, mac2API hoãn kiểm tra CDP. Kiểm tra khả năng chỉ đọc trạng thái. Quota và khả năng sinh đúng nội dung thực tế do nhà cung cấp quyết định.
+Muse đã xác minh tài khoản và có Chromium khả dụng có thể báo `ready: true`, `connected: false`, `reason: "browser_idle"`. mac2API mở Chromium khi thực sự chạy tác vụ. Gemini Web dùng kết nối Chrome cục bộ và phiên đã xác minh. ChatGPT dùng địa chỉ và khóa ChatGPT2API đã kiểm tra qua danh sách mô hình. Khi hết khe, mac2API hoãn kiểm tra CDP. Kiểm tra khả năng chỉ đọc trạng thái. Quota và khả năng sinh đúng nội dung thực tế do nhà cung cấp quyết định.
 
 Mẫu dưới đây được ghi từ fixture ASGI với khóa chỉ có quyền Muse và một phiên Muse giả lập đã xác minh.
 
@@ -73,7 +73,7 @@ Khi máy chủ từ chối trước khi nhận tác vụ, HTTP 429 có `Retry-Af
 | Trường hợp | Cách dùng |
 |---|---|
 | Muse | `muse/image` hỗ trợ văn bản và ảnh tham chiếu. `muse/video` cung cấp chế độ văn bản và một ảnh mở đầu cho adapter. Các tuyến Muse cũ giữ định dạng ảnh, video và bí danh. |
-| ChatGPT Web và Gemini Web | `chatgpt/image` và `gemini-web/image` tạo ảnh từ văn bản. Các mô-đun chat dùng tuyến văn bản. Chrome phải chạy trên máy chủ đã xác minh hồ sơ hoặc tab. |
+| ChatGPT và Gemini Web | `chatgpt/image` và `gemini-web/image` tạo ảnh từ văn bản. Các mô-đun chat dùng tuyến văn bản. ChatGPT dùng ChatGPT2API. Gemini dùng hồ sơ Chrome đã xác minh. |
 | OpenAI và Gemini chính thức | Giữ tuyến văn bản hiện có. Khả năng báo cấu hình khóa, còn xác nhận tính hợp lệ cần thao tác riêng của quản trị viên. |
 | Tỷ lệ, độ phân giải và thời lượng | Giữ `aspect_ratio`, `resolution` và `duration` trong payload và chỉ dẫn Muse, kể cả 9:16 với độ phân giải cao. `duration` nhận số nguyên dương tùy chọn, kể cả ngoài các mốc chọn nhanh. Nếu bỏ trống, API để Muse dùng mô tả và thiết lập mặc định của nó. Kích thước và thời lượng đầu ra thực tế cần đọc từ tệp. |
 | Giới hạn tham chiếu Muse | 20 ảnh cho mô-đun ảnh, 40 MiB mỗi tệp và 100 MiB tổng dữ liệu. PNG, JPEG, WebP và GIF nằm trong danh sách MIME cho phép. Các tham chiếu gửi qua khóa client chỉ tải từ địa chỉ công khai hoặc dữ liệu đính kèm hợp lệ. |

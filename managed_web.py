@@ -14,7 +14,7 @@ import uuid
 from cdp import CDP
 from proxy import HTTPProxyRelay, public_proxy
 from store import _read, _write
-from web_providers import CHROME_ERRORS, ChromeProfileConnection, WebProviderError
+from web_providers import CHROME_ERRORS, PROVIDERS, ChromeProfileConnection, WebProviderError
 
 
 def visible_chrome_available():
@@ -135,7 +135,7 @@ class ManagedWebAccounts:
 
     def list_accounts(self):
         with self.condition:
-            return [self.public(account) for account in self.accounts.values()]
+            return [self.public(account) for account in self.accounts.values() if account["provider"] in PROVIDERS]
 
     def enabled(self, provider):
         return [account for account in self.accounts.values()
@@ -161,7 +161,7 @@ class ManagedWebAccounts:
     def operation(self, provider, aid):
         with self.condition:
             account = self.accounts.get(aid)
-            if not account or account["provider"] != provider:
+            if provider not in PROVIDERS or not account or account["provider"] != provider:
                 raise WebProviderError("Không tìm thấy tài khoản web.", 404)
             if aid in self.in_use:
                 raise WebProviderError("Tài khoản đang được sử dụng. Hãy thử lại khi tác vụ kết thúc.", 409)

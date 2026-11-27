@@ -41,7 +41,7 @@ async function runFixture(permit, verifyStates) {
         },
         update: async (id, options) => {events.push(['navigate', id, options.url]);},
         get: async id => {
-          if (id === 27 && verifyStates) return {id, status: 'loading', url: 'https://chatgpt.com/'};
+          if (id === 27 && verifyStates) return {id, status: 'loading', url: 'https://gemini.google.com/app'};
           assert.equal(id, 101);
           return {status: 'complete', url: 'https://gemini.google.com/app'};
         },
@@ -73,7 +73,7 @@ async function runFixture(permit, verifyStates) {
   });
   vm.runInContext(worker, context);
   if (verifyStates) {
-    const tab = await vm.runInContext("verifyTab(27, bridgeSites.chatgpt)", context);
+    const tab = await vm.runInContext("verifyTab(27, bridgeSites['gemini-web'])", context);
     assert.equal(tab.id, 27);
     return events;
   }
@@ -97,7 +97,7 @@ test('Chrome bridge closes the task tab when permission was revoked before Send'
   assert.deepEqual(events.at(-1), ['finish', {error: 'interrupted'}]);
 });
 
-test('ChatGPT linking retries detached frames and verifies an editable composer before the tab finishes loading', async () => {
+test('Gemini linking retries detached frames and verifies an editable composer before the tab finishes loading', async () => {
   const events = await runFixture(true, [
     new Error('The frame was removed.'),
     {signedIn: true, composerReady: false},

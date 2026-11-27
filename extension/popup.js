@@ -39,7 +39,7 @@ const I18N_EN = {
   'mac2API 连接正常，已验证 {site} 的登录标签页。': 'mac2API is reachable and the signed-in {site} tab was verified.',
   'mac2API 未确认保存 Muse 账号。请在管理页面检查后再重试。': 'mac2API did not confirm the Muse account was saved. Check the dashboard before retrying.',
   '高级连接设置': 'Advanced connection settings',
-  '使用扩展直接运行 ChatGPT 和 Gemini': 'Run ChatGPT and Gemini directly in Chrome',
+  '使用扩展直接运行 Gemini': 'Run Gemini directly in Chrome',
   '已连接 {site}。请保持 Chrome 打开，并在 mac2API 中试聊。': 'Connected {site}. Keep Chrome open and try chat in mac2API.',
   '打开已登录的 AI 标签页，然后选择对应的服务。': 'Open a signed-in AI tab and select its service.',
   '默认连接本机 mac2API，使用当前 Chrome 个人资料。': 'Uses your current Chrome profile and local mac2API by default.',
@@ -109,7 +109,7 @@ const I18N_VI = {
   'mac2API 连接正常，已验证 {site} 的登录标签页。': 'Đã kết nối mac2API và xác minh tab {site} đã đăng nhập.',
   'mac2API 未确认保存 Muse 账号。请在管理页面检查后再重试。': 'mac2API chưa xác nhận lưu tài khoản Muse. Hãy xem danh sách tài khoản trước khi thử lại.',
   '高级连接设置': 'Tùy chọn kết nối nâng cao',
-  '使用扩展直接运行 ChatGPT 和 Gemini': 'Chạy ChatGPT và Gemini trực tiếp bằng tiện ích',
+  '使用扩展直接运行 Gemini': 'Chạy Gemini trực tiếp bằng tiện ích',
   '已连接 {site}。请保持 Chrome 打开，并在 mac2API 中试聊。': 'Đã liên kết {site}. Hãy giữ Chrome mở rồi thử chat trong mac2API.',
   '打开已登录的 AI 标签页，然后选择对应的服务。': 'Mở tab AI đã đăng nhập rồi chọn dịch vụ.',
   '默认连接本机 mac2API，使用当前 Chrome 个人资料。': 'Mặc định dùng mac2API trên máy này và hồ sơ Chrome đang mở.',
@@ -382,7 +382,6 @@ function tabAtOrigin(tab, origins) {
 }
 
 const WEB_BUTTONS = {
-  chatgpt: {button: 'linkChatGPT', site: 'ChatGPT', origin: 'https://chatgpt.com'},
   'gemini-web': {button: 'linkGemini', site: 'Gemini', origin: 'https://gemini.google.com'},
 };
 

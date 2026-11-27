@@ -12,7 +12,7 @@ import uuid
 from collections.abc import Callable
 
 from store import _read, _write
-from web_providers import WebPostSendError, WebProviderError
+from web_providers import PROVIDERS, WebPostSendError, WebProviderError
 
 HEARTBEAT_TTL = 45
 CLEANUP_SECONDS = 8
@@ -54,6 +54,8 @@ class ChromeBridge:
         self.jobs = {}
 
     def pair(self, provider, profile, label):
+        if provider not in PROVIDERS:
+            raise WebProviderError("Không tìm thấy nhà cung cấp web.", 404)
         aid = f"ext-{provider}-{profile}"
         with self.condition:
             if aid in self.reserved:
@@ -85,7 +87,9 @@ class ChromeBridge:
 
     def _authenticate(self, token):
         account = self.accounts.get(token.partition(".")[0])
-        if not account or not hmac.compare_digest(account["digest"], hashlib.sha256(token.encode()).hexdigest()):
+        if not account or account["provider"] not in PROVIDERS or not hmac.compare_digest(
+            account["digest"], hashlib.sha256(token.encode()).hexdigest()
+        ):
             raise WebProviderError("Kết nối tiện ích đã hết hiệu lực. Hãy liên kết lại.", 401)
         return account["id"]
 
@@ -97,7 +101,7 @@ class ChromeBridge:
             return [{key: item[key] for key in ("id", "label", "provider")}
                     | {"enabled": True, "verified": self._connected(aid) and aid not in self.expired_sessions,
                        "busy": aid in self.reserved}
-                    for aid, item in self.accounts.items()]
+                    for aid, item in self.accounts.items() if item["provider"] in PROVIDERS]
 
     def state(self, provider, allowed_ids=None):
         accounts = [item for item in self.list_accounts() if item["provider"] == provider

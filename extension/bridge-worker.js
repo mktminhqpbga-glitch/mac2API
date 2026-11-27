@@ -92,7 +92,7 @@ function imageSourceAllowed(source, site) {
   const url = new URL(source);
   if (url.protocol === 'blob:') return url.origin === site.origin;
   if (url.protocol === 'data:') return /^data:image\/(?:png|jpeg|webp)[;,]/i.test(source);
-  const domains = ['chatgpt.com', 'oaiusercontent.com', 'oaistatic.com', 'gemini.google.com',
+  const domains = ['gemini.google.com',
     'googleusercontent.com', 'gstatic.com', 'storage.googleapis.com'];
   return url.protocol === 'https:' && !url.username && !url.password && !url.port &&
     domains.some(domain => url.hostname === domain || url.hostname.endsWith('.' + domain));
@@ -242,11 +242,12 @@ async function poll(provider, connection) {
 async function wake() {
   const stored = await chrome.storage.local.get(BRIDGE_CONFIG);
   const providers = stored[BRIDGE_CONFIG]?.providers || {};
-  if (!Object.keys(providers).length) return;
+  const configured = Object.entries(providers).filter(([provider]) => Object.hasOwn(bridgeSites, provider));
+  if (!configured.length) return;
   if (!await chrome.alarms.get(WAKE_ALARM)) {
     await chrome.alarms.create(WAKE_ALARM, {periodInMinutes: 0.5});
   }
-  for (const [provider, connection] of Object.entries(providers)) {
+  for (const [provider, connection] of configured) {
     if (loops.get(provider) === connection.token) continue;
     if (loops.has(provider)) continue;
     loops.set(provider, connection.token);

@@ -1,4 +1,4 @@
-"""Drive authenticated ChatGPT and Gemini tabs through a local DevTools port.
+"""Drive authenticated Gemini tabs through a local DevTools port.
 
 The browser is started and logged into by the operator. Only tabs created for
 requests are closed here. Cookies and third-party API keys are never read.
@@ -34,14 +34,6 @@ class WebProvider:
 
 
 PROVIDERS = {
-    "chatgpt": WebProvider(
-        "https://chatgpt.com/",
-        '#prompt-textarea',
-        '[data-testid="send-button"], #composer-submit-button[data-testid="send-button"]',
-        '[data-message-author-role="assistant"]',
-        '[data-testid="stop-button"]',
-        '[data-testid="copy-turn-action-button"]',
-    ),
     "gemini-web": WebProvider(
         "https://gemini.google.com/app",
         'rich-textarea .ql-editor[contenteditable="true"], rich-textarea [role="textbox"][contenteditable="true"]',
@@ -53,7 +45,7 @@ PROVIDERS = {
 }
 DEFAULT_WEB_CDP_PORT = 19211
 WEB_SETUP_MESSAGE = (
-    "Chưa kết nối Chrome Web. Trong bảng quản trị, mở tab ChatGPT Web hoặc Gemini Web, "
+    "Chưa kết nối Chrome Web. Trong bảng quản trị, mở tab Gemini Web, "
     "bật gỡ lỗi từ xa trong Chrome đang dùng rồi bấm Kết nối Chrome."
 )
 WEB_TIMEOUT_MESSAGE = "Hết thời gian chờ Chrome xử lý tác vụ. Hãy kiểm tra phiên web trước khi gửi lại."
@@ -144,7 +136,7 @@ class ChromeProfileConnection:
         context_id = self.profiles.get(provider_id)
         if not context_id:
             raise WebProviderError(
-                "Hãy mở tab đã đăng nhập và bấm đúng nút ChatGPT hoặc Gemini trong tiện ích.", 409)
+                "Hãy mở tab Gemini đã đăng nhập rồi bấm Gemini trong tiện ích.", 409)
         try:
             result = self.browser.send("Target.createTarget", {"url": provider.url, "browserContextId": context_id})
             target_id = result["result"]["targetId"]
@@ -380,7 +372,6 @@ class WebProviders:
     def _wait_managed_login(self, page, provider_id, deadline):
         provider = PROVIDERS[provider_id]
         selectors = {
-            "chatgpt": '[data-testid="accounts-profile-button"], [data-testid="profile-button"]',
             "gemini-web": 'a[href^="https://accounts.google.com/SignOutOptions"], button[aria-label^="Google Account"], '
                           'button[aria-label^="Tài khoản Google"]',
         }
@@ -605,8 +596,7 @@ def _read_image(page, source: str, *, timeout=15):
     try:
         address = urlsplit(source)
         host = address.hostname or ""
-        public_hosts = ("chatgpt.com", "oaiusercontent.com", "oaistatic.com",
-                        "gemini.google.com", "googleusercontent.com", "gstatic.com",
+        public_hosts = ("gemini.google.com", "googleusercontent.com", "gstatic.com",
                         "storage.googleapis.com")
         allowed_cdn = (address.scheme == "https" and not address.username and not address.password
                        and address.port in (None, 443)

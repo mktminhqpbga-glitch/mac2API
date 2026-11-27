@@ -21,7 +21,7 @@ accounts=[{'id':'fixture'+str(i).zfill(5),'label':'Fixture-'+str(i),'enabled':Tr
  'quota':{'found':True,'plan':'Free plan','weekly_used_pct':29,'extra_left':'1B tokens left','checked_at':now-10000}} for i in range(8)]
 events=[]
 network=[]
-server_state={'mode':'update','videoPolls':0}
+server_state={'mode':'update','videoPolls':0,'gateway':dict(base_url='',text_model='auto',image_model='gpt-image-2.6',has_key=False,ready=False)}
 feature_errors=[]
 def check(value,message):
  if not value:feature_errors.append(message)
@@ -37,6 +37,7 @@ class Handler(BaseHTTPRequestHandler):
   elif path=='/admin/accounts':data={'accounts':accounts,'stats':{'total':8,'healthy':8}};kind='application/json'
   elif path=='/admin/apikey':data={'api_key':'fixture-only'};kind='application/json'
   elif path=='/admin/web-providers':data={'configured':False,'profile_connected':False,'ready':[],'local_setup':True};kind='application/json'
+  elif path=='/admin/chatgpt2api':data=server_state['gateway'];kind='application/json'
   elif path in ['/admin/update/check','/admin/repo/status']:
    known=server_state['mode']=='update'
    data={'repo_url':'https://github.com/czg86389-hub/muse2api','repo_ref':'main','local_version':'1.6.10','remote_version':VERSION if known else '', 'local_sha':'aaaaaaa','remote_sha':'bbbbbbb' if known else '', 'up_to_date':False if known else None,'has_update':known,'check_error':'' if known else 'fixture remote unavailable','managed_deployment':False,'highlights':['fixture update'],'highlights_en':['fixture update'],'highlights_vi':['Bản thử tiếng Việt'],'recent_commits':[]};kind='application/json'
@@ -59,12 +60,21 @@ class Handler(BaseHTTPRequestHandler):
   else:data={'browser_running':True,'media_count':2,'status':'ok','generation_queue':{'queue_timeout':3600},'config':{'image_timeout':240,'video_timeout':600}};kind='application/json'
   body=data if isinstance(data,bytes) else json.dumps(data).encode()
   self.send_response(status_code);self.send_header('Content-Type',kind);self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
+ def do_PUT(self):
+  self.do_POST()
  def do_POST(self):
   body=json.loads(self.rfile.read(int(self.headers.get('Content-Length',0))) or b'{}')
   path=urlsplit(self.path).path
   events.append({'method':'POST','path':path,'body':body})
   if path=='/admin/web-providers/connect-profile':
    reply={'configured':True,'profile_connected':True,'ready':[],'local_setup':True}
+  elif path=='/admin/chatgpt2api':
+   gateway=server_state['gateway']
+   gateway.update(base_url=body['base_url'],has_key=bool(body.get('api_key')),configured=True)
+   reply=gateway
+  elif path=='/admin/chatgpt2api/test':
+   server_state['gateway']['ready']=True
+   reply=server_state['gateway']
   elif path=='/v1/videos':
    reply={'id':'fixture-video','status':'queued'}
   else:
@@ -103,13 +113,25 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
     time.sleep(.1)
    raise AssertionError('Condition failed: '+expr)
   wait("document.querySelectorAll('#poolBody tr').length===8")
-  page.js("document.querySelector('[data-t=openai]').click()")
-  wait("$('tab-openai').querySelector('[data-provider-status]').textContent.includes('Chưa kết nối')")
-  assert page.js("$('tab-openai').querySelector('[data-web-extension]').getClientRects().length && !$('tab-openai').querySelector('[data-web-setup]').open && !$('extensionUpgradeNotice').getClientRects().length")
-  page.js("$('tab-openai').querySelector('[data-web-connect]').click()")
-  wait("$('tab-openai').querySelector('[data-provider-status]').textContent.includes('Đã kết nối Chrome')")
+  page.js("goTab('openai')")
+  wait("$('chatgptGatewayStatus').textContent.includes('Chưa kết nối')")
+  assert page.js("!$('tab-openai').querySelector('[data-web-connect]') && $('chatgptGatewayPublicUrl').value.endsWith('/chatgpt/v1')")
+  page.js("""$('chatgptGatewayUrl').value='http://127.0.0.1:3000';
+    $('chatgptGatewayKey').value='fixture-gateway-key'; $('chatgptGatewaySubmit').click()""")
+  wait("$('chatgptGatewayStatus').textContent.includes('Đã kiểm tra') && !$('chatgptGatewayKey').value")
+  assert [event['path'] for event in events[-2:]]==['/admin/chatgpt2api','/admin/chatgpt2api/test']
+  page.send('Emulation.setDeviceMetricsOverride',{'width':390,'height':844,'deviceScaleFactor':1,'mobile':False})
+  layout = page.js("""({width:document.documentElement.clientWidth,scroll:document.documentElement.scrollWidth,
+    right:$('chatgptGatewaySubmit').getBoundingClientRect().right})""")
+  assert layout['scroll'] == layout['width'] and layout['right'] <= layout['width'], layout
+  page.send('Emulation.clearDeviceMetricsOverride')
+  page.js("document.querySelector('[data-t=gemini]').click()")
+  wait("$('tab-gemini').querySelector('[data-provider-status]').textContent.includes('Chưa kết nối')")
+  assert page.js("$('tab-gemini').querySelector('[data-web-extension]').getClientRects().length && !$('tab-gemini').querySelector('[data-web-setup]').open && !$('extensionUpgradeNotice').getClientRects().length")
+  page.js("$('tab-gemini').querySelector('[data-web-connect]').click()")
+  wait("$('tab-gemini').querySelector('[data-provider-status]').textContent.includes('Đã kết nối Chrome')")
   assert any(item['path']=='/admin/web-providers/connect-profile' for item in events)
-  assert page.js("$('tab-openai').querySelector('[data-provider-test]').disabled")
+  assert page.js("$('tab-gemini').querySelector('[data-provider-test]').disabled")
   page.js("goTab('play');$('vidDur').value='125';$('vidBtn').click()")
   wait("$('vidRes').textContent.includes('fixture only') && !$('vidBtn').disabled")
   assert events[-1]['path']=='/v1/videos' and events[-1]['body']['duration']==125
@@ -236,7 +258,7 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
      const buttons = [...document.querySelectorAll('.provider-buttons button')].map(b => b.getBoundingClientRect());
      return document.documentElement.scrollWidth === 380 && range.getClientRects().length === 1
       && $('langSel').getBoundingClientRect().right < innerWidth
-      && buttons.every((b, i) => b.top === buttons[0].top && (!i || b.left > buttons[i-1].right))
+      && buttons.length === 2 && buttons.every((b, i) => b.top === buttons[0].top && (!i || b.left > buttons[i-1].right))
       && $('directSteps').checkVisibility() === false;
     })()""") is True, lang
     page.js("$('checkConnection').click()")
@@ -252,15 +274,15 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
     script.onload = resolve;
     document.head.append(script);
    })""",await_promise=True)
-   page.js("""document.body.innerHTML = '<button data-testid="accounts-profile-button">Profile</button>' +
-    '<textarea id="prompt-textarea" hidden></textarea><div contenteditable="true">Unrelated editor</div>' +
-    '<form data-type="unified-composer"><div contenteditable="true" class="ProseMirror">Composer</div></form>'""")
-   verify="bridgeSiteAction({...bridgeSites.chatgpt, origin:location.origin}, 'verify')"
+   page.js("""document.body.innerHTML = '<button aria-label="Google Account">Profile</button>' +
+    '<div contenteditable="true">Unrelated editor</div>' +
+    '<rich-textarea><div contenteditable="true" class="ql-editor">Composer</div></rich-textarea>'""")
+   verify="bridgeSiteAction({...bridgeSites['gemini-web'], origin:location.origin}, 'verify')"
    assert page.js(verify,await_promise=True)=={'signedIn':True,'composerReady':True}
-   page.js("document.querySelector('form').setAttribute('aria-readonly','true')")
+   page.js("document.querySelector('rich-textarea').setAttribute('aria-readonly','true')")
    assert page.js(verify,await_promise=True)=={'signedIn':True,'composerReady':False}
    assert not page.js('window.__errors')
-   print('PASS: popup requests its full width, renders in three languages and detects the scoped ChatGPT editor')
+   print('PASS: popup requests its full width, renders in three languages and detects the scoped Gemini editor')
  finally:
   if page:
    try:page.send('Browser.close')

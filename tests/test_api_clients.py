@@ -54,7 +54,7 @@ async def run():
         denied = await http.post("/v1/chat/completions", headers=al,
                                  json={"model": "chatgpt/text", "prompt": "Wrong provider"})
         assert denied.status_code == 403
-        with patch.object(app.web_providers, "port", 19211):
+        with patch.object(app.chatgpt2api, "status", return_value={"configured": True, "ready": True}):
             model_list = (await http.get("/v1/models", headers=bo)).json()["data"]
             assert {item["owned_by"] for item in model_list} == {"muse", "chatgpt"}
         assert (await http.get("/v1/models", headers=al)).status_code == 200

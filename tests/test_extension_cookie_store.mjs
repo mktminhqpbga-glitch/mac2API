@@ -24,7 +24,7 @@ function fixture({incognito = false, tab = true, stores, cookies, locale = null,
     crypto: {getRandomValues: bytes => bytes.fill(0xab)},
     chrome: {
       runtime: {
-        getManifest: () => ({version: '1.0.10'}),
+        getManifest: () => ({version: '1.0.11'}),
         sendMessage: async message => {calls.messages.push(message); return {ok: true};},
       },
       storage: {local: {get: async () => ({}), set: async () => {}}},
@@ -151,7 +151,8 @@ for (const [statusResponse, expected] of [
 }
 console.log('PASS: connection diagnostics and strict confirmation before showing Muse import success');
 
-for (const [provider, origin, prefix] of [['chatgpt', 'https://chatgpt.com', 'chatgpt'], ['gemini-web', 'https://gemini.google.com', 'gemini']]) {
+{
+  const [provider, origin, prefix] = ['gemini-web', 'https://gemini.google.com', 'gemini'];
   const f = fixture({url: origin + '/'});
   f.element('base').value = `https://test.invalid/${prefix}/v1`;
   await f.run(`linkWebProvider('${provider}')`);
@@ -159,25 +160,25 @@ for (const [provider, origin, prefix] of [['chatgpt', 'https://chatgpt.com', 'ch
   assert.equal(f.calls.uploads.length, 1);
   assert.equal(f.calls.uploads[0].url, `https://test.invalid/admin/web-providers/${provider}/link`);
   assert.equal(f.calls.uploads[0].body.marker, 'ab'.repeat(16));
-  assert.equal(f.calls.uploads[0].body.extension_version, '1.0.10');
+  assert.equal(f.calls.uploads[0].body.extension_version, '1.0.11');
   assert.match(f.element('log').innerHTML, /Đã xác minh tab/);
 }
-for (const url of ['https://chatgpt.com.example/', 'https://gemini.google.com/']) {
+for (const url of ['https://gemini.google.com.example/', 'https://chatgpt.com/']) {
   const f = fixture({url});
-  await f.run("linkWebProvider('chatgpt')");
+  await f.run("linkWebProvider('gemini-web')");
   await f.run('run()');
   assert.equal(f.calls.uploads.length, 0);
   assert.equal(f.calls.reads.length, 0);
 }
 {
-  const f = fixture({url: 'https://chatgpt.com/'});
+  const f = fixture({url: 'https://gemini.google.com/'});
   f.element('base').value = '';
   f.element('directChrome').checked = true;
-  await f.run("linkWebProvider('chatgpt')");
+  await f.run("linkWebProvider('gemini-web')");
   assert.equal(f.calls.messages.length, 1);
   assert.equal(f.calls.messages[0].base, 'http://127.0.0.1:18610');
-  assert.equal(f.calls.messages[0].provider, 'chatgpt');
+  assert.equal(f.calls.messages[0].provider, 'gemini-web');
   assert.equal(f.calls.uploads.length, 0);
-  assert.match(f.element('log').innerHTML, /Đã liên kết ChatGPT/);
+  assert.match(f.element('log').innerHTML, /Đã liên kết Gemini/);
 }
 console.log('PASS: exact provider origin, matching route and no web cookie import');

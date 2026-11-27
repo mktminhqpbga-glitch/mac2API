@@ -392,34 +392,33 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
 
     def test_web_connection_is_separate_from_verified_tab(self):
         providers = WebProviders(19211)
-        tabs = [{"id": "tab1", "type": "page", "url": "https://chatgpt.com/"}]
+        tabs = [{"id": "tab1", "type": "page", "url": "https://gemini.google.com/app"}]
         with patch("web_providers.requests.Session") as session:
             reply = session.return_value.__enter__.return_value.get.return_value
             reply.ok = True
             reply.json.return_value = tabs
             states = providers.capability_states()
-            self.assertTrue(states["chatgpt"]["connected"])
-            self.assertFalse(states["chatgpt"]["ready"])
-            providers.linked_targets["chatgpt"] = "tab1"
-            self.assertTrue(providers.capability_states()["chatgpt"]["ready"])
+            self.assertTrue(states["gemini-web"]["connected"])
+            self.assertFalse(states["gemini-web"]["ready"])
+            providers.linked_targets["gemini-web"] = "tab1"
+            self.assertTrue(providers.capability_states()["gemini-web"]["ready"])
             probes = session.call_count
             cached = providers.capability_states(inspect=False)
-            self.assertTrue(cached["chatgpt"]["ready"])
-            self.assertFalse(cached["gemini-web"]["ready"])
+            self.assertTrue(cached["gemini-web"]["ready"])
             self.assertEqual(session.call_count, probes)
             reply.json.return_value = [{**tabs[0], "url": "https://other.invalid/"}]
-            self.assertFalse(providers.capability_states()["chatgpt"]["ready"])
-            self.assertFalse(providers.capability_states(inspect=False)["chatgpt"]["ready"])
+            self.assertFalse(providers.capability_states()["gemini-web"]["ready"])
+            self.assertFalse(providers.capability_states(inspect=False)["gemini-web"]["ready"])
             reply.json.return_value = tabs
-            self.assertTrue(providers.capability_states()["chatgpt"]["ready"])
+            self.assertTrue(providers.capability_states()["gemini-web"]["ready"])
             reply.ok = False
-            self.assertFalse(providers.capability_states()["chatgpt"]["connected"])
-            self.assertFalse(providers.capability_states(inspect=False)["chatgpt"]["connected"])
+            self.assertFalse(providers.capability_states()["gemini-web"]["connected"])
+            self.assertFalse(providers.capability_states(inspect=False)["gemini-web"]["connected"])
             reply.ok = True
             reply.json.return_value = tabs
-            self.assertTrue(providers.capability_states()["chatgpt"]["ready"])
+            self.assertTrue(providers.capability_states()["gemini-web"]["ready"])
             providers.close()
-            self.assertFalse(providers.capability_states(inspect=False)["chatgpt"]["ready"])
+            self.assertFalse(providers.capability_states(inspect=False)["gemini-web"]["ready"])
 
     def test_web_image_fetch_rejects_internal_urls(self):
         from unittest.mock import Mock

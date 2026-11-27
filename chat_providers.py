@@ -128,68 +128,97 @@ class ChatProviders:
 
     async def chat(self, provider: ProviderName, model: str, payload: dict, timeout: int):
         key, _ = self._credentials(provider)
-        body = {**payload, "model": model}
-        body.pop("timeout", None)
-        prompt = body.pop("prompt", None)
-        if not body.get("messages"):
-            if not isinstance(prompt, str) or not prompt.strip():
-                raise HTTPException(400, "Hãy nhập ít nhất một tin nhắn.")
-            body["messages"] = [{"role": "user", "content": prompt.strip()}]
+        return await compatible_chat(PROVIDERS[provider][4], key, model, payload, timeout)
 
-        client = httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10))
-        response = None
-        streaming = False
 
-        async def close():
-            with anyio.CancelScope(shield=True):
+async def compatible_chat(url, key, model, payload, timeout, *, public_model=None):
+    body = {**payload, "model": model}
+    body.pop("timeout", None)
+    prompt = body.pop("prompt", None)
+    if not body.get("messages"):
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise HTTPException(400, "Hãy nhập ít nhất một tin nhắn.")
+        body["messages"] = [{"role": "user", "content": prompt.strip()}]
+
+    client = httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10), trust_env=public_model is None)
+    response = None
+    streaming = False
+
+    async def close():
+        with anyio.CancelScope(shield=True):
+            try:
+                if response is not None:
+                    await response.aclose()
+            finally:
+                await client.aclose()
+
+    try:
+        request = client.build_request(
+            "POST", url, json=body,
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        response = await client.send(request, stream=True)
+        _check_response(response, submitted=public_model is not None)
+        if body.get("stream"):
+            if response.headers.get("content-type", "").split(";")[0].strip().lower() != "text/event-stream":
+                raise HTTPException(502, "Nhà cung cấp không trả về luồng SSE.")
+
+            async def chunks():
                 try:
-                    if response is not None:
-                        await response.aclose()
+                    source = _gateway_chunks(response, public_model) if public_model else response.aiter_bytes()
+                    async for chunk in source:
+                        yield chunk
+                except httpx.RequestError:
+                    yield (b'\n\ndata: {"error":{"message":"Upstream stream interrupted",'
+                           b'"type":"server_error","code":"DELIVERY_UNKNOWN"}}\n\n')
                 finally:
-                    await client.aclose()
-
-        try:
-            request = client.build_request(
-                "POST", PROVIDERS[provider][4], json=body,
-                headers={"Authorization": f"Bearer {key}"},
+                    await close()
+            stream = StreamingResponse(
+                chunks(), media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+                background=BackgroundTask(close),
             )
-            response = await client.send(request, stream=True)
-            _check_response(response)
-            if body.get("stream"):
-                if response.headers.get("content-type", "").split(";")[0].strip().lower() != "text/event-stream":
-                    raise HTTPException(502, "Nhà cung cấp không trả về luồng SSE.")
+            streaming = True
+            return stream
+        await response.aread()
+        data = response.json()
+        if not isinstance(data, dict) or not isinstance(data.get("choices"), list):
+            raise HTTPException(502, "Phản hồi chat từ nhà cung cấp không hợp lệ.")
+        if public_model:
+            data["model"] = public_model
+        return JSONResponse(data)
+    except httpx.RequestError as exc:
+        raise _connection_error(exc, submitted=True) from None
+    except ValueError:
+        raise HTTPException(502, "Phản hồi chat từ nhà cung cấp không hợp lệ.") from None
+    finally:
+        if not streaming:
+            await close()
 
-                async def chunks():
-                    try:
-                        async for chunk in response.aiter_bytes():
-                            yield chunk
-                    except httpx.RequestError:
-                        yield (b'\n\ndata: {"error":{"message":"Upstream stream interrupted",'
-                               b'"type":"server_error","code":"DELIVERY_UNKNOWN"}}\n\n')
-                    finally:
-                        await close()
-                stream = StreamingResponse(
-                    chunks(), media_type="text/event-stream",
-                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-                    background=BackgroundTask(close),
-                )
-                streaming = True
-                return stream
-            await response.aread()
-            data = response.json()
-            if not isinstance(data, dict) or not isinstance(data.get("choices"), list):
-                raise HTTPException(502, "Phản hồi chat từ nhà cung cấp không hợp lệ.")
-            return JSONResponse(data)
-        except httpx.RequestError as exc:
-            raise _connection_error(exc, submitted=True) from None
+
+async def _gateway_chunks(response, model):
+    async for line in response.aiter_lines():
+        if not line.startswith("data:"):
+            continue
+        payload = line[5:].strip()
+        if payload == "[DONE]":
+            yield b"data: [DONE]\n\n"
+            return
+        try:
+            event = json.loads(payload)
+            if not isinstance(event, dict):
+                raise ValueError
         except ValueError:
-            raise HTTPException(502, "Phản hồi chat từ nhà cung cấp không hợp lệ.") from None
-        finally:
-            if not streaming:
-                await close()
+            break
+        if "error" in event:
+            break
+        event["model"] = model
+        yield ("data: " + json.dumps(event, ensure_ascii=False) + "\n\n").encode()
+    yield (b'data: {"error":{"message":"ChatGPT2API stream interrupted",'
+           b'"type":"server_error","code":"DELIVERY_UNKNOWN"}}\n\n')
 
 
-def _check_response(response: httpx.Response):
+def _check_response(response: httpx.Response, *, submitted=False):
     if response.is_success:
         return
     status = response.status_code
@@ -201,6 +230,9 @@ def _check_response(response: httpx.Response):
         retry_after = response.headers.get("Retry-After", "")
         headers = {"Retry-After": retry_after} if retry_after.isascii() and retry_after.isdigit() else None
         raise HTTPException(status, "Đã đạt giới hạn yêu cầu hoặc hạn mức của nhà cung cấp.", headers=headers)
+    if submitted and (status == 408 or status >= 500):
+        raise HTTPException(502, {"code": "DELIVERY_UNKNOWN",
+                                  "message": "ChatGPT2API gặp lỗi sau khi nhận yêu cầu. Cần đối chiếu kết quả."})
     raise HTTPException(502, f"Nhà cung cấp trả lỗi HTTP {status}.")
 
 

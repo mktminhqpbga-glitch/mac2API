@@ -27,7 +27,7 @@ async def run():
     first = app.store.add_account({"hatch_sess": "fixture-first"}, "Muse 01")["id"]
     second = app.store.add_account({"hatch_sess": "fixture-second"}, "Muse 02")["id"]
     ignored = app.store.add_account({"hatch_sess": "fixture-ignored"}, "Muse 03")["id"]
-    web = app.managed_web.create("chatgpt", "ChatGPT 01")
+    web = app.managed_web.create("gemini-web", "Gemini 01")
     app.managed_web.update(web, enabled=True, verified=True)
     seen = []
     pause = threading.Event()
@@ -206,7 +206,7 @@ async def run():
                 model = next(row["model_id"] for row in app.chat_providers.status() if row["id"] == "openai")
                 tenant = await create("Text tenant", {
                     "muse/text": {"accounts": [first]},
-                    "chatgpt/text": {"accounts": [web["id"]]},
+                    "gemini-web/text": {"accounts": [web["id"]]},
                     model: {"charge": {"input_1k_tokens": 30, "output_1k_tokens": 100}},
                 }, history_days=1)
                 t = headers(tenant["api_key"])
@@ -217,12 +217,12 @@ async def run():
                 assert info["output"] == "Phản hồi Muse" and info["status"] == "completed"
                 assert info["account_attempts"][0]["id"] == first and "input_tokens" not in info["usage"]
 
-                response = await http.post("/chatgpt/v1/chat/completions", headers=t,
-                                           json={"prompt": "Kiểm thử ChatGPT", "stream": True})
+                response = await http.post("/gemini/v1/chat/completions", headers=t,
+                                           json={"prompt": "Kiểm thử Gemini", "stream": True})
                 info = await detail(response.headers["X-Mac2API-Usage-Id"])
                 assert info["output"].startswith("Văn bản") and info["account_attempts"][0]["id"] == web["id"]
                 app.managed_web.update(web, enabled=False)
-                assert (await http.post("/chatgpt/v1/chat/completions", headers=t,
+                assert (await http.post("/gemini/v1/chat/completions", headers=t,
                                         json={"prompt": "Tài khoản đã tắt"})).status_code == 503
 
                 response = await http.post("/v1/chat/completions", headers=t,

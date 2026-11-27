@@ -99,11 +99,11 @@ async def check():
         assert connected.status_code == 200, connected.text
         assert connected.json()["port"] == port and app.store.web_chrome_enabled()
         response = await client.get("/v1/models", headers=headers)
-        assert set(app.MODULES) <= {m["id"] for m in response.json()["data"]}
+        assert {model for model in app.MODULES if not model.startswith("chatgpt/")} <= {m["id"] for m in response.json()["data"]}
         for prefix, owner in app.PROVIDER_PREFIXES.items():
             path = f"/{prefix}/v1"
             data = await client.get(path + "/models", headers=headers)
-            assert data.status_code == 200 and data.json()["data"]
+            assert data.status_code == 200 and bool(data.json()["data"]) == (owner != "chatgpt")
             assert all(item["owned_by"] == owner for item in data.json()["data"])
             assert (await client.get(path + "/models")).status_code == 401
             wrong = await client.post(path + "/chat/completions", headers=headers,
@@ -161,7 +161,7 @@ async def check():
                     session.get(f"http://127.0.0.1:{app.web_providers.port}/json/close/{target}", timeout=3)
             response = await client.post(f"/admin/web-providers/{provider}/test", headers=headers)
             assert response.status_code == 200, response.text
-            prefix = "chatgpt" if provider == "chatgpt" else "gemini"
+            prefix = "gemini"
             base = f"/{prefix}/v1"
             response = await client.post(base + "/chat/completions", headers=headers, json={
                 "prompt": "Hello", "timeout": 15,
@@ -200,7 +200,7 @@ async def check_existing_profile(port_file):
     import web_providers
 
     port, _ = port_file.read_text().splitlines()
-    definition = web_providers.PROVIDERS["chatgpt"]
+    definition = web_providers.PROVIDERS["gemini-web"]
     with requests.Session() as session:
         session.trust_env = False
         target = session.put(f"http://127.0.0.1:{port}/json/new?{definition.url}", timeout=3).json()["id"]
@@ -218,12 +218,12 @@ async def check_existing_profile(port_file):
                 connected = await client.post(endpoint, headers=headers)
             assert connected.status_code == 200, connected.text
             assert connected.json()["profile_connected"] and connected.json()["ready"] == []
-            missing = await client.post("/admin/web-providers/chatgpt/test", headers=headers)
+            missing = await client.post("/admin/web-providers/gemini-web/test", headers=headers)
             assert missing.status_code == 409, missing.text
 
             marker = "b" * 32
             page.js(f"document.documentElement.dataset.mac2apiLink = '{marker}'")
-            endpoint = "/admin/web-providers/chatgpt/link"
+            endpoint = "/admin/web-providers/gemini-web/link"
             linked = await client.post(endpoint, headers=headers, json={"marker": marker})
             assert linked.status_code == 200, linked.text
             old = await client.post(endpoint, headers=headers, json={"marker": marker})
@@ -232,7 +232,7 @@ async def check_existing_profile(port_file):
                                        json={"marker": marker, "extension_version": "1.0.8"})
             assert modern.status_code == 409 and "Tải tiện ích" not in modern.json()["detail"], modern.text
             status = (await client.get("/admin/web-providers", headers=headers)).json()
-            assert status["ready"] == ["chatgpt"]
+            assert status["ready"] == ["gemini-web"]
             key = app.store.create_client("capability fixture", ["chatgpt", "gemini-web"])["api_key"]
             caps_headers = {"Authorization": f"Bearer {key}"}
             slot = app.ConcurrencyLock(1)
@@ -243,12 +243,12 @@ async def check_existing_profile(port_file):
                     with patch.object(browser, "send", side_effect=AssertionError("capabilities probed busy Chrome")):
                         busy = (await client.get("/v1/capabilities", headers=caps_headers)).json()
                     states = {provider["id"]: provider for provider in busy["providers"]}
-                    assert states["chatgpt"]["ready"] and states["chatgpt"]["busy"]
-                    assert states["chatgpt"]["reason"] == "busy" and not states["gemini-web"]["ready"]
-                    queued = await client.post("/chatgpt/v1/images/tasks", headers=caps_headers,
+                    assert states["gemini-web"]["ready"] and states["gemini-web"]["busy"]
+                    assert states["gemini-web"]["reason"] == "busy" and not states["chatgpt"]["ready"]
+                    queued = await client.post("/gemini/v1/images/tasks", headers=caps_headers,
                                                json={"prompt": "A green square", "timeout": 15})
                     assert queued.status_code == 202 and queued.json()["status"] == "queued", queued.text
-                    task_path = f"/chatgpt/v1/images/tasks/{queued.json()['id']}"
+                    task_path = f"/gemini/v1/images/tasks/{queued.json()['id']}"
                     waiting = await client.get(task_path, headers=caps_headers)
                     assert waiting.json()["status"] == "queued", waiting.text
                 finally:
@@ -262,27 +262,27 @@ async def check_existing_profile(port_file):
 
             capabilities = (await client.get("/v1/capabilities", headers=caps_headers)).json()
             states = {provider["id"]: provider for provider in capabilities["providers"]}
-            assert states["chatgpt"]["ready"] and states["chatgpt"]["connected"]
-            assert not states["gemini-web"]["ready"]
-            assert (await client.get("/gemini/v1/models", headers=headers)).json()["data"] == []
+            assert states["gemini-web"]["ready"] and states["gemini-web"]["connected"]
+            assert not states["chatgpt"]["ready"]
+            assert (await client.get("/chatgpt/v1/models", headers=headers)).json()["data"] == []
 
-            response = await client.post("/chatgpt/v1/chat/completions", headers=headers, json={"prompt": "Hello"})
+            response = await client.post("/gemini/v1/chat/completions", headers=headers, json={"prompt": "Hello"})
             assert response.status_code == 200, response.text
             assert response.json()["choices"][0]["message"]["content"] == "Test answer: Hello (chosen profile)"
-            assert page.js("document.querySelector('textarea').value") == "Old draft"
+            assert page.js("document.querySelector('.ql-editor').innerText") == "Old draft"
             browser = app.web_providers.profile_connection.browser
             targets = browser.send("Target.getTargets")["result"]["targetInfos"]
             matching_pages = [tab for tab in targets if tab["type"] == "page" and tab["url"] == definition.url]
             assert [tab["targetId"] for tab in matching_pages] == [target], matching_pages
             assert app.Store(app.CFG).web_chrome_profile_preferred()
             restarted = web_providers.WebProviders(int(port), profile_preferred=True)
-            assert not restarted.ready("chatgpt")
+            assert not restarted.ready("gemini-web")
             with patch.object(app, "web_providers", restarted):
                 status = (await client.get("/admin/web-providers", headers=headers)).json()
                 assert not status["configured"] and status["ready"] == []
                 capabilities = (await client.get("/v1/capabilities", headers=caps_headers)).json()
                 assert all(not provider["ready"] for provider in capabilities["providers"])
-                blocked = await client.post("/chatgpt/v1/chat/completions", headers=headers, json={"prompt": "Hello"})
+                blocked = await client.post("/gemini/v1/chat/completions", headers=headers, json={"prompt": "Hello"})
                 assert blocked.status_code == 503, blocked.text
     finally:
         page.close()
@@ -303,7 +303,7 @@ async def check_managed_profile(tmp, chromium, server):
         return ManagedBrowser(cfg, account, visible=False, url=url + "?fixture-login" if visible else url)
 
     admin = {"Authorization": "Bearer fixture"}
-    endpoint = "/admin/web-providers/chatgpt/accounts"
+    endpoint = "/admin/web-providers/gemini-web/accounts"
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app.app), base_url="http://test") as client:
         with patch.object(app.CFG, "chromium", str(launcher)), \
              patch("managed_web.ManagedBrowser", side_effect=launch), \
@@ -314,7 +314,7 @@ async def check_managed_profile(tmp, chromium, server):
             aid = added.json()["id"]
             path = f"{endpoint}/{aid}"
             assert (await client.patch(path, headers=admin, json={"enabled": True})).status_code == 409
-            assert (await client.post(path.replace("chatgpt", "gemini-web") + "/test", headers=admin)).status_code == 404
+            assert (await client.post(path.replace("gemini-web", "chatgpt") + "/test", headers=admin)).status_code == 404
             logged = await client.post(path + "/login", headers=admin)
             assert logged.status_code == 200, logged.text
             browser = app.managed_web.login_windows[aid].browser
@@ -335,7 +335,7 @@ async def check_managed_profile(tmp, chromium, server):
 
             restarted = ManagedWebAccounts(app.CFG)
             with patch.object(app, "managed_web", restarted):
-                reply = await client.post("/chatgpt/v1/chat/completions", headers=admin, json={"prompt": "Hello"})
+                reply = await client.post("/gemini/v1/chat/completions", headers=admin, json={"prompt": "Hello"})
                 assert reply.status_code == 200, reply.text
                 assert reply.json()["choices"][0]["message"]["content"] == "Test answer: Hello"
                 assert not restarted.login_windows
@@ -347,14 +347,14 @@ async def check_managed_profile(tmp, chromium, server):
                 assert "fixture-secret" not in stored_proxy.text and stored_proxy.json()["proxy"]["has_password"]
                 # An enabled profile that needs checking must never fall back to the old Chrome path.
                 with patch.object(app.web_providers, "generate", side_effect=AssertionError("unexpected fallback")):
-                    reply = await client.post("/chatgpt/v1/chat/completions", headers=admin, json={"prompt": "Hello"})
+                    reply = await client.post("/gemini/v1/chat/completions", headers=admin, json={"prompt": "Hello"})
                 assert reply.status_code == 503, reply.text
                 proxied_before = server.proxied_requests
                 checked = await client.post(path + "/test", headers=admin)
                 assert checked.status_code == 200, checked.text
                 assert server.proxied_requests > proxied_before
                 proxied_before = server.proxied_requests
-                reply = await client.post("/chatgpt/v1/chat/completions", headers=admin, json={"prompt": "Hello"})
+                reply = await client.post("/gemini/v1/chat/completions", headers=admin, json={"prompt": "Hello"})
                 assert reply.status_code == 200 and server.proxied_requests > proxied_before, reply.text
 
 
@@ -385,7 +385,7 @@ if __name__ == "__main__":
                 asyncio.run(check())
                 asyncio.run(check_existing_profile(port_file))
                 asyncio.run(check_managed_profile(tmp, chromium, server))
-            print("PASS: ChatGPT and Gemini module routes, real CDP transport, image polling, media and input validation")
+            print("PASS: Gemini module routes, real CDP transport, image polling, media and input validation")
             print("PASS: existing Chrome profile linkage, correct session storage, original tab retained")
             print("PASS: managed profile persists across restart, starts from idle and uses the saved proxy after recheck")
         finally:

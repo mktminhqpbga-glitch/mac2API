@@ -22,19 +22,17 @@ from test_admin_dashboard_browser import wait
 PAGE = """<!doctype html><meta charset="utf-8">
 <button data-testid="accounts-profile-button" aria-label="Google Account">Signed in</button>
 <form>
-  <div id="prompt-textarea" contenteditable="true" style="min-height:30px;width:400px"></div>
   <rich-textarea><div class="ql-editor" contenteditable="true" style="min-height:30px;width:400px"></div></rich-textarea>
   <button data-testid="send-button" class="send-button" type="button" disabled>Send</button>
 </form>
 <script>
-const chatgpt = location.pathname === '/';
-const editor = document.querySelector(chatgpt ? '#prompt-textarea' : '.ql-editor');
+const editor = document.querySelector('.ql-editor');
 const button = document.querySelector('.send-button');
 if (location.search) editor.innerText = 'ORIGINAL DRAFT';
 editor.oninput = () => {button.disabled = !editor.innerText.trim()};
 button.onclick = () => {
   fetch('/fixture-click', {method:'POST'});
-  const reply = document.createElement(chatgpt ? 'div' : 'model-response');
+  const reply = document.createElement('model-response');
   reply.dataset.messageAuthorRole = 'assistant';
   const body = document.createElement('div');
   body.className = 'markdown';
@@ -83,7 +81,7 @@ def pair(api, provider, profile, admin):
 
 
 def serve_job(api, browser, origin, pool, app, auth, bridge, prefix, provider, kind):
-    path = "/" if provider == "chatgpt" else "/app"
+    path = "/app"
     routes = {"text": "chat/completions", "image": "images/generations"}
     request = {"model": f"{provider}/{kind}", "prompt": "Fixture line 1\nFixture line 2", "timeout": 12}
     if kind == "image":
@@ -139,14 +137,16 @@ def serve_job(api, browser, origin, pool, app, auth, bridge, prefix, provider, k
 
 def exercise(api, browser, fixture, pool, app):
     admin = {"Authorization": "Bearer fixture-bridge-key"}
-    chat, chat_id = pair(api, "chatgpt", "a" * 32, admin)
+    assert api.post("/admin/web-providers/chatgpt/extension", headers=admin,
+                    json={"profile": "c" * 32, "label": "Retired"}).status_code == 404
+    chat, chat_id = pair(api, "gemini-web", "a" * 32, admin)
     gemini, gemini_id = pair(api, "gemini-web", "b" * 32, admin)
     for bridge in (chat, gemini):
         assert api.post("/browser-bridge/jobs/unknown/heartbeat", headers=bridge).status_code == 200
-    wait(lambda: len(api.get("/admin/web-providers", headers=admin).json()["ready"]) == 2)
+    wait(lambda: sum(item["verified"] for item in api.get("/admin/web-providers", headers=admin).json()["extension_accounts"]) == 2)
 
     grant = {"label": "Fixture customer", "rules": {
-        "chatgpt/text": {"accounts": [chat_id]}, "gemini-web/image": {"accounts": [gemini_id]}}}
+        "gemini-web/text": {"accounts": [chat_id]}, "gemini-web/image": {"accounts": [gemini_id]}}}
     client_key = api.post("/admin/client-keys", json=grant, headers=admin)
     assert client_key.status_code == 201, client_key.text
     customer = {"Authorization": "Bearer " + client_key.json()["api_key"]}
@@ -154,14 +154,14 @@ def exercise(api, browser, fixture, pool, app):
     assert app.engine.proc is None
     cap = api.get("/v1/capabilities", headers=customer).json()
     assert all(provider["ready"] for provider in cap["providers"])
-    serve_job(api, browser, origin, pool, app, customer, chat, "chatgpt", "chatgpt", "text")
+    serve_job(api, browser, origin, pool, app, customer, chat, "gemini", "gemini-web", "text")
     serve_job(api, browser, origin, pool, app, customer, gemini, "gemini", "gemini-web", "image")
     assert len(fixture.submissions) == 2
-    assert api.post("/gemini/v1/chat/completions", headers=customer,
-                    json={"model": "gemini-web/text", "prompt": "Denied"}).status_code == 403
+    assert api.post("/chatgpt/v1/chat/completions", headers=customer,
+                    json={"model": "chatgpt/text", "prompt": "Denied"}).status_code == 403
 
-    pending = pool.submit(api.post, "/chatgpt/v1/chat/completions", headers=customer,
-                          json={"model": "chatgpt/text", "prompt": "Before revoke", "timeout": 12})
+    pending = pool.submit(api.post, "/gemini/v1/chat/completions", headers=customer,
+                          json={"model": "gemini-web/text", "prompt": "Before revoke", "timeout": 12})
     job = api.get("/browser-bridge/next", headers=chat).json()
     endpoint = f"/browser-bridge/jobs/{job['id']}"
     assert not api.post(endpoint + "/permit", headers=gemini).json()["ok"]
@@ -171,7 +171,7 @@ def exercise(api, browser, fixture, pool, app):
     assert app.GEN_LOCK.locked() and not pending.done()
     assert api.post(endpoint + "/finish", headers=chat, json={"error": "interrupted"}).json()["ok"]
     assert pending.result(timeout=8).status_code == 403
-    assert api.delete(f"/admin/web-providers/chatgpt/extension/{chat_id}", headers=admin).status_code == 204
+    assert api.delete(f"/admin/web-providers/gemini-web/extension/{chat_id}", headers=admin).status_code == 204
     assert api.get("/browser-bridge/next", headers=chat).status_code == 401
     assert api.get("/browser-bridge/next", headers=admin).status_code == 401
     assert api.post(endpoint + "/permit", headers={

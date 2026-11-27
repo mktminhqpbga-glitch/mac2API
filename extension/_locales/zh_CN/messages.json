@@ -4,7 +4,7 @@
     "description": "Extension name"
   },
   "extDesc": {
-    "message": "连接已登录的 ChatGPT 和 Gemini 浏览器个人资料，或将 Muse.ai 会话导入 mac2API。",
+    "message": "连接已登录的 Gemini 浏览器个人资料，或将 Muse.ai 会话导入 mac2API。",
     "description": "Extension description"
   }
 }
