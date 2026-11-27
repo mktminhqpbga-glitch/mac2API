@@ -21,7 +21,10 @@ accounts=[{'id':'fixture'+str(i).zfill(5),'label':'Fixture-'+str(i),'enabled':Tr
  'quota':{'found':True,'plan':'Free plan','weekly_used_pct':29,'extra_left':'1B tokens left','checked_at':now-10000}} for i in range(8)]
 events=[]
 network=[]
-server_state={'mode':'update','videoPolls':0,'gateway':dict(base_url='',text_model='auto',image_model='gpt-image-2.6',has_key=False,ready=False)}
+server_state={'mode':'update','videoPolls':0,'gateways':{
+ '/admin/chatgpt2api':dict(base_url='',text_model='auto',image_model='gpt-image-2.6',has_key=False,ready=False),
+ '/admin/gemini-web2api':dict(base_url='',text_model='gemini-4-hydrogen',image_model='gemini-3.1-flash-image',has_key=False,ready=False,prefer=False),
+}}
 feature_errors=[]
 def check(value,message):
  if not value:feature_errors.append(message)
@@ -37,7 +40,7 @@ class Handler(BaseHTTPRequestHandler):
   elif path=='/admin/accounts':data={'accounts':accounts,'stats':{'total':8,'healthy':8}};kind='application/json'
   elif path=='/admin/apikey':data={'api_key':'fixture-only'};kind='application/json'
   elif path=='/admin/web-providers':data={'configured':False,'profile_connected':False,'ready':[],'local_setup':True};kind='application/json'
-  elif path=='/admin/chatgpt2api':data=server_state['gateway'];kind='application/json'
+  elif path in server_state['gateways']:data=server_state['gateways'][path];kind='application/json'
   elif path in ['/admin/update/check','/admin/repo/status']:
    known=server_state['mode']=='update'
    data={'repo_url':'https://github.com/czg86389-hub/muse2api','repo_ref':'main','local_version':'1.6.10','remote_version':VERSION if known else '', 'local_sha':'aaaaaaa','remote_sha':'bbbbbbb' if known else '', 'up_to_date':False if known else None,'has_update':known,'check_error':'' if known else 'fixture remote unavailable','managed_deployment':False,'highlights':['fixture update'],'highlights_en':['fixture update'],'highlights_vi':['Bản thử tiếng Việt'],'recent_commits':[]};kind='application/json'
@@ -68,13 +71,14 @@ class Handler(BaseHTTPRequestHandler):
   events.append({'method':'POST','path':path,'body':body})
   if path=='/admin/web-providers/connect-profile':
    reply={'configured':True,'profile_connected':True,'ready':[],'local_setup':True}
-  elif path=='/admin/chatgpt2api':
-   gateway=server_state['gateway']
+  elif path in server_state['gateways']:
+   gateway=server_state['gateways'][path]
    gateway.update(base_url=body['base_url'],has_key=bool(body.get('api_key')),configured=True)
+   if 'prefer' in body:gateway['prefer']=body['prefer']
    reply=gateway
-  elif path=='/admin/chatgpt2api/test':
-   server_state['gateway']['ready']=True
-   reply=server_state['gateway']
+  elif path.endswith('/test') and path[:-5] in server_state['gateways']:
+   reply=server_state['gateways'][path[:-5]]
+   reply['ready']=True
   elif path=='/v1/videos':
    reply={'id':'fixture-video','status':'queued'}
   else:
@@ -126,6 +130,15 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
   assert layout['scroll'] == layout['width'] and layout['right'] <= layout['width'], layout
   page.send('Emulation.clearDeviceMetricsOverride')
   page.js("document.querySelector('[data-t=gemini]').click()")
+  wait("$('geminiGatewayStatus').textContent.includes('Kết nối mặc định: Chrome')")
+  assert page.js("!$('geminiGatewayPrefer').checked && $('geminiGatewayPublicUrl').value.endsWith('/gemini/v1')")
+  page.js("""$('geminiGatewayUrl').value='http://127.0.0.1:8007'; $('geminiGatewayKey').value='fixture-gateway-key';
+    $('geminiGatewayPrefer').checked=true; $('geminiGatewaySubmit').click()""")
+  wait("$('geminiGatewayStatus').textContent.includes('Kết nối mặc định: Gemini-Web2API') && !$('geminiGatewayKey').value")
+  assert [event['path'] for event in events[-2:]]==['/admin/gemini-web2api','/admin/gemini-web2api/test']
+  page.send('Emulation.setDeviceMetricsOverride',{'width':390,'height':844,'deviceScaleFactor':1,'mobile':False})
+  assert page.js("document.documentElement.scrollWidth === document.documentElement.clientWidth")
+  page.send('Emulation.clearDeviceMetricsOverride')
   wait("$('tab-gemini').querySelector('[data-provider-status]').textContent.includes('Chưa kết nối')")
   assert page.js("$('tab-gemini').querySelector('[data-web-extension]').getClientRects().length && !$('tab-gemini').querySelector('[data-web-setup]').open && !$('extensionUpgradeNotice').getClientRects().length")
   page.js("$('tab-gemini').querySelector('[data-web-connect]').click()")

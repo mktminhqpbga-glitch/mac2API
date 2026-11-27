@@ -68,6 +68,7 @@ data/generation-queue.json
 # API keys saved from the chat provider panels
 data/chat-providers.json
 data/chatgpt2api.json
+data/gemini-web2api.json
 data/.chat-providers-*
 
 # Muse instruction language saved from the dashboard

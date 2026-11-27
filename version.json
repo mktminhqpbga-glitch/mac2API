@@ -1,8 +1,9 @@
 {
-  "version": "1.6.18",
+  "version": "1.6.19",
   "updated_at": "2026-11-27",
   "repo": "https://github.com/mktminhqpbga-glitch/mac2API",
   "highlights": [
+    "新增 Gemini-Web2API，可用于文字和图片，Chrome 连接仍可使用。",
     "ChatGPT 现通过 ChatGPT2API 连接。Chrome 扩展 1.0.11 支持 Muse 和 Gemini。",
     "手动安装的扩展可在每个已安装的浏览器个人资料中重新加载。",
     "Muse 输入框出现但无法编辑时，在同一会话中重新加载一次。",
@@ -14,6 +15,7 @@
     "更新越南语界面、Muse 参考文件检查和 MacFlow/Toonflow 媒体适配器。"
   ],
   "highlights_en": [
+    "Gemini-Web2API works with text and images alongside the existing Chrome connection.",
     "ChatGPT now connects through ChatGPT2API. Chrome extension 1.0.11 supports Muse and Gemini.",
     "Reload unpacked extensions in every browser profile where they are installed.",
     "Retry the Muse page once in the same session when its composer appears but remains locked.",
@@ -25,6 +27,7 @@
     "Includes the Vietnamese dashboard, Muse reference checks, and MacFlow/Toonflow media adapters."
   ],
   "highlights_vi": [
+    "Kết nối Gemini-Web2API cho văn bản và ảnh. Có thể chọn dùng cùng với kết nối Chrome đã có.",
     "ChatGPT kết nối qua ChatGPT2API. Tiện ích Chrome 1.0.11 hỗ trợ Muse và Gemini.",
     "Tải lại tiện ích đã giải nén trong từng hồ sơ trình duyệt đã cài.",
     "Tải lại Muse một lần trong cùng phiên nếu ô chat đã xuất hiện nhưng vẫn chưa cho phép nhập.",

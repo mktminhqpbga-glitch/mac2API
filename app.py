@@ -57,8 +57,8 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                Response, StreamingResponse)
 from pydantic import model_validator, BaseModel, Field, SecretStr, ValidationError, field_validator
 
-from chat_providers import ChatProviders, ProviderName, ProviderSettings
-from chatgpt2api import ChatGPT2API, ChatGPT2APISettings, POOL_ID, POOL_LABEL
+from chat_providers import (ChatGPT2APISettings, ChatProviders, GeminiWeb2APISettings,
+                            ProviderName, ProviderSettings, WebGateway)
 from chrome_bridge import ChromeBridge
 from client_usage import ClientJob, ClientUsage, Price, TextOutcome, redact_content
 from config import CFG
@@ -155,7 +155,11 @@ SERVICE_INSTANCE = uuid.uuid4().hex
 workflows = Workflows(os.path.join(CFG.data_dir, "workflows"))
 client_usage = ClientUsage(os.path.join(CFG.data_dir, "api-usage.sqlite3"))
 chat_providers = ChatProviders(CFG.data_dir)
-chatgpt2api = ChatGPT2API(CFG.data_dir)
+chatgpt2api = WebGateway(CFG.data_dir, name="chatgpt2api", label="ChatGPT2API",
+                        provider="chatgpt", settings=ChatGPT2APISettings)
+gemini_web2api = WebGateway(CFG.data_dir, name="gemini-web2api", label="Gemini-Web2API",
+                            provider="gemini-web", settings=GeminiWeb2APISettings)
+WEB_GATEWAYS = {gateway.provider: gateway for gateway in (chatgpt2api, gemini_web2api)}
 if CFG.web_cdp_port and (not 1 <= CFG.web_cdp_port <= 65535 or CFG.web_cdp_port == CFG.cdp_port):
     raise ValueError("MUSE2API_WEB_CDP_PORT must be separate from the Muse CDP port")
 web_port = CFG.web_cdp_port
@@ -313,8 +317,9 @@ def _run_web_generation(provider, prompt, *, image, timeout, on_acquired=None, o
 
 
 def _run_web_image(provider, prompt, timeout, **callbacks):
-    if provider == "chatgpt":
-        data, ext = chatgpt2api.image(prompt, timeout, before_send=lambda: _start_chatgpt_request(**callbacks))
+    gateway = _generation_gateway(provider, callbacks)
+    if gateway:
+        data, ext = gateway.image(prompt, timeout, before_send=lambda: _start_gateway_request(gateway, **callbacks))
     else:
         data, ext = _run_web_generation(provider, prompt, image=True, timeout=timeout, **callbacks)
     name = new_media_name(ext)
@@ -325,17 +330,32 @@ def _run_web_image(provider, prompt, timeout, **callbacks):
     return {"filename": name, "path": path, "size": size, "kind": "image"}
 
 
-def _start_chatgpt_request(*, allowed_accounts=None, on_acquired=None, on_account=None,
+def _generation_gateway(provider, callbacks):
+    allowed_accounts = callbacks.get("allowed_accounts")
+    return _select_web_gateway(provider, allowed_accounts() if allowed_accounts else None)
+
+
+def _select_web_gateway(provider, allowed_ids=None):
+    gateway = WEB_GATEWAYS.get(provider)
+    if provider == "gemini-web":
+        if allowed_ids is not None:
+            return gateway if gateway.account_id in allowed_ids else None
+        state = gateway.status()
+        return gateway if state["prefer"] and state["ready"] else None
+    return gateway
+
+
+def _start_gateway_request(gateway, *, allowed_accounts=None, on_acquired=None, on_account=None,
                            on_queue=None, queue_guard=None, already_queued=0.0):
     if queue_guard:
         queue_guard()
-    _check_dispatch(allowed_accounts, POOL_ID)
+    _check_dispatch(allowed_accounts, gateway.account_id)
     if on_queue:
         on_queue(already_queued)
     if on_acquired:
         on_acquired()
     if on_account:
-        on_account(POOL_ID, POOL_LABEL)
+        on_account(gateway.account_id, gateway.label)
 
 
 def _image_module(req):
@@ -2195,19 +2215,26 @@ def _muse_capability_state(allowed_ids=None):
             "busy": busy, "reason": reason}
 
 
-def _web_provider_ready(provider):
-    state = _web_account_state(provider)
+def _web_provider_ready(provider, *, chrome_only=False):
+    state = _chrome_account_state(provider) if chrome_only else _web_account_state(provider)
     return state["ready"] if state is not None else web_providers.ready(provider)
 
 
 def _web_account_state(provider, allowed_ids=None):
-    if provider == "chatgpt":
-        config = chatgpt2api.status()
-        permitted = allowed_ids is None or POOL_ID in allowed_ids
-        configured = config["configured"] and permitted
-        ready = configured and config["ready"]
-        return {"configured": configured, "connected": ready, "ready": ready, "busy": False,
-                "reason": "ready" if ready else "credentials_unverified" if configured else "not_configured"}
+    gateway = _select_web_gateway(provider, allowed_ids)
+    return _gateway_state(gateway, allowed_ids) if gateway else _chrome_account_state(provider, allowed_ids)
+
+
+def _gateway_state(gateway, allowed_ids):
+    config = gateway.status()
+    permitted = allowed_ids is None or gateway.account_id in allowed_ids
+    configured = config["configured"] and permitted
+    ready = configured and config["ready"]
+    return {"configured": configured, "connected": ready, "ready": ready, "busy": False,
+            "reason": "ready" if ready else "credentials_unverified" if configured else "not_configured"}
+
+
+def _chrome_account_state(provider, allowed_ids=None):
     extension = chrome_bridge.state(provider, allowed_ids)
     if extension and extension["ready"]:
         return extension
@@ -2228,9 +2255,14 @@ def capabilities(request: Request, client=Depends(contract_auth)):
     rules = client.get("rules")
     if "muse" in allowed:
         states["muse"] = _muse_capability_state() if rules is None else None
-    if "chatgpt" in allowed:
-        states["chatgpt"] = _web_account_state("chatgpt") if rules is None else None
-    if rules is None and allowed.intersection(WEB_PROVIDERS):
+    browser_providers = allowed.intersection(WEB_PROVIDERS)
+    for provider in allowed.intersection(WEB_GATEWAYS):
+        if rules is None and (gateway := _select_web_gateway(provider)):
+            states[provider] = _gateway_state(gateway, None)
+            browser_providers.discard(provider)
+        elif rules is not None:
+            states[provider] = None
+    if rules is None and browser_providers:
         lease = GEN_LOCK.acquire(blocking=False)
         try:
             web_states = web_providers.capability_states(inspect=lease)
@@ -2239,12 +2271,12 @@ def capabilities(request: Request, client=Depends(contract_auth)):
                 GEN_LOCK.release(touch_idle=False)
         busy = not lease or GEN_LOCK.full()
         for provider, state in web_states.items():
-            if provider in allowed:
-                state = _web_account_state(provider) or (state if state["configured"] else chrome_bridge.state(provider) or state)
+            if provider in browser_providers:
+                state = _chrome_account_state(provider) or (state if state["configured"] else chrome_bridge.state(provider) or state)
                 states[provider] = {**state, "busy": busy or state.get("busy", False),
                                     "reason": "busy" if busy and state["ready"] else state["reason"]}
     if rules is not None:
-        states.update({provider: None for provider in allowed.intersection(WEB_PROVIDERS)})
+        states.update({provider: None for provider in browser_providers})
     model_routes = {**MODULES, "muse-spark": ("muse", "text"),
                     "muse-image": ("muse", "image"), "muse-video": ("muse", "video")}
     for provider in chat_providers.status() if allowed.intersection(("openai", "gemini")) else ():
@@ -2262,11 +2294,11 @@ def capabilities(request: Request, client=Depends(contract_auth)):
         state = states[provider]
         if rules is not None and provider == "muse":
             state = _muse_capability_state(_catalog_accounts(client, f"muse/{kind}"))
-        elif rules is not None and provider == "chatgpt":
-            state = _web_account_state(provider, _catalog_accounts(client, model_id))
-        elif rules is not None and provider in WEB_PROVIDERS:
-            state = _web_account_state(provider, _catalog_accounts(client, model_id))
-            if state["ready"] and GEN_LOCK.full():
+        elif rules is not None and (provider in WEB_PROVIDERS or provider in WEB_GATEWAYS):
+            allowed_ids = _catalog_accounts(client, model_id)
+            gateway = _select_web_gateway(provider, allowed_ids)
+            state = _gateway_state(gateway, allowed_ids) if gateway else _chrome_account_state(provider, allowed_ids)
+            if not gateway and state["ready"] and GEN_LOCK.full():
                 state.update(busy=True, reason="busy")
         references = provider == "muse" and kind in ("image", "video")
         modes = ["text", "singleImage"] if references else ["text"]
@@ -3089,11 +3121,11 @@ async def _chat_completions(req, request, owner, job, provider_route):
         if not prompt:
             raise HTTPException(400, "Hãy nhập nội dung chat.")
         timeout = max(1, min(req.timeout or CFG.chat_timeout, 600))
-        if web_provider == "chatgpt":
+        if gateway := _generation_gateway(web_provider, options):
             messages = [{"role": msg.role, "content": content} for msg in req.messages
                         if (content := _content_text(msg.content, "vi").strip())]
-            return await chatgpt2api.chat(messages, prompt, req.stream, timeout,
-                                         before_send=lambda: _start_chatgpt_request(**options))
+            return await gateway.chat(messages, prompt, req.stream, timeout,
+                                      before_send=lambda: _start_gateway_request(gateway, **options))
         text = await asyncio.to_thread(_run_web_generation, web_provider, prompt,
                                        image=False, timeout=timeout, **options)
         cid, created = "chatcmpl-" + uuid.uuid4().hex, int(time.time())
@@ -3443,7 +3475,7 @@ def list_web_providers(_=Depends(auth)):
     return {"configured": profile_connected if web_providers.profile_preferred else bool(web_providers.port),
             "port": web_providers.port,
             "profile_connected": profile_connected,
-            "ready": [provider for provider in WEB_PROVIDERS if _web_provider_ready(provider)],
+            "ready": [provider for provider in WEB_PROVIDERS if _web_provider_ready(provider, chrome_only=True)],
             "accounts": managed_web.list_accounts(),
             "extension_accounts": chrome_bridge.list_accounts(),
             "managed_login_available": visible_chrome_available(),
@@ -3711,6 +3743,21 @@ async def test_chatgpt2api(_=Depends(auth)):
     return JSONResponse(await chatgpt2api.test(), headers=NO_STORE)
 
 
+@app.get("/admin/gemini-web2api")
+def get_gemini_web2api(_=Depends(auth)):
+    return JSONResponse(gemini_web2api.status(), headers=NO_STORE)
+
+
+@app.put("/admin/gemini-web2api")
+def save_gemini_web2api(settings: GeminiWeb2APISettings, _=Depends(auth)):
+    return JSONResponse(gemini_web2api.save(settings), headers=NO_STORE)
+
+
+@app.post("/admin/gemini-web2api/test")
+async def test_gemini_web2api(_=Depends(auth)):
+    return JSONResponse(await gemini_web2api.test(), headers=NO_STORE)
+
+
 class ClientModelRule(BaseModel):
     accounts: list[str] = Field(default_factory=list, max_length=500)
     daily_limit: int | None = Field(default=None, ge=1, le=1_000_000)
@@ -3735,9 +3782,11 @@ def _client_key_catalog():
     for account in [*managed_web.list_accounts(), *chrome_bridge.list_accounts()]:
         accounts.setdefault(account["provider"], []).append(
             {key: account[key] for key in ("id", "label", "enabled", "verified")})
-    gateway = chatgpt2api.status()
-    if gateway["configured"]:
-        accounts["chatgpt"] = [{"id": POOL_ID, "label": POOL_LABEL, "enabled": True, "verified": gateway["ready"]}]
+    for provider, gateway in WEB_GATEWAYS.items():
+        status = gateway.status()
+        if status["configured"]:
+            accounts.setdefault(provider, []).append({"id": gateway.account_id, "label": gateway.label,
+                                                       "enabled": True, "verified": status["ready"]})
     entries = [{"id": model, "provider": provider, "kind": kind, "accounts": accounts.get(provider, [])}
                for model, (provider, kind) in MODULES.items()]
     entries.extend({"id": item["model_id"], "provider": item["id"], "kind": "text", "accounts": [],
@@ -3920,10 +3969,11 @@ def _overview_accounts():
     for item in chrome_bridge.list_accounts():
         accounts.append({key: item[key] for key in ("id", "label", "provider", "busy")}
                         | {"state": "ready" if item["verified"] else "needs_check"})
-    gateway = chatgpt2api.status()
-    if gateway["configured"]:
-        accounts.append({"id": POOL_ID, "label": POOL_LABEL, "provider": "chatgpt", "busy": False,
-                         "state": "ready" if gateway["ready"] else "needs_check"})
+    for provider, gateway in WEB_GATEWAYS.items():
+        status = gateway.status()
+        if status["configured"]:
+            accounts.append({"id": gateway.account_id, "label": gateway.label, "provider": provider, "busy": False,
+                             "state": "ready" if status["ready"] else "needs_check"})
     for provider in WEB_PROVIDERS:
         if managed_web.state(provider) is None and (web_providers.ready(provider) or provider in web_providers.linked_at):
             accounts.append({
@@ -4951,7 +5001,7 @@ MANAGED_DEPLOYMENT = (
 )
 TRACKED_REPO_PATHS = [
     "app.py", "engine.py", "store.py", "cdp.py", "config.py", "proxy.py",
-    "generation_timing.py", "thumbnails.py", "media_storage.py", "chat_providers.py", "chatgpt2api.py", "web_providers.py",
+    "generation_timing.py", "thumbnails.py", "media_storage.py", "chat_providers.py", "web_providers.py",
     "managed_web.py", "chrome_bridge.py", "client_usage.py", "workflows.py", "workflow.js", "GENERATION_QUEUE.md", "VERSION_REPORTING.md",
     "admin.html", "start-mac2api.command", "README.md", "AGENTS.md", "CHANGELOG.md", "version.json", "requirements.txt",
     "MAC2API_API_CONTRACT_TESTS.md",

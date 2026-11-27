@@ -1,5 +1,10 @@
 # Nhật ký và bàn giao mac2API
 
+## 1.6.19
+
+- Thêm kết nối Gemini-Web2API cho `gemini-web/text` và `gemini-web/image`. MacFlow tiếp tục dùng địa chỉ `/gemini/v1`.
+- Kết nối Gemini qua Chrome tiếp tục là mặc định cho đến khi chọn Gemini-Web2API và kiểm tra địa chỉ, khóa và mô hình. Có thể thử trước bằng một khóa người dùng được cấp riêng kết nối Gemini-Web2API.
+
 ## 1.6.18
 
 - Kết nối ChatGPT qua máy chủ ChatGPT2API. Vào tab ChatGPT để lưu địa chỉ, khóa và kiểm tra mô hình.

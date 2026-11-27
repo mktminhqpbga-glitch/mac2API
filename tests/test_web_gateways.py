@@ -1,4 +1,4 @@
-"""Verify the ChatGPT2API replacement against a loopback OpenAI-compatible fixture."""
+"""Verify both web gateways against a loopback OpenAI-compatible fixture."""
 import asyncio
 import base64
 import json
@@ -37,7 +37,9 @@ class Upstream(BaseHTTPRequestHandler):
         if self.headers["Authorization"] != "Bearer " + KEY:
             return self.reply({}, 401)
         if self.path == "/v1/models":
-            return self.reply({"data": [{"id": "auto"}, {"id": "gpt-image-2.6"}]})
+            return self.reply({"data": [{"id": model} for model in (
+                "auto", "gpt-image-2.6", "gemini-4-hydrogen", "gemini-3.1-flash-image"
+            )]})
         self.reply({}, 404)
 
     def do_POST(self):
@@ -69,20 +71,22 @@ def headers(token):
 
 async def exercise(server):
     import app
-    from chatgpt2api import ChatGPT2API
+    from chat_providers import ChatGPT2APISettings, WebGateway
 
     admin = headers("fixture-mac2api-key")
     legacy = app.store.create_client("Legacy", ["chatgpt"], rules={"chatgpt/text": {"accounts": ["old-profile"]}})
     legacy_headers = headers(legacy["api_key"])
     settings = {"base_url": f"http://127.0.0.1:{server.server_port}", "api_key": KEY}
     await verify(server, admin, settings, legacy, legacy_headers)
-    assert ChatGPT2API(app.CFG.data_dir).status()["ready"]
+    restarted = WebGateway(app.CFG.data_dir, name="chatgpt2api", label="ChatGPT2API",
+                           provider="chatgpt", settings=ChatGPT2APISettings)
+    assert restarted.status()["ready"]
     assert (Path(app.CFG.data_dir) / "chatgpt2api.json").stat().st_mode & 0o777 == 0o600
 
 
 async def verify(server, admin, settings, legacy, legacy_headers):
     import app
-    from chatgpt2api import POOL_ID
+    pool_id = app.chatgpt2api.account_id
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app.app), base_url="http://127.0.0.1") as http:
         assert (await http.put(ENDPOINT, headers=legacy_headers, json=settings)).status_code == 401
@@ -96,13 +100,13 @@ async def verify(server, admin, settings, legacy, legacy_headers):
         again = await http.put(ENDPOINT, headers=admin, json={"base_url": settings["base_url"] + "/v1/"})
         assert again.json()["ready"] and again.json()["has_key"] and KEY not in again.text
         catalog = (await http.get("/admin/client-keys", headers=admin)).json()["models"]
-        assert next(m["accounts"] for m in catalog if m["id"] == "chatgpt/text")[0]["id"] == POOL_ID
+        assert next(m["accounts"] for m in catalog if m["id"] == "chatgpt/text")[0]["id"] == pool_id
 
         cap = (await http.get(SCOPED + "/capabilities", headers=legacy_headers)).json()
         assert not cap["models"][0]["ready"]
         denied = await http.post(SCOPED + "/chat/completions", headers=legacy_headers, json={"prompt": "denied"})
         assert denied.status_code == 403 and not server.calls
-        grants = {f"chatgpt/{kind}": {"accounts": [POOL_ID]} for kind in ("text", "image")}
+        grants = {f"chatgpt/{kind}": {"accounts": [pool_id]} for kind in ("text", "image")}
         updated = await http.patch("/admin/client-keys/" + legacy["id"], headers=admin, json={"rules": grants})
         assert updated.status_code == 200, updated.text
         cap = (await http.get(SCOPED + "/capabilities", headers=legacy_headers)).json()
@@ -146,8 +150,86 @@ async def verify(server, admin, settings, legacy, legacy_headers):
         assert broken["status"] == "interrupted" and broken["needs_reconcile"], broken
 
 
+async def exercise_gemini(server):
+    import app
+
+    server.calls.clear()
+    admin = headers("fixture-mac2api-key")
+    path = "/admin/gemini-web2api"
+    base = "/gemini/v1"
+    text = base + "/chat/completions"
+    settings = {"base_url": f"http://127.0.0.1:{server.server_port}", "api_key": KEY}
+    pool_id = app.gemini_web2api.account_id
+    account = app.managed_web.create("gemini-web", "Fixture Chrome")
+    app.managed_web.update(account, enabled=True, verified=True)
+    chrome_id = account["id"]
+    broad = headers(app.store.create_client("Gemini legacy", ["gemini-web"])["api_key"])
+
+    def chrome(provider, prompt, *, image, allowed_accounts=None, **kwargs):
+        assert provider == "gemini-web" and not image
+        assert allowed_accounts() in (None, {chrome_id})
+        return "via Chrome"
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app.app), base_url="http://127.0.0.1") as http:
+        assert (await http.put(path, headers=broad, json=settings)).status_code == 401
+        assert (await http.put(path, headers=admin, json=settings)).json()["prefer"] is False
+
+        async def grant(label, accounts):
+            rules = {f"gemini-web/{kind}": {"accounts": accounts} for kind in ("text", "image")}
+            result = await http.post("/admin/client-keys", headers=admin, json={"label": label, "rules": rules})
+            assert result.status_code == 201, result.text
+            return headers(result.json()["api_key"])
+
+        guest = await grant("Gemini gateway key", [pool_id])
+        chrome_key = await grant("Chrome only", [chrome_id])
+        mixed = await grant("Chrome and gateway", [pool_id, chrome_id])
+
+        async def send(auth, **data):
+            return await http.post(text, headers=auth, json={"prompt": "hello", **data})
+
+        with patch.object(app, "_run_web_generation", side_effect=chrome) as browser:
+            unavailable = await send(guest)
+            assert unavailable.status_code == 503 and browser.call_count == 0 and not server.calls
+            checked = await http.post(path + "/test", headers=admin)
+            assert checked.status_code == 200 and checked.json()["ready"] and KEY not in checked.text, checked.text
+            for auth in (broad, chrome_key):
+                reply = await send(auth)
+                assert reply.json()["choices"][0]["message"]["content"] == "via Chrome", reply.text
+            reply = await send(mixed)
+            assert reply.json()["model"] == "gemini-web/text" and browser.call_count == 2, reply.text
+
+            preferred = await http.put(path, headers=admin, json=settings | {"prefer": True})
+            assert preferred.json()["ready"] and preferred.json()["prefer"], preferred.text
+            with patch.object(app.web_providers, "capability_states", side_effect=AssertionError("Probed Chrome")), \
+                 patch.object(app.GEN_LOCK, "full", return_value=True):
+                for auth in (guest, broad):
+                    capabilities = await http.get(base + "/capabilities", headers=auth)
+                    assert all(m["ready"] and not m["busy"] for m in capabilities.json()["models"])
+            reply = await send(broad, stream=True)
+            assert "xin chao" in reply.text and "gemini-web/text" in reply.text and "[DONE]" in reply.text
+            assert server.calls[-1][1]["model"] == "gemini-4-hydrogen"
+            reply = await send(chrome_key)
+            assert reply.json()["choices"][0]["message"]["content"] == "via Chrome", reply.text
+
+            result = await http.post(base + "/images/generations", headers=guest,
+                                     json={"prompt": "cat", "response_format": "b64_json"})
+            assert result.status_code == 200 and base64.b64decode(result.json()["data"][0]["b64_json"]) == PNG
+            image_route, image_payload = server.calls[-1]
+            assert image_route == "/v1/images/generations"
+            assert image_payload["model"] == "gemini-3.1-flash-image"
+            failed = await http.post(base + "/images/generations", headers=broad, json={"prompt": "broken"})
+            assert failed.json()["error"]["code"] == "DELIVERY_UNKNOWN" and browser.call_count == 3
+
+            removed = await http.put(path, headers=admin, json={})
+            assert not removed.json()["configured"] and not removed.json()["prefer"]
+            assert (await send(guest)).status_code == 503 and browser.call_count == 3
+            reply = await send(broad)
+            assert reply.json()["choices"][0]["message"]["content"] == "via Chrome", reply.text
+            assert (await http.get(ENDPOINT, headers=admin)).json()["ready"]
+
+
 if __name__ == "__main__":
-    with tempfile.TemporaryDirectory(prefix="chatgpt2api-fixture-") as root:
+    with tempfile.TemporaryDirectory(prefix="web-gateway-fixture-") as root:
         os.environ.update(MUSE2API_HOME=root, MUSE2API_PROFILE_ROOT=root, MUSE2API_KEY="fixture-mac2api-key")
         import app
 
@@ -157,6 +239,7 @@ if __name__ == "__main__":
             try:
                 with patch.object(app, "_run_web_generation", side_effect=AssertionError("Unexpected Chrome path")):
                     asyncio.run(exercise(server))
+                asyncio.run(exercise_gemini(server))
             finally:
                 server.shutdown()
-    print("PASS: configuration, scoped migration, text, streaming, image receipts and delivery reconciliation without Chrome")
+    print("PASS: ChatGPT and Gemini gateways, Chrome account isolation, streaming, images and delivery reconciliation")

@@ -1,4 +1,4 @@
-"""Official OpenAI and Gemini connections for the chat completions gateway."""
+"""Official chat providers and self-hosted web gateways."""
 from __future__ import annotations
 
 import json
@@ -7,7 +7,9 @@ from pathlib import Path
 import re
 from tempfile import NamedTemporaryFile
 from threading import Lock
+import time
 from typing import Literal
+from urllib.parse import urlsplit
 
 import anyio
 import httpx
@@ -15,6 +17,9 @@ from fastapi import HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, SecretStr
 from starlette.background import BackgroundTask
+
+from store import _read, _write
+from web_providers import MAX_IMAGE_BYTES, WebProviderError, decode_web_image
 
 
 ProviderName = Literal["openai", "gemini"]
@@ -214,7 +219,7 @@ async def _gateway_chunks(response, model):
             break
         event["model"] = model
         yield ("data: " + json.dumps(event, ensure_ascii=False) + "\n\n").encode()
-    yield (b'data: {"error":{"message":"ChatGPT2API stream interrupted",'
+    yield (b'data: {"error":{"message":"Web gateway stream interrupted",'
            b'"type":"server_error","code":"DELIVERY_UNKNOWN"}}\n\n')
 
 
@@ -232,7 +237,7 @@ def _check_response(response: httpx.Response, *, submitted=False):
         raise HTTPException(status, "Đã đạt giới hạn yêu cầu hoặc hạn mức của nhà cung cấp.", headers=headers)
     if submitted and (status == 408 or status >= 500):
         raise HTTPException(502, {"code": "DELIVERY_UNKNOWN",
-                                  "message": "ChatGPT2API gặp lỗi sau khi nhận yêu cầu. Cần đối chiếu kết quả."})
+                                  "message": "Dịch vụ web gặp lỗi sau khi nhận yêu cầu. Cần đối chiếu kết quả."})
     raise HTTPException(502, f"Nhà cung cấp trả lỗi HTTP {status}.")
 
 
@@ -245,3 +250,146 @@ def _connection_error(exc: httpx.RequestError, *, submitted=False):
     if isinstance(exc, httpx.TimeoutException):
         return HTTPException(504, "Hết thời gian chờ nhà cung cấp.")
     return HTTPException(502, "Không kết nối được với nhà cung cấp. Hãy kiểm tra kết nối mạng của máy chủ.")
+
+
+class WebGatewaySettings(BaseModel):
+    base_url: str = Field(default="", max_length=2048)
+    api_key: SecretStr | None = Field(default=None, max_length=4096)
+    text_model: str = Field(pattern=MODEL_ID)
+    image_model: str = Field(pattern=MODEL_ID)
+
+
+class ChatGPT2APISettings(WebGatewaySettings):
+    text_model: str = Field(default="auto", pattern=MODEL_ID)
+    image_model: str = Field(default="gpt-image-2.6", pattern=MODEL_ID)
+
+
+class GeminiWeb2APISettings(WebGatewaySettings):
+    text_model: str = Field(default="gemini-4-hydrogen", pattern=MODEL_ID)
+    image_model: str = Field(default="gemini-3.1-flash-image", pattern=MODEL_ID)
+    prefer: bool = False
+
+
+class WebGateway:
+    def __init__(self, data_dir, *, name, label, provider, settings):
+        self.path = os.path.join(data_dir, f"{name}.json")
+        self.label = label
+        self.provider = provider
+        self.account_id = f"{name}:pool"
+        self.defaults = settings().model_dump()
+        self.lock = Lock()
+
+    def _read(self):
+        saved = _read(self.path, {})
+        return self.defaults | (saved if isinstance(saved, dict) else {})
+
+    def status(self):
+        saved = self._read()
+        return {k: saved[k] for k in self.defaults if k != "api_key"} | {
+            "has_key": bool(saved["api_key"]), "ready": bool(saved.get("verified")),
+            "configured": bool(saved["base_url"] and saved["api_key"]),
+        }
+
+    def save(self, settings):
+        base_url = _base_url(settings.base_url, self.label)
+        with self.lock:
+            saved = self._read()
+            updated = settings.model_dump(exclude={"api_key"}) | {"base_url": base_url}
+            key = saved["api_key"] if base_url and base_url == saved["base_url"] else ""
+            if "api_key" in settings.model_fields_set:
+                key = settings.api_key.get_secret_value().strip() if settings.api_key and base_url else ""
+                if key and not re.fullmatch(r"[!-~]+", key):
+                    raise HTTPException(400, f"Khóa {self.label} phải dùng ký tự ASCII và không chứa khoảng trắng.")
+            updated["api_key"] = key
+            updated["verified"] = bool(saved.get("verified")) and all(
+                saved[k] == updated[k] for k in ("base_url", "api_key", "text_model", "image_model")
+            )
+            _write(self.path, updated)
+            return self.status()
+
+    def _credentials(self, *, verified=True):
+        saved = self._read()
+        if not (saved["base_url"] and saved["api_key"]):
+            raise HTTPException(503, f"Chưa có địa chỉ hoặc khóa {self.label}. Hãy thêm trong bảng quản trị mac2API.")
+        if verified and not saved.get("verified"):
+            raise HTTPException(503, f"Hãy kiểm tra kết nối {self.label} trong mac2API trước khi gửi yêu cầu.")
+        return saved
+
+    async def test(self):
+        saved = self._credentials(verified=False)
+        try:
+            async with httpx.AsyncClient(timeout=15, trust_env=False) as client:
+                response = await client.get(saved["base_url"] + "/models", headers=_headers(saved))
+                _check_response(response)
+                data = response.json()
+            if not isinstance(data, dict) or not isinstance(data.get("data"), list):
+                raise ValueError
+            models = {item.get("id") for item in data["data"]
+                      if isinstance(item, dict) and isinstance(item.get("id"), str)}
+            missing = [saved[k] for k in ("text_model", "image_model") if saved[k] not in models]
+            if missing:
+                raise HTTPException(400, f"{self.label} chưa có mô hình đã chọn: " + ", ".join(missing))
+        except httpx.RequestError as exc:
+            raise _connection_error(exc) from None
+        except ValueError:
+            raise HTTPException(502, f"Địa chỉ chưa trả về danh sách mô hình {self.label} hợp lệ.") from None
+        with self.lock:
+            if saved != self._read():
+                raise HTTPException(409, "Cấu hình đã thay đổi. Hãy kiểm tra lại.")
+            _write(self.path, saved | {"verified": True})
+            return self.status()
+
+    async def chat(self, messages, prompt, stream, timeout, *, before_send):
+        saved = self._credentials()
+        before_send()
+        return await compatible_chat(saved["base_url"] + "/chat/completions", saved["api_key"],
+                                     saved["text_model"], {"messages": messages, "prompt": prompt, "stream": stream},
+                                     timeout, public_model=f"{self.provider}/text")
+
+    def image(self, prompt, timeout, *, before_send):
+        saved = self._credentials()
+        payload = {"model": saved["image_model"], "prompt": prompt, "n": 1, "response_format": "b64_json"}
+        limit = 4 * ((MAX_IMAGE_BYTES + 2) // 3) + 65536
+        before_send()
+        deadline = time.monotonic() + timeout
+        try:
+            with httpx.Client(timeout=httpx.Timeout(timeout, connect=10), trust_env=False) as client:
+                with client.stream("POST", saved["base_url"] + "/images/generations",
+                                   json=payload, headers=_headers(saved)) as response:
+                    _check_response(response, submitted=True)
+                    body = bytearray()
+                    for chunk in response.iter_bytes():
+                        if time.monotonic() >= deadline:
+                            raise _image_unknown(f"Hết thời gian chờ ảnh từ {self.label}.", status=504)
+                        if len(body) + len(chunk) > limit:
+                            raise _image_unknown(f"Ảnh do {self.label} trả về vượt quá 20 MiB.")
+                        body.extend(chunk)
+            data = json.loads(body)
+            return decode_web_image(data["data"][0]["b64_json"])
+        except httpx.RequestError as exc:
+            raise _connection_error(exc, submitted=True) from None
+        except (ValueError, KeyError, IndexError, TypeError, WebProviderError):
+            raise _image_unknown(f"{self.label} đã phản hồi nhưng không đọc được tệp ảnh.") from None
+
+
+def _image_unknown(message, *, status=502):
+    return HTTPException(status, {"code": "DELIVERY_UNKNOWN", "message": message + " Cần đối chiếu kết quả."})
+
+
+def _headers(settings):
+    return {"Authorization": f"Bearer {settings['api_key']}"}
+
+
+def _base_url(value, label):
+    value = value.strip().rstrip("/")
+    if not value:
+        return ""
+    try:
+        parts = urlsplit(value)
+        if (parts.scheme in {"http", "https"} and parts.hostname and parts.port != 0
+                and parts.username is None and parts.password is None and not parts.query and not parts.fragment
+                and re.fullmatch(r"[^\s\\?#]+", value)):
+            return value if parts.path.endswith("/v1") else value + "/v1"
+    except ValueError:
+        pass
+    raise HTTPException(400, f"Nhập địa chỉ {label} bắt đầu bằng http:// hoặc https://.")
