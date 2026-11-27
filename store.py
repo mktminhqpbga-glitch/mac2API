@@ -90,7 +90,7 @@ def _read(path: str, default):
 
 
 def _write(path: str, obj):
-    d = os.path.dirname(path)
+    d = os.path.dirname(path) or "."
     os.makedirs(d, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=d)
     try:

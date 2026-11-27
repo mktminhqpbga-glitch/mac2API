@@ -26,14 +26,18 @@ const lastBrace = body.lastIndexOf("}");
 assert.notEqual(lastBrace, -1);
 body = body.slice(0, lastBrace + 1);
 
-function makeApi({ status, text, lang = "zh", setAuth = () => {} }) {
+function makeApi({ status, text, lang = "zh", setAuth = () => {}, beforeReply = () => {} }) {
   const ctx = {
     KEY: "test-key",
+    authRevision: 0,
     LANG: lang,
     t: value => value,
     HAN_RE: /[㐀-鿿]/,
     setAuth,
-    fetch: async () => ({ status, ok: status >= 200 && status < 300, text: async () => text }),
+    fetch: async () => {
+      beforeReply(ctx);
+      return { status, ok: status >= 200 && status < 300, text: async () => text };
+    },
   };
   vm.createContext(ctx);
   return vm.runInContext(body + "\napi", ctx, { filename: "admin-api.js" });
@@ -109,6 +113,20 @@ await run("success response passthrough unchanged", async () => {
   const api = makeApi({ status: 200, text: payload });
   const data = await api("/admin/accounts/1/quota", { method: "POST" });
   assert.strictEqual(JSON.stringify(data), payload);
+});
+
+await run("deleting a linked Chrome account accepts an empty 204 response", async () => {
+  const api = makeApi({status: 204, text: ""});
+  assert.equal(await api("/admin/web-providers/chatgpt/extension/fixture", {method: "DELETE"}), null);
+});
+
+await run("switching sessions invalidates earlier responses even if the key was reused", async () => {
+  const api = makeApi({
+    status: 200, text: '{"accounts":[]}',
+    beforeReply: context => context.authRevision++,
+    setAuth: () => assert.fail("an old response cannot update the login indicator"),
+  });
+  await assert.rejects(api("/admin/web-providers"), {message: "Phiên quản trị đã đổi. Hãy thử lại."});
 });
 
 await run("Vietnamese failures explain the next action and omit HTTP codes", async () => {

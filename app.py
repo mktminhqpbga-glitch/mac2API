@@ -67,7 +67,7 @@ from engine import (ESSENTIAL_COOKIES, MAX_REFERENCE_IMAGE_BYTES,
                     REFERENCE_MIME_EXT, MuseAuthError, MuseEngine, MuseGenerationError,
                     MuseModelRefusalError, MusePostSendError, RefImageSafetyError, reference_kind)
 from engine import MusePageUnavailable, MuseProxyError, MuseReferenceUploadError, MuseSessionUnavailable
-from store import ClientRevisionConflict, Store, account_expiry, min_expiry
+from store import ClientRevisionConflict, Store
 from generation_timing import PendingMedia, PendingMediaStore, QueuePolicy, QueueSettings, TaskNotQueued, TaskTiming
 from managed_web import ManagedWebAccounts, visible_chrome_available
 from proxy import normalize_server, request_proxy_context, split_proxy_url
@@ -1093,8 +1093,8 @@ def safe_chat_stream(cookies: dict, prompt: str, expires: dict | None,
                         if stop_event.is_set():
                             return
                     if cur_id:
-                        store.mark(cur_id, True, "")
-                        _sync_cookies(cur_id)
+                        _generation_callback(store.mark, cur_id, True, "")
+                        _generation_callback(_sync_cookies, cur_id)
                     return
                 except HTTPException:
                     raise
@@ -2136,8 +2136,8 @@ def _run_generation_locked(prompt: str, kind: str, timeout: int,
                                       timeout=remaining, expires=cur_acc.get("cookies_exp"),
                                       account_id=cur_acc["id"], on_progress=on_progress,
                                       reference_image=reference_image, **engine_kwargs)
-                store.mark(cur_acc["id"], True, "")
-                _sync_cookies(cur_acc["id"])
+                _generation_callback(store.mark, cur_acc["id"], True, "")
+                _generation_callback(_sync_cookies, cur_acc["id"])
                 return res, cur_acc["id"]
             except MuseAuthError as exc:
                 last_exc = exc
@@ -3503,7 +3503,10 @@ def get_generation_queue(_=Depends(auth)):
 
 @app.put("/admin/generation-queue")
 def save_generation_queue(req: QueueSettings, _=Depends(auth)):
-    QUEUE_POLICY.save(req)
+    try:
+        QUEUE_POLICY.save(req)
+    except OSError as exc:
+        raise HTTPException(507, "Không lưu được cài đặt hàng chờ. Kiểm tra dung lượng và quyền ghi dữ liệu.") from exc
     return QUEUE_POLICY.settings()
 
 @app.get("/v1/media/{name}/thumbnail")
@@ -4613,8 +4616,8 @@ async def _execute_workflow_step(run, item_index, index, checkpoint):
     if kind == "video" and step["duration"]:
         payload["duration"] = step["duration"]
     if step["input_image"] and not state.get("task_id"):
-        reference = next((x.get("result", {}).get("filename") for x in reversed(item["steps"][:index])
-                          if x.get("result", {}).get("kind") == "image"), None)
+        results = ((state.get("result") or {}) for state in reversed(item["steps"][:index]))
+        reference = next((result.get("filename") for result in results if result.get("kind") == "image"), None)
         if not reference:
             raise WorkflowStepError("Cần một bước tạo ảnh đã hoàn tất ở trước bước này.")
         path = _workflow_media_path(reference)
@@ -4725,6 +4728,9 @@ def _workflow_response(run, status_code=200):
     for item in run["items"]:
         for step in item["steps"]:
             result = step.get("result") or {}
+            result.pop("url", None)
+            result.pop("download_url", None)
+            result.pop("file_missing", None)
             if result.get("filename"):
                 try:
                     _workflow_media_path(result["filename"])
@@ -5114,11 +5120,21 @@ MANAGED_DEPLOYMENT = (
     or os.environ.get("RENDER", "").lower() == "true"
     or bool(os.environ.get("RENDER_GIT_COMMIT"))
 )
-TRACKED_REPO_PATHS = [
+RUNTIME_SOURCE_FILES = (
     "app.py", "engine.py", "store.py", "cdp.py", "config.py", "proxy.py",
     "generation_timing.py", "thumbnails.py", "media_storage.py", "chat_providers.py", "web_providers.py",
-    "managed_web.py", "chrome_bridge.py", "client_usage.py", "workflows.py", "workflow.js", "GENERATION_QUEUE.md", "VERSION_REPORTING.md",
-    "admin.html", "start-mac2api.command", "README.md", "AGENTS.md", "CHANGELOG.md", "version.json", "requirements.txt",
+    "managed_web.py", "chrome_bridge.py", "client_usage.py", "workflows.py", "workflow.js",
+    "admin.html", "version.json", "requirements.txt",
+)
+EXTENSION_SOURCE_FILES = (
+    "extension/manifest.json", "extension/popup.html", "extension/popup.js",
+    "extension/bridge-worker.js", "extension/bridge-site.js",
+    "extension/_locales/vi/messages.json", "extension/_locales/en/messages.json",
+    "extension/_locales/zh_CN/messages.json",
+)
+TRACKED_REPO_PATHS = [
+    *RUNTIME_SOURCE_FILES, "GENERATION_QUEUE.md", "VERSION_REPORTING.md",
+    "start-mac2api.command", "README.md", "AGENTS.md", "CHANGELOG.md",
     "MAC2API_API_CONTRACT_TESTS.md",
     "Dockerfile", "docker-compose.yml", ".dockerignore", ".env.example", ".gitignore",
     "LICENSE", "extension", "deploy", "tools", "adapters",
@@ -5344,8 +5360,8 @@ def _install_source_archive(content):
         except (tarfile.TarError, EOFError, OSError) as exc:
             raise HTTPException(502, "Gói cập nhật chưa đầy đủ hoặc không đọc được.") from exc
         if any(not (staging / name).is_file() or not (staging / name).stat().st_size
-               for name in ("app.py", "admin.html", "version.json")):
-            raise HTTPException(502, "Gói cập nhật thiếu tệp cần để khởi động mac2API.")
+               for name in (*RUNTIME_SOURCE_FILES, *EXTENSION_SOURCE_FILES)):
+            raise HTTPException(502, "Gói cập nhật thiếu tệp để chạy mac2API hoặc tiện ích Chrome.")
         try:
             metadata = json.loads((staging / "version.json").read_text(encoding="utf-8"))
             if not isinstance(metadata, dict) or not metadata.get("version"):

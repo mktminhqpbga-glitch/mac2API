@@ -1,5 +1,12 @@
 # Nhật ký và bàn giao mac2API
 
+## 1.6.24
+
+- Hiển thị đúng kết quả khi ngắt liên kết Chrome. Xóa dữ liệu hiển thị của phiên cũ khi đổi hoặc bỏ khóa quản trị.
+- Bỏ qua tệp tiến độ bị lỗi khi khởi động và giữ tệp gốc để khôi phục. Mở lại được phần bản nháp hợp lệ khi dữ liệu lưu trong trình duyệt bị lỗi.
+- Trả kết quả Muse đã hoàn tất khi ghi trạng thái tài khoản bị lỗi. Giữ cài đặt hàng chờ cũ nếu lần lưu mới thất bại.
+- Giữ kết quả kiểm tra cập nhật mới nhất. Từ chối gói thiếu tệp chạy ứng dụng hoặc tiện ích Chrome trước khi thay tệp đang dùng.
+
 ## 1.6.23
 
 - Mỗi mục Muse, ChatGPT và Gemini có nút tải và hướng dẫn cho đúng dịch vụ. Ba mục dùng chung tiện ích Chrome/Edge 1.0.13.

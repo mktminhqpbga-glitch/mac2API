@@ -72,6 +72,16 @@ class GenerationQueueTests(unittest.TestCase):
                 app._run_generation('x','video',600)
         self.assertEqual(calls,[1]);self.assertFalse(app.GEN_LOCK.locked());self.assertFalse(app.ACCOUNT_POOL.busy_accounts)
 
+    def test_account_write_failure_after_generation_does_not_resubmit(self):
+        result = {"filename": "fixture.mp4"}
+        with patch.object(app.engine, "generate", return_value=result) as generate, \
+             patch.object(app.store, "mark", side_effect=OSError("fixture disk full")):
+            received, _account = app._run_generation("fixture", "video", 5)
+        self.assertEqual(received, result)
+        generate.assert_called_once()
+        self.assertFalse(app.GEN_LOCK.locked())
+        self.assertFalse(app.ACCOUNT_POOL.busy_accounts)
+
     def test_queue_failure_never_generates(self):
         with patch.object(app.GEN_LOCK,'acquire',return_value=False),patch.object(app.engine,'generate') as generate:
             with self.assertRaisesRegex(app.MuseGenerationError,'排队时限'):app._run_generation('x','video',1)
@@ -92,6 +102,16 @@ class GenerationQueueTests(unittest.TestCase):
         path.write_text("{unreadable")
         self.assertEqual(QueuePolicy(path).settings(), QueueSettings().model_dump())
         self.assertEqual(path.read_text(), "{unreadable")
+
+    def test_queue_save_failure_keeps_previous_settings(self):
+        previous = app.QUEUE_POLICY.settings()
+        stored = app.QUEUE_POLICY.path.read_bytes()
+        with patch("generation_timing._write", side_effect=OSError("fixture disk full")):
+            with self.assertRaises(app.HTTPException) as error:
+                app.save_generation_queue(QueueSettings(queue_timeout=45))
+        self.assertEqual(error.exception.status_code, 507)
+        self.assertEqual(app.QUEUE_POLICY.settings(), previous)
+        self.assertEqual(app.QUEUE_POLICY.path.read_bytes(), stored)
 
     def test_disk_error_does_not_reserve_new_task_or_stall_existing_task(self):
         task = app.store.create_task("image", "accepted")

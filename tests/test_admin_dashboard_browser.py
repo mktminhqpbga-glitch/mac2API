@@ -49,6 +49,9 @@ def check_dashboard(app, page, url):
     assert page.js("Boolean($('overviewBase').getClientRects().length)")
     page.js("$('overviewBase').closest('details').querySelector('summary').click()")
     assert page.js("document.querySelector('nav [aria-current=page]').dataset.t === 'overview'")
+    page.js("""localStorage.setItem('mac2apiWorkflow:draft', JSON.stringify({
+        input: 'Bản nháp còn dùng được', title: 123, steps: [null, {kind: 'video', name: 'Bước cũ', duration: 10}]
+    }))""")
 
     for width, height in ((1600, 1000), (390, 844), (320, 760)):
         page.send("Emulation.setDeviceMetricsOverride",
@@ -61,6 +64,9 @@ def check_dashboard(app, page, url):
             page.js(f"goTab('{tab}')")
             wait(lambda: page.js(f"$('tab-{tab}').classList.contains('active')"))
             assert page.js("document.documentElement.scrollWidth <= innerWidth + 1"), (width, tab)
+    wait(lambda: page.js("$('workflowSteps').querySelectorAll('.workflow-step').length === 1"))
+    assert page.js("""$('workflowInput').value === 'Bản nháp còn dùng được'
+        && $('workflowTitle').value === '' && $('workflowSteps').querySelector('input[type=number]').value === '10'""")
     page.js("location.hash = 'cookie'")
     wait(lambda: page.js("$('tab-pool').classList.contains('active') && $('museExtension').open"))
     assert page.js("Boolean($('museExtension').querySelector('a[href=\"/admin/extension\"]').getClientRects().length)")
@@ -105,6 +111,13 @@ def check_dashboard(app, page, url):
         page.js("$('proxySave').click()")
         wait(lambda: page.js(f"!$('proxyDialog').open && {panel}.querySelector('[data-web-accounts]').textContent.includes('127.0.0.1:9876')"))
         assert app.managed_web.has_account(aid, provider)
+
+    aid = app.chrome_bridge.pair("gemini-web", "d" * 32, "Hồ sơ thử ngắt").split(".")[0]
+    page.js("loadChatProvider('gemini')", await_promise=True)
+    page.js("""[...$('tab-gemini').querySelectorAll('[data-web-extension-accounts] button')]
+        .find(button => button.textContent === 'Ngắt liên kết').click()""")
+    wait(lambda: page.js("$('tab-gemini').querySelector('[data-web-accounts-status]').textContent.includes('Đã ngắt liên kết')"))
+    assert not any(item["id"] == aid for item in app.chrome_bridge.list_accounts())
 
     def screenshot(name):
         output = os.getenv("MAC2API_DASHBOARD_SCREENSHOTS")
@@ -367,6 +380,7 @@ def check_dashboard(app, page, url):
         assert cleared is True, cleared
         wait(lambda: page.js("!$('workflowResults').querySelector('article') && $('workflowHistory').hidden"))
         assert page.js("$('workflowInput').value === 'mục đã gửi' && window.__errors.length === 0")
+        assert page.js("![...document.querySelectorAll('[data-web-accounts], [data-web-extension-accounts]')].some(list => list.children.length)")
 
         page.send("Page.addScriptToEvaluateOnNewDocument", {"source": """
             if (location.search.includes('chan-luu')) {

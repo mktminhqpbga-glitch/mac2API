@@ -66,8 +66,6 @@ def main():
 
         # 2) 注入 + 两种确认判据
         print("\n=== 注入 1x1 PNG ===")
-        res = c.js(E.MuseEngine._attach_image.__doc__ and
-                   "0" or "0")  # noop placeholder
         # 直接搬 engine 的注入 JS
         inject = """(function(b64, mime){
             var bin=atob(b64); var arr=new Uint8Array(bin.length);

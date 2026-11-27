@@ -1,10 +1,8 @@
 """Independent queue budget and generation task timing."""
 from __future__ import annotations
 import logging
-import os
 from pathlib import Path
 import re
-import tempfile
 import threading
 import time
 from pydantic import BaseModel, ConfigDict, Field
@@ -35,15 +33,8 @@ class QueuePolicy:
 
     def save(self, value):
         with self.lock:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            fd, tmp = tempfile.mkstemp(prefix=".queue-", dir=self.path.parent)
-            try:
-                with os.fdopen(fd, "w") as f:
-                    f.write(value.model_dump_json()); f.flush(); os.fsync(f.fileno())
-                os.replace(tmp, self.path)
-                self.value = value.model_copy(deep=True)
-            finally:
-                if os.path.exists(tmp): os.unlink(tmp)
+            _write(str(self.path), value.model_dump())
+            self.value = value.model_copy(deep=True)
 
 class TaskNotQueued(Exception):
     """The worker must exit before sending content upstream."""

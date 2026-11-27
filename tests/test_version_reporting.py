@@ -111,8 +111,14 @@ class VersionReportingTests(unittest.TestCase):
             with self.assertRaises(app.HTTPException):
                 app._install_source_archive(package({"app.py": b"new"}))
             self.assertEqual(entry.read_text(), "old")
-            files = {"app.py": b"new", "admin.html": b"ui", "version.json": b'{"version":"fixture"}',
-                     ".env": b"replace"}
+            files = {name: (ROOT / name).read_bytes()
+                     for name in (*app.RUNTIME_SOURCE_FILES, *app.EXTENSION_SOURCE_FILES)}
+            files.update({"app.py": b"new", ".env": b"replace"})
+            for missing in ("workflows.py", "extension/bridge-worker.js"):
+                with self.assertRaises(app.HTTPException) as exception:
+                    app._install_source_archive(package({name: data for name, data in files.items() if name != missing}))
+                self.assertEqual(exception.exception.status_code, 502)
+                self.assertEqual(entry.read_text(), "old")
             with self.assertRaises(app.HTTPException):
                 app._install_source_archive(package({**files, "app.py": b"invalid source!"}))
             self.assertEqual(entry.read_text(), "old")

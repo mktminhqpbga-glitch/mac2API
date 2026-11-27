@@ -1645,7 +1645,7 @@ const I18N_EN = {
   "未记录有效期": "No expiry recorded",
   "已过期": "Expired",
   "的有效期不足 12 小时。muse.ai 的会话约 2 天到期且不会因使用而延长，建议现在重新登录一次，避免生成时突然失败。": "expire(s) in less than 12 hours. muse.ai sessions expire in about 2 days and are not extended by use; log in again now to avoid sudden failures during generation.",
-  "还没有账号。去「获取 Cookie」页签按三步导入一个": "No accounts yet. Go to the \"Get cookies\" tab and import one in three steps",
+  "还没有账号。点击「导入账号」开始。": "No accounts yet. Choose Import account to get started.",
   "● 可用": "● Healthy",
   "● 异常": "● Error",
   "○ 未检测": "○ Untested",
@@ -2334,7 +2334,7 @@ const I18N_VI = {
   "未记录有效期": "Chưa ghi nhận thời điểm hết hạn",
   "已过期": "Đã hết hạn",
   "的有效期不足 12 小时。muse.ai 的会话约 2 天到期且不会因使用而延长，建议现在重新登录一次，避免生成时突然失败。": "sắp hết hạn trong vòng 12 giờ. Hãy đăng nhập lại để tránh tác vụ bị gián đoạn.",
-  "还没有账号。去「获取 Cookie」页签按三步导入一个": "Chưa có tài khoản. Mở mục Nhập cookie để thêm tài khoản",
+  "还没有账号。点击「导入账号」开始。": "Chưa có tài khoản. Bấm Nhập tài khoản để bắt đầu.",
   "● 可用": "● Hoạt động",
   "● 异常": "● Lỗi",
   "○ 未检测": "○ Chưa kiểm tra",
@@ -2586,6 +2586,7 @@ $('dBase').textContent = location.origin + '/v1';
 
 /* 登录状态：控制提示条和 Key 输入框高亮 */
 let authOK = null;
+let authRevision = 0;
 function setAuth(ok){
   if (authOK === ok) return;
   authOK = ok;
@@ -2593,18 +2594,23 @@ function setAuth(ok){
   $('keyBox').classList.toggle('ok', ok);
   $('keyBox').classList.toggle('miss', !ok);
   $('keyLbl').textContent = ok ? '✓ 已登录' : ui('adminKey');
-  if (!ok) clearAdminView();
+  if (!ok) {
+    authRevision++;
+    clearAdminView();
+  }
 }
 
 function saveKey(){
   const next = $('key').value.trim();
+  authRevision++;
   if (next !== KEY) clearAdminView();
   KEY = next;
   const saved = writeStored('sessionStorage', KEY_STORE, KEY);
   if (!KEY){ setAuth(false); toast('已清除 API Key', 'warn'); return; }
   if (!saved) toast('Trình duyệt chỉ giữ khóa đến khi tải lại trang.', 'warn');
   authOK = null;
-  refreshAll();
+  refreshDashboardStatus();
+  loadActiveTab();
 }
 
 function toast(msg, kind){
@@ -2620,6 +2626,7 @@ function toast(msg, kind){
 async function api(path, opts){
   const {authKey, timeout, ...options} = opts || {};
   const requestKey = authKey ?? KEY;
+  const requestRevision = authRevision;
   const updateAdminAuth = authKey === undefined && path.startsWith('/admin/') &&
     !/^\/admin\/(?:update\/check|repo\/status|extension\/files)(?:\?|$)/.test(path);
   options.headers = Object.assign({'Content-Type':'application/json'}, options.headers || {});
@@ -2640,8 +2647,12 @@ async function api(path, opts){
     failure.status = timedOut ? 408 : 0;
     throw failure;
   }
+  if (updateAdminAuth && requestRevision !== authRevision) throw new Error('Phiên quản trị đã đổi. Hãy thử lại.');
+  if (r.ok && r.status === 204) {
+    if (updateAdminAuth) setAuth(true);
+    return null;
+  }
   let data; try { data = JSON.parse(txt); } catch(e){ data = null; }
-  if (updateAdminAuth && KEY !== requestKey) throw new Error('Khóa quản trị đã đổi. Hãy thử lại.');
   const authError = r.status === 401 && (/^缺少 Authorization|^API key 无效|^Unauthorized$/i.test(data?.detail || '')
     || !requestKey || path.startsWith('/admin/status') || path === '/admin/apikey');
   if (authError && updateAdminAuth) setAuth(false);
@@ -2747,7 +2758,7 @@ const uiCopy = {
   clients:['Quyền sử dụng','API keys','API 密钥'], usage:['Lịch sử sử dụng','API usage','API 用量'],
   tasks:['Tác vụ','Tasks','任务'], media:['Thư viện ảnh và video','Media library','媒体库'],
   connections:['Kết nối AI','AI connections','AI 连接'], official:['API chính thức','Official APIs','官方 API'],
-  cookie:['Tiện ích trình duyệt','Browser extension','浏览器扩展'], advanced:['Cài đặt nâng cao','Advanced settings','高级设置'],
+  advanced:['Cài đặt nâng cao','Advanced settings','高级设置'],
   docs:['Tài liệu API','API documentation','API 文档'], play:['Thử API','API playground','API 测试'],
   refresh:['Làm mới','Refresh','刷新'], save:['Lưu','Save','保存'], send:['Gửi','Send','发送'],
   access:['Cấp quyền sử dụng','Grant API access','授予 API 访问权限'],
@@ -4120,6 +4131,15 @@ const chatProviderPanels = new Map([
     } catch (error) { status.textContent = error.message; }
     finally { test.disabled = false; }
   };
+  window.addEventListener('mac2api:reset', () => {
+    extensionAccounts.replaceChildren();
+    accountsList.replaceChildren();
+    accountForm.reset();
+    accountPanel.hidden = true;
+    status.textContent = '';
+    accountStatus.textContent = '';
+    test.disabled = true;
+  });
   return [tab, {render, status}];
 }));
 
@@ -4328,7 +4348,7 @@ async function loadPool(){
     }
 
     if (!accounts.length){
-      $('poolBody').innerHTML = '<tr><td colspan="10" class="empty">还没有账号。去「获取 Cookie」页签按三步导入一个</td></tr>';
+      $('poolBody').innerHTML = '<tr><td colspan="10" class="empty">还没有账号。点击「导入账号」开始。</td></tr>';
       return;
     }
     $('poolBody').innerHTML = accounts.map(a => {
@@ -5077,6 +5097,8 @@ function runVideo(){
 /* ================= 官方仓库实时更新检测、弹窗通知与一键升级 ================= */
 let _dismissedSha = readStored('localStorage', 'muse2api_dismissed_sha');
 let _lastRepoStatus = null;
+let repoStatusRequest = 0;
+let manualRepoStatus = 0;
 
 function toggleRepoPanel(){
   const el = $('repoPanel');
@@ -5095,8 +5117,12 @@ function dismissUpdateBanner(){
 }
 
 async function loadRepoStatus(force){
+  if (!force && manualRepoStatus) return;
+  const request = ++repoStatusRequest;
+  if (force) manualRepoStatus = request;
   try{
     let s = await api('/admin/update/check' + (force ? '?force=true' : ''), {authKey:'', timeout:45000});
+    if (request !== repoStatusRequest) return;
     _lastRepoStatus = s;
     for (const id of ['repoHomeLink','repoPanelLink']) {
       const link=$(id); if(link){link.href=s.repo_url;link.title=s.repo_url;}
@@ -5151,8 +5177,15 @@ async function loadRepoStatus(force){
     }
     if (box) box.innerHTML = html || '<span style="color:var(--muted)">暂无提交记录</span>';
     if (force) toast(state, s.up_to_date === true ? 'ok' : 'warn');
-  }catch(e){
-    if ($('repoBadge')) { $('repoBadge').className = 'badge mute'; $('repoBadge').textContent = '待鉴权'; }
+  }catch{
+    if (request !== repoStatusRequest) return;
+    if (!_lastRepoStatus) {
+      $('repoBadge').className = 'badge mute';
+      $('repoBadge').textContent = t('版本状态待确认');
+    }
+    if (force) toast('版本状态待确认', 'warn');
+  }finally{
+    if (manualRepoStatus === request) manualRepoStatus = 0;
   }
 }
 
@@ -5313,22 +5346,18 @@ function clearAdminView(){
   }
 }
 
-function refreshAll(){
+function refreshDashboardStatus(){
   loadStatus();
   if (activeTab !== 'pool' && activeTab !== 'tasks') loadPool();
   loadApikey();
   loadRepoStatus(false);
-  loadActiveTab();
 }
 
 const startTab = location.hash.slice(1);
 if (navButtons.some(button => button.dataset.t === startTab)) activeTab = startTab;
 if (startTab === 'cookie') openMuseExtension();
 else showTab(activeTab);
-loadStatus();
-if (activeTab !== 'pool' && activeTab !== 'tasks') loadPool();
-loadApikey();
-loadRepoStatus(false);
+refreshDashboardStatus();
 setInterval(() => {
   loadStatus();
   if (activeTab === 'pool') loadPool();

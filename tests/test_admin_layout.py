@@ -154,6 +154,19 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
    page.js("loadRepoStatus(true)",await_promise=True)
    if lang=='vi':
     check(page.js("$('updBannerMsg').textContent.includes('Bản thử tiếng Việt') && $('repoCommitsBox').textContent.includes('Bản thử tiếng Việt')"), 'vi: release notes are not localized')
+    check(page.js("""(async () => {
+      const fetchNormally = window.fetch;
+      let finishOlder;
+      window.fetch = (path, options) => path === '/admin/update/check'
+        ? new Promise(resolve => { finishOlder = resolve; }) : fetchNormally(path, options);
+      try {
+        const old = loadRepoStatus(false);
+        await loadRepoStatus(true);
+        finishOlder(new Response(JSON.stringify({..._lastRepoStatus, local_version:'old fixture'})));
+        await old;
+        return $('repoBadge').textContent.includes('1.6.10');
+      } finally { window.fetch = fetchNormally; }
+    })()""",await_promise=True) is True,'vi: late automatic update check changed the manual result')
    check('1.6.10' in page.js("$('repoBadge').textContent"),lang+': installed version was replaced by remote')
    check(page.js("$('updateBanner').classList.contains('show')"),lang+': update notification banner is hidden')
    check(not any(x['path']=='/admin/update/upgrade' for x in events),lang+': update check posted an upgrade')

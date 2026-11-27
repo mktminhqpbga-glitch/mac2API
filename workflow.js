@@ -3,6 +3,7 @@ const byId = id => document.getElementById(id);
 const defaults = {title: '', input: '', context: '', split: true,
   steps: [{name: 'Bước 1', kind: 'text', instruction: '', model: '', aspect_ratio: '', duration: null, input_image: false}]};
 const kinds = {text: 'Văn bản', image: 'Ảnh', video: 'Video'};
+const ratios = ['1:1', '9:16', '16:9', '3:4', '4:3'];
 const states = {
   queued: ['Chờ xử lý', 'mute'], running: ['Đang chạy', 'info'], completed: ['Hoàn tất', 'ok'],
   failed: ['Lỗi', 'bad'], errors: ['Hoàn tất một phần', 'warn'],
@@ -133,7 +134,7 @@ function renderSteps() {
     };
     if (step.kind !== 'text') {
       const ratio = element('select');
-      ratio.append(new Option('Mặc định', ''), ...['1:1', '9:16', '16:9', '3:4', '4:3'].map(value => new Option(value, value)));
+      ratio.append(new Option('Mặc định', ''), ...ratios.map(value => new Option(value, value)));
       ratio.value = step.aspect_ratio;
       ratio.onchange = () => { step.aspect_ratio = ratio.value; writeLocal('draft', draft); };
       advanced.append(label('Tỉ lệ khung hình', ratio), referenceLabel);
@@ -395,8 +396,24 @@ async function start(event) {
 
 function initialize() {
   loaded = true;
-  draft = readLocal('draft', structuredClone(defaults));
-  if (!Array.isArray(draft.steps) || !draft.steps.length) draft = structuredClone(defaults);
+  const saved = readLocal('draft', {});
+  draft = structuredClone(defaults);
+  for (const key of ['title', 'input', 'context', 'split']) {
+    if (typeof saved[key] === typeof draft[key]) draft[key] = saved[key];
+  }
+  if (Array.isArray(saved.steps)) {
+    const template = defaults.steps[0];
+    const steps = saved.steps.slice(0, 10).filter(step => step && Object.hasOwn(kinds, step.kind)).map(step => {
+      const restored = {...template};
+      for (const [key, value] of Object.entries(template)) {
+        if (key !== 'duration' && typeof step[key] === typeof value) restored[key] = step[key];
+      }
+      if (!ratios.includes(restored.aspect_ratio)) restored.aspect_ratio = '';
+      if (Number.isInteger(step.duration) && step.duration >= 1 && step.duration <= 600) restored.duration = step.duration;
+      return restored;
+    });
+    if (steps.length) draft.steps = steps;
+  }
   selected = readLocal('selection', null);
   for (const field of ['Title', 'Input', 'Context', 'Split']) {
     const input = byId('workflow' + field);

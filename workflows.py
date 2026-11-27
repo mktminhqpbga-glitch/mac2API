@@ -9,7 +9,7 @@ import time
 from typing import Literal
 
 from fastapi import HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from store import _read, _write
 
@@ -35,6 +35,30 @@ class WorkflowRequest(BaseModel):
     context: str = Field(default="", max_length=16000)
     split: bool = True
     steps: list[WorkflowStep] = Field(min_length=1, max_length=10)
+
+
+class SavedStep(BaseModel):
+    status: Literal["queued", "running", "completed", "failed"]
+    attempt: int = Field(ge=1)
+    task_id: str | None = None
+    error: str | None = None
+    result: dict | None = None
+    reuse_task: bool = False
+    check_before_retry: bool = False
+
+
+class SavedItem(BaseModel):
+    input: str
+    steps: list[SavedStep]
+
+
+class SavedWorkflow(BaseModel):
+    id: str
+    config: WorkflowRequest
+    state: Literal["running", "pausing", "paused", "errors", "completed"]
+    context: str
+    items: list[SavedItem] = Field(min_length=1, max_length=MAX_ITEMS)
+    updated_at: float = Field(allow_inf_nan=False)
 
 
 class WorkflowStepError(RuntimeError):
@@ -105,11 +129,28 @@ class Workflows:
         self.active = {}
         self.errors = {}
 
+    @staticmethod
+    def _load(path):
+        try:
+            saved = SavedWorkflow.model_validate(_read(str(path), None), strict=True)
+        except ValidationError:
+            return None
+        if saved.id != path.stem or saved.config.id != saved.id or any(
+            len(item.steps) != len(saved.config.steps) for item in saved.items
+        ):
+            return None
+        run = saved.model_dump(exclude_unset=True)
+        run["config"] = saved.config.model_dump()
+        return run
+
     def get(self, run_id):
         if not re.fullmatch(r"[a-f0-9]{32}", run_id):
             raise HTTPException(404, "Không tìm thấy luồng.")
-        run = _read(str(self.directory / (run_id + ".json")), None)
-        if not isinstance(run, dict):
+        path = self.directory / (run_id + ".json")
+        run = self._load(path)
+        if run is None:
+            if path.is_file():
+                raise HTTPException(409, "Tệp tiến độ của luồng bị lỗi. Hãy khôi phục tệp từ bản sao lưu.")
             raise HTTPException(404, "Không tìm thấy luồng đã lưu.")
         if run_id in self.errors:
             run.update(state="paused", error=self.errors[run_id])
@@ -126,10 +167,8 @@ class Workflows:
                 continue
         runs = []
         for _, path in sorted(files, reverse=True):
-            run = _read(str(path), None)
-            if not isinstance(run, dict) or not isinstance(run.get("config"), dict):
-                continue
-            if not {"id", "state", "updated_at"} <= run.keys() or not isinstance(run["updated_at"], (float, int)):
+            run = self._load(path)
+            if run is None:
                 continue
             runs.append({"id": run["id"], "title": run["config"].get("title") or "Luồng đã lưu",
                          "state": "paused" if run["id"] in self.errors else run["state"],
@@ -185,9 +224,12 @@ class Workflows:
     def _finished(self, run_id, task):
         if self.active.get(run_id) is task:
             del self.active[run_id]
-        if not task.cancelled() and task.exception() is not None:
-            self.errors[run_id] = "Không lưu được tiến độ. Kiểm tra dung lượng đĩa rồi bấm Tiếp tục."
-            log.error("Luồng %s dừng do lỗi lưu trạng thái.", run_id, exc_info=task.exception())
+        if not task.cancelled() and (error := task.exception()) is not None:
+            if run_id not in self.active:
+                self.errors[run_id] = ("Không lưu được tiến độ. Kiểm tra dung lượng đĩa rồi bấm Tiếp tục."
+                                       if isinstance(error, WorkflowStorageError) else
+                                       "Luồng đã dừng bất ngờ. Bấm Tiếp tục để kiểm tra tiến độ đã lưu.")
+            log.error("Luồng %s dừng bất ngờ.", run_id, exc_info=error)
 
     def control(self, run_id, action, execute, item=None, step=None):
         run = self.get(run_id)
@@ -283,8 +325,11 @@ class Workflows:
         if not self.directory.exists():
             return
         for path in self.directory.glob("*.json"):
-            run = _read(str(path), None)
-            if not isinstance(run, dict) or run["state"] not in ("running", "pausing"):
+            run = self._load(path)
+            if run is None:
+                log.warning("Không đọc được tệp tiến độ luồng %s. Tệp gốc được giữ lại.", path.name)
+                continue
+            if run["state"] not in ("running", "pausing"):
                 continue
             for item in run["items"]:
                 for index, state in enumerate(item["steps"]):

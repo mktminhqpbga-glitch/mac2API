@@ -180,6 +180,18 @@ async def check(data_dir):
             await await_state(run_id, "completed")
             assert generate.call_count == 2
 
+        broken = app.workflows.directory / ("f" * 32 + ".json")
+        bad_data = '{"state":"running","items":[null]}'
+        broken.write_text(bad_data, encoding="utf-8")
+        app.workflows.recover()
+        assert broken.read_text(encoding="utf-8") == bad_data
+        error = await client.get(f"/admin/workflows/{broken.stem}", headers=headers)
+        assert error.status_code == 409 and "sao lưu" in error.json()["detail"]
+        listing = await client.get("/admin/workflows", headers=headers)
+        ids = {run["id"] for run in listing.json()["runs"]}
+        assert broken.stem not in ids and run_id in ids
+        await await_state(run_id, "completed")
+
 
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory(prefix="mac2api-workflow-test-") as root:

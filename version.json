@@ -1,8 +1,9 @@
 {
-  "version": "1.6.23",
+  "version": "1.6.24",
   "updated_at": "2026-11-28",
   "repo": "https://github.com/mktminhqpbga-glitch/mac2API",
   "highlights": [
+    "修复账号解绑反馈，隔离损坏的流程记录，避免生成完成后因账号保存失败而重复提交。",
     "各服务商管理页提供扩展下载。ChatGPT 和 Gemini 可为独立 Chromium 账号设置代理。",
     "Muse、ChatGPT 和 Gemini 管理页可复制专用 API 地址并创建仅限所选服务商的客户密钥。",
     "Chrome 扩展 1.0.13 将 ChatGPT 帐号连接与输入框检查分开，并改进输入框识别。",
@@ -18,6 +19,7 @@
     "更新越南语界面、Muse 参考文件检查和 MacFlow/Toonflow 媒体适配器。"
   ],
   "highlights_en": [
+    "Fix account disconnect feedback, isolate damaged workflows, and retain generated media when an account status write fails.",
     "Download the extension from each provider tab and set a per-account proxy for managed ChatGPT and Gemini profiles.",
     "Muse, ChatGPT and Gemini each offer a dedicated API address and a provider-scoped key shortcut.",
     "Chrome extension 1.0.13 links verified ChatGPT profiles while the composer loads and recognises more composer layouts.",
@@ -33,6 +35,7 @@
     "Includes the Vietnamese dashboard, Muse reference checks, and MacFlow/Toonflow media adapters."
   ],
   "highlights_vi": [
+    "Sửa thông báo ngắt liên kết, cô lập luồng có tệp tiến độ lỗi và giữ kết quả Muse khi lỗi ghi trạng thái tài khoản.",
     "Tải tiện ích ngay trong mục của từng dịch vụ. ChatGPT và Gemini hỗ trợ proxy theo từng hồ sơ Chromium.",
     "Muse, ChatGPT và Gemini có địa chỉ API đầu ra và nút tạo khóa riêng theo nhà cung cấp.",
     "Tiện ích Chrome 1.0.13 nhận diện thêm ô nhập ChatGPT và cho phép liên kết hồ sơ đã xác minh khi ô nhập đang tải.",
