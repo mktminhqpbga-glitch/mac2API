@@ -1,6 +1,6 @@
 # MUSE2API
 
-Bản tổng hợp mac2API 1.6.20 gồm mã máy chủ, bảng quản trị, tiện ích Chrome/Edge 1.0.12 và các adapter MacFlow/Toonflow. [Nhật ký phiên bản](CHANGELOG.md)
+Bản tổng hợp mac2API 1.6.21 gồm mã máy chủ, bảng quản trị, tiện ích Chrome/Edge 1.0.13 và các adapter MacFlow/Toonflow. [Nhật ký phiên bản](CHANGELOG.md)
 
 MUSE2API cung cấp API kiểu OpenAI để gọi các tính năng chat, tạo ảnh và tạo video của [Muse.ai](https://muse.ai/). Máy chủ Python chạy FastAPI và điều khiển Chromium qua Chrome DevTools Protocol (CDP). Muse.ai thực hiện việc tạo nội dung. Dịch vụ quản lý cookie, hàng đợi, tài khoản, proxy và kết quả tải về.
 
@@ -59,7 +59,7 @@ Nếu Chromium nằm ngoài PATH, đặt `MUSE2API_CHROMIUM` thành đường d�
 ## Nhập tài khoản Muse
 
 1. Tải tiện ích từ bảng quản trị hoặc nạp [thư mục tiện ích](extension/) dưới dạng tiện ích đã giải nén trong Chrome hoặc Edge.
-2. Đăng nhập Muse.ai và mở tiện ích **v1.0.12** trong chính cửa sổ đó. Với chế độ ẩn danh hoặc InPrivate, hãy cấp quyền chạy tiện ích trong chế độ tương ứng.
+2. Đăng nhập Muse.ai và mở tiện ích **v1.0.13** trong chính cửa sổ đó. Với chế độ ẩn danh hoặc InPrivate, hãy cấp quyền chạy tiện ích trong chế độ tương ứng.
 3. Điền địa chỉ dịch vụ và khóa quản trị. Bấm **Kiểm tra kết nối**, rồi **Muse** để nhập tài khoản.
 4. Trong mục **Muse**, bấm **Kiểm tra** để mở Muse bằng Chromium trên máy chủ và xác minh phiên.
 
@@ -203,7 +203,7 @@ Trong mac2API, mở **ChatGPT** hoặc **Gemini Web** và chọn cách kết n�
 
 ### Dùng tài khoản web đã đăng nhập
 
-1. Trong mac2API, chọn **Tải tiện ích Chrome** rồi cài hoặc tải lại tiện ích **1.0.12**. Trong tab tương ứng, lưu cách kết nối mặc định **Tài khoản web qua tiện ích Chrome**.
+1. Trong mac2API, chọn **Tải tiện ích Chrome** rồi cài hoặc tải lại tiện ích **1.0.13**. Trong tab tương ứng, lưu cách kết nối mặc định **Tài khoản web qua tiện ích Chrome**.
 2. Mở `chatgpt.com` hoặc `gemini.google.com` đã đăng nhập trong cửa sổ Chrome thường, trên cùng máy chạy mac2API. Mở tiện ích, dán khóa quản trị mac2API rồi bấm **ChatGPT** hoặc **Gemini**. Địa chỉ mặc định của tiện ích là `http://127.0.0.1:18610`.
 3. Trong **Khóa người dùng**, cấp quyền cho hồ sơ đã liên kết. Giữ Chrome mở khi xử lý tác vụ và dùng **Thử API** để kiểm tra văn bản hoặc ảnh.
 

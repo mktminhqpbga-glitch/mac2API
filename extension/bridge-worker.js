@@ -34,7 +34,7 @@ async function connect(message) {
   const site = bridgeSites[message.provider];
   if (!site) throw new Error('Không tìm thấy dịch vụ đã chọn.');
   const base = localBase(message.base);
-  const tab = await verifyTab(message.tabId, site);
+  const tab = await verifyTab(message.tabId, site, {requireComposer: message.provider !== 'chatgpt'});
   const stored = await chrome.storage.local.get(BRIDGE_CONFIG);
   const config = stored[BRIDGE_CONFIG] || {profile: crypto.randomUUID().replaceAll('-', ''), providers: {}};
   const response = await bridgeFetch(base, message.key, '/admin/web-providers/' + message.provider + '/extension', {
@@ -54,7 +54,7 @@ async function connect(message) {
   await wake();
 }
 
-async function verifyTab(tabId, site) {
+async function verifyTab(tabId, site, {requireComposer = true} = {}) {
   const deadline = Date.now() + 12000;
   let status;
   do {
@@ -68,13 +68,13 @@ async function verifyTab(tabId, site) {
       }
       throw new Error('Chrome chưa cho tiện ích đọc tab này. Kiểm tra Quyền truy cập trang web trong chrome://extensions.');
     });
-    if (status?.signedIn && status.composerReady) return tab;
+    if (status?.signedIn && (!requireComposer || status.composerReady)) return tab;
     await sleep(250);
   } while (Date.now() < deadline);
-  if (!status?.composerReady) {
-    throw new Error('Ô chat chưa sẵn sàng. Hãy mở cuộc trò chuyện mới, đợi gõ được tin nhắn rồi bấm lại tên dịch vụ.');
+  if (requireComposer && status?.signedIn) {
+    throw new Error('Đã xác minh phiên đăng nhập. Tiện ích chưa nhận diện được ô nhập. Hãy tải lại tab AI rồi kiểm tra lại.');
   }
-  throw new Error('Đã thấy ô chat nhưng chưa xác minh được đăng nhập. Hãy kiểm tra hồ sơ Chrome và mở một cuộc trò chuyện mới.');
+  throw new Error('Chưa xác minh được đăng nhập. Hãy kiểm tra hồ sơ Chrome và mở một cuộc trò chuyện mới.');
 }
 
 function jobAction(connection, id, action, report) {

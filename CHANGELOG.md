@@ -1,5 +1,10 @@
 # Nhật ký và bàn giao mac2API
 
+## 1.6.21
+
+- Tiện ích Chrome 1.0.13 cho phép liên kết hồ sơ ChatGPT đã đăng nhập trong lúc ô nhập chưa sẵn sàng. Khi chạy tác vụ, tiện ích kiểm tra ô nhập trong tab riêng trước khi gửi.
+- Cải thiện nhận diện ô nhập ChatGPT và phân biệt lỗi đăng nhập với lỗi nhận diện ô nhập.
+
 ## 1.6.20
 
 - ChatGPT và Gemini có hai cách kết nối trong mac2API. Tài khoản web dùng tiện ích Chrome 1.0.12. OpenAI API và Google Gemini API hỗ trợ văn bản và ảnh.

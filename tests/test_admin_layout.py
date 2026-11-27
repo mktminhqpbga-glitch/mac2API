@@ -284,8 +284,29 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
    assert page.js(verify,await_promise=True)=={'signedIn':True,'composerReady':True}
    page.js("document.querySelector('rich-textarea').setAttribute('aria-readonly','true')")
    assert page.js(verify,await_promise=True)=={'signedIn':True,'composerReady':False}
+   page.js("""document.body.innerHTML = '<button data-testid="profile-menu-trigger">Profile</button>' +
+    '<form id="other"><textarea>Keep my draft</textarea></form>' +
+    '<form id="composer"><textarea id="new-editor"></textarea><button id="send" data-testid="send-button" type="button" disabled>Send</button></form>';
+    $('new-editor').oninput = () => { $('send').disabled = false; };
+    window.fixtureSends = 0;
+    $('send').onclick = () => { window.fixtureSends++; };
+    window.chatSite = {...bridgeSites.chatgpt, origin:location.origin, path:location.pathname};
+   """)
+   verify="bridgeSiteAction(chatSite, 'verify')"
+   assert page.js(verify,await_promise=True)=={'signedIn':True,'composerReady':True}
+   assert page.js("bridgeSiteAction(chatSite, 'prepare', 'Fixture prompt')",await_promise=True)=={'ready':False}
+   assert page.js("bridgeSiteAction(chatSite, 'prepare', 'Fixture prompt')",await_promise=True)=={'ready':True}
+   assert page.js("bridgeSiteAction(chatSite, 'send', 'Fixture prompt')",await_promise=True)=={'sent':True}
+   assert page.js("window.fixtureSends === 1 && $('other').querySelector('textarea').value === 'Keep my draft'")
+   page.js("$('new-editor').readOnly = true")
+   assert page.js(verify,await_promise=True)=={'signedIn':True,'composerReady':False}
+   page.js("$('new-editor').readOnly = false; $('composer').append(document.createElement('textarea'))")
+   assert page.js(verify,await_promise=True)=={'signedIn':True,'composerReady':False}
+   page.js("""$('composer').querySelectorAll('textarea').forEach(editor => editor.remove());
+    $('composer').insertAdjacentHTML('afterbegin', '<div contenteditable="plaintext-only">Composer</div>');""")
+   assert page.js(verify,await_promise=True)=={'signedIn':True,'composerReady':True}
    assert not page.js('window.__errors')
-   print('PASS: popup requests its full width, renders in three languages and detects the scoped Gemini editor')
+   print('PASS: popup renders in three languages and detects the scoped Gemini and ChatGPT editors')
  finally:
   if page:
    try:page.send('Browser.close')

@@ -4,15 +4,18 @@ const bridgeSites = {
     url: 'https://chatgpt.com/',
     origin: 'https://chatgpt.com',
     path: '/',
-    account: '[data-testid="accounts-profile-button"], [data-testid="profile-button"], [data-testid="profile-menu-button"]',
+    account: '[data-testid="accounts-profile-button"], [data-testid="profile-button"], [data-testid="profile-menu-button"], [data-testid="profile-menu-trigger"]',
     composer: [
       '#prompt-textarea',
       '[data-testid="prompt-textarea"][contenteditable="true"]',
       'textarea[data-testid="prompt-textarea"]',
+      'textarea[name="prompt-textarea"]',
+      '[data-testid="prompt-textarea"] :is(textarea, [contenteditable])',
       'form[data-type="unified-composer"] [role="textbox"][contenteditable="true"]',
       'form[data-type="unified-composer"] .ProseMirror[contenteditable="true"]',
-      '#thread-bottom-container .ProseMirror[contenteditable="true"]',
+      '#thread-bottom-container :is(textarea, [role="textbox"][contenteditable], .ProseMirror[contenteditable])',
     ].join(', '),
+    formEditor: 'textarea, [contenteditable]',
     send: '[data-testid="send-button"], #composer-submit-button[data-testid="send-button"]',
     reply: '[data-message-author-role="assistant"]',
     stop: '[data-testid="stop-button"]',
@@ -35,11 +38,21 @@ async function bridgeSiteAction(site, action, prompt) {
   if (location.origin !== site.origin) return {wrongSite: true};
   const visible = element => Boolean(element?.getClientRects().length);
   const find = selector => [...document.querySelectorAll(selector)].find(visible);
-  const editor = [...document.querySelectorAll(site.composer)].find(element =>
+  const editable = element =>
     visible(element) && getComputedStyle(element).visibility === 'visible' &&
     !element.closest('[inert], [aria-disabled="true"], [aria-readonly="true"], dialog, [role="dialog"]') &&
-    (element.isContentEditable || (element.matches('textarea') && !element.matches(':disabled') && !element.readOnly))
-  );
+    (element.isContentEditable || (element.matches('textarea') && !element.matches(':disabled') && !element.readOnly));
+  const controls = [...document.querySelectorAll(site.send)];
+  let editor = [...document.querySelectorAll(site.composer)].find(editable);
+  let composerForm;
+  if (!editor && site.formEditor) {
+    const forms = new Set(controls.map(button => button.form || button.closest('form')).filter(Boolean));
+    const candidates = [...forms].flatMap(form => [...form.querySelectorAll(site.formEditor)].filter(editable));
+    if (candidates.length === 1) {
+      [editor] = candidates;
+      composerForm = editor.closest('form');
+    }
+  }
   // A collapsed sidebar can hide the account control in a signed-in profile.
   const signedIn = Boolean(document.querySelector(site.account));
   if (action === 'verify') return {signedIn, composerReady: Boolean(editor)};
@@ -47,8 +60,9 @@ async function bridgeSiteAction(site, action, prompt) {
     visible(element) && !element.parentElement?.closest(site.reply)
   );
   const stopping = Boolean(find(site.stop));
-  const send = [...document.querySelectorAll(site.send)].find(element =>
-    visible(element) && !element.disabled && element.getAttribute('aria-disabled') !== 'true'
+  const send = controls.find(element =>
+    (!composerForm || element.form === composerForm || composerForm.contains(element)) &&
+    visible(element) && !element.disabled && element.getAttribute('aria-disabled') !== 'true',
   );
   if (action === 'prepare' || action === 'send') {
     if (!signedIn) return {signedIn: false};

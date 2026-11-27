@@ -6,12 +6,13 @@ import vm from 'node:vm';
 const root = new URL('../extension/', import.meta.url);
 const worker = fs.readFileSync(new URL('bridge-worker.js', root), 'utf8');
 
-async function runFixture(permit, verifyStates) {
+async function runFixture(permit, verifyStates, {provider = 'gemini-web', pair = false} = {}) {
+  const tabUrl = provider === 'chatgpt' ? 'https://chatgpt.com/' : 'https://gemini.google.com/app';
   const events = [];
   let now = 0;
   const listener = {addListener() {}};
   const context = vm.createContext({
-    URL, AbortSignal, console,
+    URL, AbortSignal, console, crypto,
     Date: {now: () => now},
     setTimeout(callback, delay) {now += delay; queueMicrotask(callback);},
     importScripts(name) {
@@ -20,12 +21,17 @@ async function runFixture(permit, verifyStates) {
     fetch: async (address, options) => {
       const action = new URL(address).pathname.split('/').at(-1);
       events.push([action, options.body && JSON.parse(options.body)]);
+      if (action === 'extension') {
+        assert.equal(address, 'http://127.0.0.1:18610/admin/web-providers/chatgpt/extension');
+        assert.equal(options.headers.Authorization, 'Bearer fixture-admin');
+        return {status: 201, json: async () => ({token: 'scoped-bridge-key'})};
+      }
       assert.equal(options.headers.Authorization, 'Bearer scoped-bridge-key');
       return {status: 200, ok: true, json: async () => ({ok: action !== 'permit' || permit})};
     },
     chrome: {
       storage: {
-        local: {get: async () => ({})},
+        local: {get: async () => ({}), set: async () => events.push(['paired'])},
         session: {set: async () => events.push(['track']), remove: async () => events.push(['untrack'])},
       },
       runtime: {onMessage: listener, onStartup: listener, onInstalled: listener},
@@ -41,7 +47,7 @@ async function runFixture(permit, verifyStates) {
         },
         update: async (id, options) => {events.push(['navigate', id, options.url]);},
         get: async id => {
-          if (id === 27 && verifyStates) return {id, status: 'loading', url: 'https://gemini.google.com/app'};
+          if (id === 27 && verifyStates) return {id, status: 'loading', url: tabUrl};
           assert.equal(id, 101);
           return {status: 'complete', url: 'https://gemini.google.com/app'};
         },
@@ -73,8 +79,13 @@ async function runFixture(permit, verifyStates) {
   });
   vm.runInContext(worker, context);
   if (verifyStates) {
-    const tab = await vm.runInContext("verifyTab(27, bridgeSites['gemini-web'])", context);
-    assert.equal(tab.id, 27);
+    if (pair) {
+      await vm.runInContext(`connect({provider: ${JSON.stringify(provider)}, tabId: 27,
+        base: 'http://127.0.0.1:18610', key: 'fixture-admin', label: 'Fixture'})`, context);
+    } else {
+      const tab = await vm.runInContext(`verifyTab(27, bridgeSites[${JSON.stringify(provider)}])`, context);
+      assert.equal(tab.id, 27);
+    }
     return events;
   }
   await vm.runInContext(`runJob('gemini-web', {base: 'http://127.0.0.1:18610', token: 'scoped-bridge-key', windowId: 2},
@@ -104,4 +115,14 @@ test('Gemini linking retries detached frames and verifies an editable composer b
     {signedIn: false, composerReady: true},
   ]);
   assert.deepEqual(events, [['probe'], ['probe'], ['probe'], ['probe']]);
+});
+
+test('ChatGPT can link a verified profile while its composer is unavailable', async () => {
+  const events = await runFixture(true, [{signedIn: true, composerReady: false}], {provider: 'chatgpt', pair: true});
+  assert.deepEqual(events.map(event => event[0]), ['probe', 'extension', 'paired']);
+});
+
+test('ChatGPT linking rejects a signed-out tab even with a usable composer', async () => {
+  const states = Array.from({length: 50}, () => ({signedIn: false, composerReady: true}));
+  await assert.rejects(runFixture(true, states, {provider: 'chatgpt', pair: true}), /Chưa xác minh được đăng nhập/);
 });
