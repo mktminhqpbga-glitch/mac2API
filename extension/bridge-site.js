@@ -1,5 +1,23 @@
 // Each action runs in the isolated world of an explicitly chosen provider tab.
 const bridgeSites = {
+  chatgpt: {
+    url: 'https://chatgpt.com/',
+    origin: 'https://chatgpt.com',
+    path: '/',
+    account: '[data-testid="accounts-profile-button"], [data-testid="profile-button"], [data-testid="profile-menu-button"]',
+    composer: [
+      '#prompt-textarea',
+      '[data-testid="prompt-textarea"][contenteditable="true"]',
+      'textarea[data-testid="prompt-textarea"]',
+      'form[data-type="unified-composer"] [role="textbox"][contenteditable="true"]',
+      'form[data-type="unified-composer"] .ProseMirror[contenteditable="true"]',
+      '#thread-bottom-container .ProseMirror[contenteditable="true"]',
+    ].join(', '),
+    send: '[data-testid="send-button"], #composer-submit-button[data-testid="send-button"]',
+    reply: '[data-message-author-role="assistant"]',
+    stop: '[data-testid="stop-button"]',
+    finished: '[data-testid="copy-turn-action-button"]',
+  },
   'gemini-web': {
     url: 'https://gemini.google.com/app',
     origin: 'https://gemini.google.com',

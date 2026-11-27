@@ -21,9 +21,9 @@ accounts=[{'id':'fixture'+str(i).zfill(5),'label':'Fixture-'+str(i),'enabled':Tr
  'quota':{'found':True,'plan':'Free plan','weekly_used_pct':29,'extra_left':'1B tokens left','checked_at':now-10000}} for i in range(8)]
 events=[]
 network=[]
-server_state={'mode':'update','videoPolls':0,'gateways':{
- '/admin/chatgpt2api':dict(base_url='',text_model='auto',image_model='gpt-image-2.6',has_key=False,ready=False),
- '/admin/gemini-web2api':dict(base_url='',text_model='gemini-4-hydrogen',image_model='gemini-3.1-flash-image',has_key=False,ready=False,prefer=False),
+server_state={'mode':'update','videoPolls':0,'connections':{
+ '/admin/connections/chatgpt':dict(mode='browser',image_model='gpt-image-1.5',official_configured=True,external_configured=False,profiles=[]),
+ '/admin/connections/gemini-web':dict(mode='browser',image_model='gemini-2.5-flash-image',official_configured=True,external_configured=False,profiles=[]),
 }}
 feature_errors=[]
 def check(value,message):
@@ -40,7 +40,7 @@ class Handler(BaseHTTPRequestHandler):
   elif path=='/admin/accounts':data={'accounts':accounts,'stats':{'total':8,'healthy':8}};kind='application/json'
   elif path=='/admin/apikey':data={'api_key':'fixture-only'};kind='application/json'
   elif path=='/admin/web-providers':data={'configured':False,'profile_connected':False,'ready':[],'local_setup':True};kind='application/json'
-  elif path in server_state['gateways']:data=server_state['gateways'][path];kind='application/json'
+  elif path in server_state['connections']:data=server_state['connections'][path];kind='application/json'
   elif path in ['/admin/update/check','/admin/repo/status']:
    known=server_state['mode']=='update'
    data={'repo_url':'https://github.com/czg86389-hub/muse2api','repo_ref':'main','local_version':'1.6.10','remote_version':VERSION if known else '', 'local_sha':'aaaaaaa','remote_sha':'bbbbbbb' if known else '', 'up_to_date':False if known else None,'has_update':known,'check_error':'' if known else 'fixture remote unavailable','managed_deployment':False,'highlights':['fixture update'],'highlights_en':['fixture update'],'highlights_vi':['Bản thử tiếng Việt'],'recent_commits':[]};kind='application/json'
@@ -71,14 +71,11 @@ class Handler(BaseHTTPRequestHandler):
   events.append({'method':'POST','path':path,'body':body})
   if path=='/admin/web-providers/connect-profile':
    reply={'configured':True,'profile_connected':True,'ready':[],'local_setup':True}
-  elif path in server_state['gateways']:
-   gateway=server_state['gateways'][path]
-   gateway.update(base_url=body['base_url'],has_key=bool(body.get('api_key')),configured=True)
-   if 'prefer' in body:gateway['prefer']=body['prefer']
-   reply=gateway
-  elif path.endswith('/test') and path[:-5] in server_state['gateways']:
-   reply=server_state['gateways'][path[:-5]]
-   reply['ready']=True
+  elif path in server_state['connections']:
+   reply=server_state['connections'][path]
+   reply.update(body)
+  elif path.endswith('/test') and path[:-5] in server_state['connections']:
+   reply={'ok':True}
   elif path=='/v1/videos':
    reply={'id':'fixture-video','status':'queued'}
   else:
@@ -117,28 +114,21 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
     time.sleep(.1)
    raise AssertionError('Condition failed: '+expr)
   wait("document.querySelectorAll('#poolBody tr').length===8")
-  page.js("goTab('openai')")
-  wait("$('chatgptGatewayStatus').textContent.includes('Chưa kết nối')")
-  assert page.js("!$('tab-openai').querySelector('[data-web-connect]') && $('chatgptGatewayPublicUrl').value.endsWith('/chatgpt/v1')")
-  page.js("""$('chatgptGatewayUrl').value='http://127.0.0.1:3000';
-    $('chatgptGatewayKey').value='fixture-gateway-key'; $('chatgptGatewaySubmit').click()""")
-  wait("$('chatgptGatewayStatus').textContent.includes('Đã kiểm tra') && !$('chatgptGatewayKey').value")
-  assert [event['path'] for event in events[-2:]]==['/admin/chatgpt2api','/admin/chatgpt2api/test']
-  page.send('Emulation.setDeviceMetricsOverride',{'width':390,'height':844,'deviceScaleFactor':1,'mobile':False})
-  layout = page.js("""({width:document.documentElement.clientWidth,scroll:document.documentElement.scrollWidth,
-    right:$('chatgptGatewaySubmit').getBoundingClientRect().right})""")
-  assert layout['scroll'] == layout['width'] and layout['right'] <= layout['width'], layout
-  page.send('Emulation.clearDeviceMetricsOverride')
-  page.js("document.querySelector('[data-t=gemini]').click()")
-  wait("$('geminiGatewayStatus').textContent.includes('Kết nối mặc định: Chrome')")
-  assert page.js("!$('geminiGatewayPrefer').checked && $('geminiGatewayPublicUrl').value.endsWith('/gemini/v1')")
-  page.js("""$('geminiGatewayUrl').value='http://127.0.0.1:8007'; $('geminiGatewayKey').value='fixture-gateway-key';
-    $('geminiGatewayPrefer').checked=true; $('geminiGatewaySubmit').click()""")
-  wait("$('geminiGatewayStatus').textContent.includes('Kết nối mặc định: Gemini-Web2API') && !$('geminiGatewayKey').value")
-  assert [event['path'] for event in events[-2:]]==['/admin/gemini-web2api','/admin/gemini-web2api/test']
-  page.send('Emulation.setDeviceMetricsOverride',{'width':390,'height':844,'deviceScaleFactor':1,'mobile':False})
-  assert page.js("document.documentElement.scrollWidth === document.documentElement.clientWidth")
-  page.send('Emulation.clearDeviceMetricsOverride')
+  for tab, provider, scope in [('openai','chatgpt','chatgpt'), ('gemini','gemini-web','gemini')]:
+   page.js(f"goTab('{tab}')")
+   node=f"$('tab-{tab}')"
+   wait(f"{node}.querySelector('[name=image_model]').value.length > 0")
+   assert page.js(f"{node}.querySelector('[name=mode]').value === 'browser' && {node}.querySelector('[data-public-url]').value.endsWith('/{scope}/v1')")
+   page.js(f"""{{const mode={node}.querySelector('[name=mode]'); mode.value='official';
+      mode.dispatchEvent(new Event('change')); {node}.querySelector('button[type=submit]').click();}}""")
+   wait(f"{node}.querySelector('[data-connection-status]').textContent.includes('Đã lưu')")
+   page.js(f"{node}.querySelector('[data-test-official]').click()")
+   wait(f"{node}.querySelector('[data-connection-status]').textContent.includes('đã xác nhận')")
+   endpoint='/admin/connections/'+provider
+   assert [event['path'] for event in events[-2:]]==[endpoint,endpoint+'/test']
+   page.send('Emulation.setDeviceMetricsOverride',{'width':390,'height':844,'deviceScaleFactor':1,'mobile':False})
+   assert page.js("document.documentElement.scrollWidth === document.documentElement.clientWidth")
+   page.send('Emulation.clearDeviceMetricsOverride')
   wait("$('tab-gemini').querySelector('[data-provider-status]').textContent.includes('Chưa kết nối')")
   assert page.js("$('tab-gemini').querySelector('[data-web-extension]').getClientRects().length && !$('tab-gemini').querySelector('[data-web-setup]').open && !$('extensionUpgradeNotice').getClientRects().length")
   page.js("$('tab-gemini').querySelector('[data-web-connect]').click()")
@@ -271,7 +261,7 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
      const buttons = [...document.querySelectorAll('.provider-buttons button')].map(b => b.getBoundingClientRect());
      return document.documentElement.scrollWidth === 380 && range.getClientRects().length === 1
       && $('langSel').getBoundingClientRect().right < innerWidth
-      && buttons.length === 2 && buttons.every((b, i) => b.top === buttons[0].top && (!i || b.left > buttons[i-1].right))
+      && buttons.length === 3 && buttons.every((b, i) => b.top === buttons[0].top && (!i || b.left > buttons[i-1].right))
       && $('directSteps').checkVisibility() === false;
     })()""") is True, lang
     page.js("$('checkConnection').click()")

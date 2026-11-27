@@ -1,5 +1,10 @@
 # Nhật ký và bàn giao mac2API
 
+## 1.6.20
+
+- ChatGPT và Gemini có hai cách kết nối trong mac2API. Tài khoản web dùng tiện ích Chrome 1.0.12. OpenAI API và Google Gemini API hỗ trợ văn bản và ảnh.
+- MacFlow dùng `/chatgpt/v1` hoặc `/gemini/v1` với khóa người dùng mac2API. Chọn tài khoản được phép dùng cho từng khóa và chọn kết nối mặc định trong tab của dịch vụ.
+
 ## 1.6.19
 
 - Thêm kết nối Gemini-Web2API cho `gemini-web/text` và `gemini-web/image`. MacFlow tiếp tục dùng địa chỉ `/gemini/v1`.

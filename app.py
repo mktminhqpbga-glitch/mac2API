@@ -58,8 +58,8 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
 from pydantic import model_validator, BaseModel, Field, SecretStr, ValidationError, field_validator
 
 from chat_providers import (ChatGPT2APISettings, ChatProviders, GeminiWeb2APISettings,
-                            ProviderName, ProviderSettings, WebGateway)
-from chrome_bridge import ChromeBridge
+                            OfficialWebConnection, ProviderName, ProviderSettings, WebConnectionSettings, WebGateway)
+from chrome_bridge import ChromeBridge, EXTENSION_PROVIDERS
 from client_usage import ClientJob, ClientUsage, Price, TextOutcome, redact_content
 from config import CFG
 from engine import (ESSENTIAL_COOKIES, MAX_REFERENCE_IMAGE_BYTES,
@@ -160,6 +160,10 @@ chatgpt2api = WebGateway(CFG.data_dir, name="chatgpt2api", label="ChatGPT2API",
 gemini_web2api = WebGateway(CFG.data_dir, name="gemini-web2api", label="Gemini-Web2API",
                             provider="gemini-web", settings=GeminiWeb2APISettings)
 WEB_GATEWAYS = {gateway.provider: gateway for gateway in (chatgpt2api, gemini_web2api)}
+OFFICIAL_WEB_CONNECTIONS = {
+    "chatgpt": OfficialWebConnection(chat_providers, "chatgpt", "openai", "gpt-image-1.5"),
+    "gemini-web": OfficialWebConnection(chat_providers, "gemini-web", "gemini", "gemini-2.5-flash-image"),
+}
 if CFG.web_cdp_port and (not 1 <= CFG.web_cdp_port <= 65535 or CFG.web_cdp_port == CFG.cdp_port):
     raise ValueError("MUSE2API_WEB_CDP_PORT must be separate from the Muse CDP port")
 web_port = CFG.web_cdp_port
@@ -275,6 +279,12 @@ def _run_web_generation(provider, prompt, *, image, timeout, on_acquired=None, o
             reserve_options = {"allowed_accounts": allowed_accounts} if allowed_accounts else {}
             allowed = allowed_accounts() if allowed_accounts else None
             paired = chrome_bridge.state(provider, allowed)
+            if provider == "chatgpt":
+                if paired and paired["ready"]:
+                    raise WebAccountChanged()
+                if allowed is not None and not any(aid.startswith("ext-chatgpt-") for aid in allowed):
+                    _check_dispatch(allowed_accounts, None)
+                raise WebProviderError("Hãy mở Chrome, đăng nhập ChatGPT rồi bấm ChatGPT trong tiện ích mac2API.", 503)
             managed = managed_web.state(provider, allowed)
             if paired and not (managed and managed["configured"]) and (allowed is not None or not web_providers.ready(provider)):
                 if paired["ready"]:
@@ -332,17 +342,46 @@ def _run_web_image(provider, prompt, timeout, **callbacks):
 
 def _generation_gateway(provider, callbacks):
     allowed_accounts = callbacks.get("allowed_accounts")
-    return _select_web_gateway(provider, allowed_accounts() if allowed_accounts else None)
+    allowed = allowed_accounts() if allowed_accounts else None
+    connection = _select_web_gateway(provider, allowed)
+    if not connection and provider == "chatgpt" and allowed is not None:
+        if not any(account.startswith("ext-chatgpt-") for account in allowed):
+            _check_dispatch(allowed_accounts, None)
+    return connection
 
 
 def _select_web_gateway(provider, allowed_ids=None):
-    gateway = WEB_GATEWAYS.get(provider)
-    if provider == "gemini-web":
-        if allowed_ids is not None:
-            return gateway if gateway.account_id in allowed_ids else None
-        state = gateway.status()
-        return gateway if state["prefer"] and state["ready"] else None
-    return gateway
+    if provider not in OFFICIAL_WEB_CONNECTIONS:
+        return None
+    official = OFFICIAL_WEB_CONNECTIONS[provider]
+    external = WEB_GATEWAYS[provider]
+    choices = {"browser": None, "external": external, "official": official}
+    mode = _default_web_connection(provider)
+    if allowed_ids is None:
+        return choices[mode]
+    if external.account_id in allowed_ids and official.settings()["mode"] is None:
+        return external
+    for option in dict.fromkeys((mode, "browser", "external", "official")):
+        connection = choices[option]
+        if connection and connection.account_id in allowed_ids:
+            return connection
+        if not connection:
+            browser = allowed_ids - {official.account_id, external.account_id}
+            if any(provider == "gemini-web" or aid.startswith("ext-chatgpt-") for aid in browser):
+                return None
+    return None
+
+
+def _default_web_connection(provider):
+    mode = OFFICIAL_WEB_CONNECTIONS[provider].settings()["mode"]
+    if mode is not None:
+        return mode
+    status = WEB_GATEWAYS[provider].status()
+    if provider == "chatgpt" and status["configured"]:
+        return "external"
+    if provider == "gemini-web" and status["prefer"] and status["ready"]:
+        return "external"
+    return "browser"
 
 
 def _start_gateway_request(gateway, *, allowed_accounts=None, on_acquired=None, on_account=None,
@@ -2236,6 +2275,12 @@ def _gateway_state(gateway, allowed_ids):
 
 def _chrome_account_state(provider, allowed_ids=None):
     extension = chrome_bridge.state(provider, allowed_ids)
+    if provider == "chatgpt":
+        state = extension or {"configured": False, "connected": False, "ready": False,
+                              "busy": False, "reason": "not_configured"}
+        if state["ready"] and GEN_LOCK.full():
+            state.update(busy=True, reason="busy")
+        return state
     if extension and extension["ready"]:
         return extension
     managed = managed_web.state(provider, allowed_ids)
@@ -2260,6 +2305,8 @@ def capabilities(request: Request, client=Depends(contract_auth)):
         if rules is None and (gateway := _select_web_gateway(provider)):
             states[provider] = _gateway_state(gateway, None)
             browser_providers.discard(provider)
+        elif rules is None and provider == "chatgpt":
+            states[provider] = _chrome_account_state(provider)
         elif rules is not None:
             states[provider] = None
     if rules is None and browser_providers:
@@ -3475,7 +3522,7 @@ def list_web_providers(_=Depends(auth)):
     return {"configured": profile_connected if web_providers.profile_preferred else bool(web_providers.port),
             "port": web_providers.port,
             "profile_connected": profile_connected,
-            "ready": [provider for provider in WEB_PROVIDERS if _web_provider_ready(provider, chrome_only=True)],
+            "ready": [provider for provider in sorted(EXTENSION_PROVIDERS) if _web_provider_ready(provider, chrome_only=True)],
             "accounts": managed_web.list_accounts(),
             "extension_accounts": chrome_bridge.list_accounts(),
             "managed_login_available": visible_chrome_available(),
@@ -3522,7 +3569,7 @@ def pair_chrome_extension(provider: str, req: ChromeExtensionPair, request: Requ
     _require_local_extension(request)
     if not CFG.api_key:
         raise HTTPException(403, "Hãy cấu hình khóa quản trị mac2API trước khi liên kết tiện ích.")
-    if provider not in WEB_PROVIDERS:
+    if provider not in EXTENSION_PROVIDERS:
         raise HTTPException(404, "Không tìm thấy nhà cung cấp web.")
     try:
         token = chrome_bridge.pair(provider, req.profile, req.label.strip() or "Tiện ích Chrome")
@@ -3743,6 +3790,34 @@ async def test_chatgpt2api(_=Depends(auth)):
     return JSONResponse(await chatgpt2api.test(), headers=NO_STORE)
 
 
+WebConnectionProvider = Literal["chatgpt", "gemini-web"]
+
+
+@app.get("/admin/connections/{provider}")
+def get_web_connection(provider: WebConnectionProvider, _=Depends(auth)):
+    connection = OFFICIAL_WEB_CONNECTIONS[provider]
+    external = WEB_GATEWAYS[provider]
+    return JSONResponse({**connection.settings(), "mode": _default_web_connection(provider),
+                         "official_configured": connection.status()["configured"],
+                         "external_configured": external.status()["configured"],
+                         "profiles": [account for account in chrome_bridge.list_accounts()
+                                      if account["provider"] == provider]},
+                        headers=NO_STORE)
+
+
+@app.put("/admin/connections/{provider}")
+def save_web_connection(provider: WebConnectionProvider, settings: WebConnectionSettings, _=Depends(auth)):
+    if settings.mode == "external" and not WEB_GATEWAYS[provider].status()["configured"]:
+        raise HTTPException(400, "Chưa có kết nối dịch vụ riêng đã lưu.")
+    OFFICIAL_WEB_CONNECTIONS[provider].save(settings)
+    return get_web_connection(provider)
+
+
+@app.post("/admin/connections/{provider}/test")
+async def test_official_web_connection(provider: WebConnectionProvider, _=Depends(auth)):
+    return JSONResponse(await OFFICIAL_WEB_CONNECTIONS[provider].test(), headers=NO_STORE)
+
+
 @app.get("/admin/gemini-web2api")
 def get_gemini_web2api(_=Depends(auth)):
     return JSONResponse(gemini_web2api.status(), headers=NO_STORE)
@@ -3782,10 +3857,10 @@ def _client_key_catalog():
     for account in [*managed_web.list_accounts(), *chrome_bridge.list_accounts()]:
         accounts.setdefault(account["provider"], []).append(
             {key: account[key] for key in ("id", "label", "enabled", "verified")})
-    for provider, gateway in WEB_GATEWAYS.items():
+    for gateway in (*OFFICIAL_WEB_CONNECTIONS.values(), *WEB_GATEWAYS.values()):
         status = gateway.status()
         if status["configured"]:
-            accounts.setdefault(provider, []).append({"id": gateway.account_id, "label": gateway.label,
+            accounts.setdefault(gateway.provider, []).append({"id": gateway.account_id, "label": gateway.label,
                                                        "enabled": True, "verified": status["ready"]})
     entries = [{"id": model, "provider": provider, "kind": kind, "accounts": accounts.get(provider, [])}
                for model, (provider, kind) in MODULES.items()]
@@ -3969,10 +4044,10 @@ def _overview_accounts():
     for item in chrome_bridge.list_accounts():
         accounts.append({key: item[key] for key in ("id", "label", "provider", "busy")}
                         | {"state": "ready" if item["verified"] else "needs_check"})
-    for provider, gateway in WEB_GATEWAYS.items():
+    for gateway in (*OFFICIAL_WEB_CONNECTIONS.values(), *WEB_GATEWAYS.values()):
         status = gateway.status()
         if status["configured"]:
-            accounts.append({"id": gateway.account_id, "label": gateway.label, "provider": provider, "busy": False,
+            accounts.append({"id": gateway.account_id, "label": gateway.label, "provider": gateway.provider, "busy": False,
                              "state": "ready" if status["ready"] else "needs_check"})
     for provider in WEB_PROVIDERS:
         if managed_web.state(provider) is None and (web_providers.ready(provider) or provider in web_providers.linked_at):
@@ -3988,8 +4063,8 @@ def _overview_accounts():
 def admin_overview(_=Depends(auth), days: Literal["1", "7", "30"] = "1"):
     muse = _muse_capability_state()
     providers = {"muse": "ready" if muse["ready"] else "needs_check" if muse["configured"] else "setup"}
-    gateway = chatgpt2api.status()
-    providers["chatgpt"] = "ready" if gateway["ready"] else "needs_check" if gateway["configured"] else "setup"
+    chatgpt = _web_account_state("chatgpt")
+    providers["chatgpt"] = "ready" if chatgpt["ready"] else "needs_check" if chatgpt["configured"] else "setup"
     for provider in WEB_PROVIDERS:
         pool = _web_account_state(provider)
         if pool:

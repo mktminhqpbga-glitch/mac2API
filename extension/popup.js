@@ -234,7 +234,7 @@ async function checkConnection() {
     if (provider) {
       const [id, {site}] = provider;
       const result = await chrome.runtime.sendMessage({type:'mac2apiChromeCheck', provider:id, tabId:tab.id,
-        base, direct:$('directChrome').checked});
+        base, direct:id === 'chatgpt' || $('directChrome').checked});
       if (!result?.ok) throw new Error(result?.error || t('连接失败 (HTTP {status})', {status: '?'}));
       return log(t('mac2API 连接正常，已验证 {site} 的登录标签页。', {site}), 'ok');
     }
@@ -382,12 +382,13 @@ function tabAtOrigin(tab, origins) {
 }
 
 const WEB_BUTTONS = {
+  chatgpt: {button: 'linkChatGPT', site: 'ChatGPT', origin: 'https://chatgpt.com'},
   'gemini-web': {button: 'linkGemini', site: 'Gemini', origin: 'https://gemini.google.com'},
 };
 
 async function linkWebProvider(provider) {
   const {button, site, origin} = WEB_BUTTONS[provider];
-  const direct = $('directChrome').checked;
+  const direct = provider === 'chatgpt' || $('directChrome').checked;
   const base = normBase($('base').value) || (direct ? LOCAL_BASE : '');
   const key = $('key').value.trim();
   const label = $('label').value.trim();

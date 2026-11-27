@@ -14,6 +14,7 @@ from collections.abc import Callable
 from store import _read, _write
 from web_providers import PROVIDERS, WebPostSendError, WebProviderError
 
+EXTENSION_PROVIDERS = frozenset((*PROVIDERS, "chatgpt"))
 HEARTBEAT_TTL = 45
 CLEANUP_SECONDS = 8
 ERRORS = {
@@ -54,7 +55,7 @@ class ChromeBridge:
         self.jobs = {}
 
     def pair(self, provider, profile, label):
-        if provider not in PROVIDERS:
+        if provider not in EXTENSION_PROVIDERS:
             raise WebProviderError("Không tìm thấy nhà cung cấp web.", 404)
         aid = f"ext-{provider}-{profile}"
         with self.condition:
@@ -63,6 +64,8 @@ class ChromeBridge:
             token = f"{aid}.{secrets.token_urlsafe(32)}"
             record = {"id": aid, "label": label, "provider": provider,
                       "digest": hashlib.sha256(token.encode()).hexdigest()}
+            if provider == "chatgpt":
+                record["direct_link"] = True
             accounts = {**self.accounts, aid: record}
             _write(self.path, accounts)
             self.accounts = accounts
@@ -87,11 +90,16 @@ class ChromeBridge:
 
     def _authenticate(self, token):
         account = self.accounts.get(token.partition(".")[0])
-        if not account or account["provider"] not in PROVIDERS or not hmac.compare_digest(
+        if not account or not self._supported(account) or not hmac.compare_digest(
             account["digest"], hashlib.sha256(token.encode()).hexdigest()
         ):
             raise WebProviderError("Kết nối tiện ích đã hết hiệu lực. Hãy liên kết lại.", 401)
         return account["id"]
+
+    @staticmethod
+    def _supported(account):
+        provider = account["provider"]
+        return provider in EXTENSION_PROVIDERS and (provider != "chatgpt" or account.get("direct_link") is True)
 
     def _connected(self, aid):
         return self.seen.get(aid, -HEARTBEAT_TTL) > time.monotonic() - HEARTBEAT_TTL
@@ -101,7 +109,7 @@ class ChromeBridge:
             return [{key: item[key] for key in ("id", "label", "provider")}
                     | {"enabled": True, "verified": self._connected(aid) and aid not in self.expired_sessions,
                        "busy": aid in self.reserved}
-                    for aid, item in self.accounts.items() if item["provider"] in PROVIDERS]
+                    for aid, item in self.accounts.items() if self._supported(item)]
 
     def state(self, provider, allowed_ids=None):
         accounts = [item for item in self.list_accounts() if item["provider"] == provider

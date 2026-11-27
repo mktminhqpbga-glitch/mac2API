@@ -636,57 +636,51 @@
     </div>
   </section>
   <section class="tab" id="tab-openai">
-    <div class="card">
-      <h2>ChatGPT2API</h2>
-      <p class="hint">Mở ChatGPT2API, thêm tài khoản ở đó và tạo khóa. Sau đó nhập hai thông tin dưới đây để sử dụng ChatGPT trong mac2API. <a href="https://github.com/basketikun/chatgpt2api" target="_blank" rel="noopener noreferrer">Hướng dẫn mở ChatGPT2API</a></p>
-      <form id="chatgptGatewayForm" class="gateway-form">
-        <label>Địa chỉ ChatGPT2API <input id="chatgptGatewayUrl" type="url" required placeholder="http://127.0.0.1:3000" spellcheck="false"></label>
-        <label>Khóa ChatGPT2API <input id="chatgptGatewayKey" type="password" spellcheck="false" autocomplete="new-password"></label>
-        <details>
-          <summary>Cài đặt nâng cao</summary>
-          <label>Mô hình văn bản <input type="text" id="chatgptGatewayText" value="auto" required spellcheck="false"></label>
-          <label>Mô hình tạo ảnh <input type="text" id="chatgptGatewayImage" value="gpt-image-2.6" required spellcheck="false"></label>
-          <button id="chatgptGatewayClear" type="button" hidden>Ngắt kết nối</button>
-        </details>
-        <div class="row">
-          <button id="chatgptGatewaySubmit" type="submit">Lưu và kiểm tra kết nối</button>
-          <button id="chatgptGatewayTry" type="button">Mở Thử API</button>
-        </div>
-        <p id="chatgptGatewayStatus" class="hint" role="status"></p>
-      </form>
-      <div class="row">
-        <label>Địa chỉ dùng với MacFlow <input type="text" id="chatgptGatewayPublicUrl" class="gateway-public-url" readonly></label>
-        <button id="chatgptGatewayCopy" type="button">Sao chép địa chỉ</button>
+    <div class="card" data-web-accounts>
+      <h3>Tài khoản ChatGPT trong Chrome</h3>
+      <p class="hint">Mở ChatGPT đã đăng nhập trong Chrome trên máy chạy mac2API. Mở tiện ích, dán khóa quản trị và chọn <strong>ChatGPT</strong>.</p>
+      <div class="acts">
+        <a class="btnlike" href="/admin/extension" download>Tải tiện ích Chrome</a>
+        <button type="button" class="ghost" id="chatgptCopyAdminKey">Sao chép khóa quản trị</button>
       </div>
+      <div id="chatgptChromeProfiles"></div>
     </div>
   </section>
-  <section class="tab" id="tab-gemini">
+  <section class="tab" id="tab-gemini"></section>
+  <template id="webConnectionTemplate">
     <div class="card">
-      <h2>Gemini-Web2API</h2>
-      <p class="hint">Thêm tài khoản trong Gemini-Web2API rồi lấy địa chỉ và khóa của dịch vụ đó. <a href="https://github.com/Mag1cFall/Gemini-Web2API" target="_blank" rel="noopener noreferrer">Hướng dẫn mở Gemini-Web2API</a></p>
-      <form id="geminiGatewayForm" class="gateway-form">
-        <label>Địa chỉ Gemini-Web2API <input id="geminiGatewayUrl" type="url" required placeholder="http://127.0.0.1:8007" spellcheck="false"></label>
-        <label>Khóa Gemini-Web2API <input id="geminiGatewayKey" type="password" spellcheck="false" autocomplete="new-password"></label>
-        <label><input id="geminiGatewayPrefer" type="checkbox"> Dùng Gemini-Web2API làm mặc định</label>
-        <p class="hint">Để thử riêng, cấp quyền Gemini-Web2API cho một khóa người dùng. Khóa chỉ được cấp tài khoản Chrome vẫn dùng Chrome.</p>
+      <h2>Cách kết nối</h2>
+      <form class="gateway-form">
+        <label>Kết nối mặc định
+          <select name="mode">
+            <option value="browser">Tài khoản web qua tiện ích Chrome</option>
+            <option value="official">API chính thức</option>
+            <option value="external" hidden>Dịch vụ riêng đã lưu</option>
+          </select>
+        </label>
+        <div data-official-connection hidden>
+          <p class="hint">Nhà cung cấp tính phí theo mức sử dụng API. Khóa và mô hình văn bản được lấy từ mục API chính thức.</p>
+          <div class="acts">
+            <button type="button" data-open-official>Mở cài đặt khóa API chính thức</button>
+            <button type="button" data-test-official>Kiểm tra mô hình văn bản và ảnh</button>
+          </div>
+        </div>
         <details>
           <summary>Cài đặt nâng cao</summary>
-          <label>Mô hình văn bản <input type="text" id="geminiGatewayText" value="gemini-4-hydrogen" required spellcheck="false"></label>
-          <label>Mô hình tạo ảnh <input type="text" id="geminiGatewayImage" value="gemini-3.1-flash-image" required spellcheck="false"></label>
-          <button id="geminiGatewayClear" type="button" hidden>Ngắt kết nối</button>
+          <label>Mô hình tạo ảnh qua API chính thức <input type="text" name="image_model" required spellcheck="false"></label>
         </details>
         <div class="row">
-          <button id="geminiGatewaySubmit" type="submit">Lưu và kiểm tra kết nối</button>
-          <button id="geminiGatewayTry" type="button">Mở Thử API</button>
+          <button type="submit">Lưu cách kết nối</button>
+          <button type="button" data-open-try>Mở Thử API</button>
         </div>
-        <p id="geminiGatewayStatus" class="hint" role="status"></p>
+        <p class="hint" data-connection-status role="status"></p>
       </form>
       <div class="row">
-        <label>Địa chỉ dùng với MacFlow <input type="text" id="geminiGatewayPublicUrl" class="gateway-public-url" readonly></label>
-        <button id="geminiGatewayCopy" type="button">Sao chép địa chỉ</button>
+        <label>Địa chỉ dùng với MacFlow <input type="text" class="gateway-public-url" data-public-url readonly></label>
+        <button type="button" data-copy-public>Sao chép địa chỉ</button>
       </div>
     </div>
-  </section>
+  </template>
   <section class="tab" id="tab-official">
     <p id="officialNotice" class="hint status-text" role="status"></p>
     <div class="section-grid" id="officialPanels"></div>
@@ -712,7 +706,7 @@
       <p class="hint" data-provider-status role="status"></p>
       <div data-web-extension>
         <div class="acts">
-          <a class="btnlike" href="/admin/extension" download>Tải tiện ích Chrome 1.0.11</a>
+          <a class="btnlike" href="/admin/extension" download>Tải tiện ích Chrome 1.0.12</a>
           <button type="button" class="ghost" data-web-copy-key>Sao chép khóa quản trị</button>
         </div>
         <p class="hint">Mở tab AI đã đăng nhập, mở tiện ích, dán khóa quản trị rồi bấm tên dịch vụ. Tiện ích mặc định dùng địa chỉ mac2API trên máy này.</p>
@@ -859,10 +853,10 @@
 
   <!-- ==================== 获取 Cookie ==================== -->
   <section class="tab" id="tab-cookie">
-    <div class="card" id="extensionUpgradeNotice" role="note" data-i18n="extension-upgrade-notice"><b>浏览器扩展 1.0.11</b><br><a href="/admin/extension">下载扩展</a>。如需更新解压的扩展，请替换文件后在 <code>chrome://extensions</code> 或 <code>edge://extensions</code> 点击重新加载。</div>
+    <div class="card" id="extensionUpgradeNotice" role="note" data-i18n="extension-upgrade-notice"><b>浏览器扩展 1.0.12</b><br><a href="/admin/extension">下载扩展</a>。如需更新解压的扩展，请替换文件后在 <code>chrome://extensions</code> 或 <code>edge://extensions</code> 点击重新加载。</div>
     <div class="card" style="border-color:rgba(52,211,153,.45)">
       <h3>方式一：浏览器扩展 <span class="tag">推荐 · 零命令行 · 全平台</span></h3>
-      <p class="hint">Dùng tiện ích để kết nối với Muse hoặc Gemini đã đăng nhập trên Chrome.</p>
+      <p class="hint">Dùng tiện ích để kết nối với Muse, ChatGPT hoặc Gemini đã đăng nhập trên Chrome.</p>
 
       <div class="stepbox">
         <div class="stepno">1</div>
@@ -1786,7 +1780,7 @@ const I18N_EN = {
 };
 /* 含富文本的块：data-i18n="key" → 英文 innerHTML（须保留原有子元素的 id/class/属性） */
 const I18N_EN_HTML = {
-  "extension-upgrade-notice": "<b>Browser extension 1.0.11</b><br><a href=\"/admin/extension\">Download the extension</a>. To update an unpacked installation, replace its files and click Reload at <code>chrome://extensions</code> or <code>edge://extensions</code>.",
+  "extension-upgrade-notice": "<b>Browser extension 1.0.12</b><br><a href=\"/admin/extension\">Download the extension</a>. To update an unpacked installation, replace its files and click Reload at <code>chrome://extensions</code> or <code>edge://extensions</code>.",
   "repo-status-desc": "Comparing your local version with the latest version in the official GitHub repository… (online upgrades keep your <code>.env</code> keys and the <code>data/</code> Account Pool and media data)",
   "auth-banner": "\n      <b>Enter your API Key first so the page can load data</b><br>\n      <span style=\"color:var(--muted)\">\n        The API Key is this service's own \"access password\". It stops other people from using your Muse account quota.\n        It is <b style=\"color:var(--text)\">not</b> your Muse password. It is a random string generated at deploy time (it starts with <code>m2a_</code>).<br>\n        Paste it into the box at the top right and click \"Save\". Your browser remembers it, so you won't need to enter it again.\n      </span>\n    ",
   "model-names-hint": "\n        Model names: <code>muse-spark</code> (chat/code), <code>muse-image</code> (images), <code>muse-video</code> (videos).\n        See the \"Integration Docs\" tab for full examples.\n      ",
@@ -2474,7 +2468,7 @@ const I18N_VI = {
   "✗ 保活失败: 未知错误": "✗ Duy trì phiên thất bại do lỗi chưa xác định"
 };
 const I18N_VI_HTML = {
-  "extension-upgrade-notice": "<b>Tiện ích trình duyệt 1.0.11</b><br><a href=\"/admin/extension\">Tải tiện ích</a>. Để cập nhật bản giải nén, thay tệp rồi bấm Tải lại tại <code>chrome://extensions</code> hoặc <code>edge://extensions</code>.",
+  "extension-upgrade-notice": "<b>Tiện ích trình duyệt 1.0.12</b><br><a href=\"/admin/extension\">Tải tiện ích</a>. Để cập nhật bản giải nén, thay tệp rồi bấm Tải lại tại <code>chrome://extensions</code> hoặc <code>edge://extensions</code>.",
   "repo-status-desc": "Đang đối chiếu phiên bản đã cài với kho cập nhật. Cấu hình <code>.env</code> và dữ liệu trong <code>data/</code> được giữ lại khi cập nhật.",
   "auth-banner": "<b>Nhập API Key để tải dữ liệu</b><br><span style=\"color:var(--muted)\">Dùng khóa truy cập của dịch vụ Muse2API và bấm Lưu.</span>",
   "model-names-hint": "Model: <code>muse-spark</code> (chat và mã), <code>muse-image</code> (ảnh), <code>muse-video</code> (video). Xem mục Hướng dẫn tích hợp để biết ví dụ.",
@@ -2839,8 +2833,8 @@ const pageContexts = {
   clients: ['Cấp quyền theo mô hình, tài khoản và hạn mức cho từng khách hàng.', 'Manage model access, accounts and usage limits for each customer.', '管理每位客户的模型、账号和用量限制。'],
   usage: ['Đối chiếu lượt gọi, chi phí AI và số tiền thu theo khóa.', 'Review requests, provider costs and customer charges.', '核对请求、服务商成本和客户费用。'],
   pool: ['Quản lý tài khoản Muse và hàng chờ tạo nội dung.', 'Manage Muse accounts, proxies and generation queues.', '管理 Muse 账号、代理和生成队列。'],
-  openai: ['Kết nối ChatGPT2API để tạo văn bản và ảnh.', 'Connect ChatGPT2API for text and images.', '连接 ChatGPT2API 以生成文本和图像。'],
-  gemini: ['Kết nối Gemini-Web2API hoặc hồ sơ Chrome để tạo văn bản và ảnh.', 'Connect Gemini-Web2API or a Chrome profile for text and images.', '连接 Gemini-Web2API 或 Chrome 用户资料以生成文本和图像。'],
+  openai: ['Kết nối ChatGPT qua tiện ích Chrome hoặc OpenAI API.', 'Connect ChatGPT through the Chrome extension or the OpenAI API.', '通过 Chrome 扩展或 OpenAI API 连接 ChatGPT。'],
+  gemini: ['Kết nối Gemini qua tiện ích Chrome hoặc Google Gemini API.', 'Connect Gemini through the Chrome extension or the Gemini API.', '通过 Chrome 扩展或 Gemini API 连接 Gemini。'],
   official: ['Cấu hình khóa riêng của OpenAI và Google để gọi API văn bản.', 'Configure OpenAI and Google credentials for text APIs.', '配置 OpenAI 和 Google 凭据以调用文本 API。'],
   tasks: ['Theo dõi trạng thái tạo ảnh và video.', 'Track image and video jobs.', '跟踪图片和视频任务。'],
   play: ['Gửi yêu cầu bằng quyền quản trị hoặc khóa của khách hàng.', 'Send requests using admin credentials or a customer key.', '使用管理员或客户密钥测试请求。'],
@@ -2889,8 +2883,8 @@ function loadActiveTab(){
   switch (activeTab) {
     case 'overview': return loadOverview();
     case 'pool': return loadPool();
-    case 'openai': return chatgptGateway.load();
-    case 'gemini': return Promise.all([geminiGateway.load(), loadChatProvider('gemini')]);
+    case 'openai': return chatgptConnection.load();
+    case 'gemini': return Promise.all([geminiConnection.load(), loadChatProvider('gemini')]);
     case 'tasks': return Promise.all([loadPool(), loadTasks()]);
     case 'workflows': return import('/admin/workflow.js').then(module => module.loadWorkflows())
       .catch(() => { $('workflowRunStatus').textContent = 'Chưa mở được luồng. Hãy tải lại trang.'; });
@@ -3806,39 +3800,69 @@ async function loadOfficialProviders(){
   }
 }
 
-function setupGatewayForm(prefix, endpoint, label, tab, scopedPath){
-  const form = $(prefix + 'Form');
-  const url = $(prefix + 'Url');
-  const key = $(prefix + 'Key');
-  const preferred = $(prefix + 'Prefer');
-  const textModel = $(prefix + 'Text');
-  const imageModel = $(prefix + 'Image');
-  const clear = $(prefix + 'Clear');
-  const save = $(prefix + 'Submit');
-  const notice = $(prefix + 'Status');
-  const publicUrl = $(prefix + 'PublicUrl');
-  publicUrl.value = location.origin + scopedPath;
-  $(prefix + 'Copy').onclick = () => copyText(publicUrl.value);
-  $(prefix + 'Try').onclick = () => goTab('play');
+function setupWebConnection(tab, provider, scopedPath){
+  const section = $('tab-' + tab);
+  const card = $('webConnectionTemplate').content.firstElementChild.cloneNode(true);
+  section.prepend(card);
+  const form = card.querySelector('form');
+  const mode = form.elements.mode;
+  const model = form.elements.image_model;
+  const status = form.querySelector('[data-connection-status]');
+  const official = form.querySelector('[data-official-connection]');
+  const test = official.querySelector('[data-test-official]');
+  const save = form.querySelector('button[type=submit]');
+  const url = card.querySelector('[data-public-url]');
+  const endpoint = '/admin/connections/' + provider;
+  let state;
 
-  function render(settings){
-    url.value = settings.base_url;
-    textModel.value = settings.text_model;
-    imageModel.value = settings.image_model;
-    key.value = '';
-    key.placeholder = settings.has_key ? 'Đã lưu khóa. Để trống để giữ khóa.' : 'Dán khóa từ ' + label;
-    if (preferred) preferred.checked = settings.prefer;
-    clear.hidden = !settings.base_url;
-    notice.dataset.error = 'false';
-    notice.textContent = settings.ready ? 'Đã kiểm tra địa chỉ, khóa và mô hình.'
-      : settings.configured ? 'Đã lưu. Hãy bấm Lưu và kiểm tra kết nối để hoàn tất.' : 'Chưa kết nối với ' + label + '.';
-    if (preferred) notice.textContent += settings.ready && settings.prefer
-      ? ' Kết nối mặc định: Gemini-Web2API.' : ' Kết nối mặc định: Chrome.';
+  url.value = location.origin + scopedPath;
+  card.querySelector('[data-copy-public]').onclick = () => copyText(url.value);
+  form.querySelector('[data-open-try]').onclick = () => goTab('play');
+  form.querySelector('[data-open-official]').onclick = () => goTab('official');
+
+  function showStatus(message, failed = false){
+    status.dataset.error = String(failed);
+    status.textContent = message;
   }
 
-  function fail(error){
-    notice.dataset.error = 'true';
-    notice.textContent = error.message;
+  function updateControls(){
+    official.hidden = mode.value !== 'official';
+    test.disabled = !state?.official_configured || form.hasAttribute('aria-busy');
+  }
+
+  function renderProfiles(profiles){
+    if (provider !== 'chatgpt') return;
+    const list = $('chatgptChromeProfiles');
+    list.replaceChildren();
+    if (!profiles.length) list.append(clientElement('p', 'Chưa liên kết tài khoản Chrome.', 'hint'));
+    for (const profile of profiles) {
+      const row = clientElement('div', undefined, 'provider-row');
+      const name = profile.label + ' · ' + (profile.verified ? 'Đã kết nối' : 'Chờ kết nối');
+      const remove = clientElement('button', 'Ngắt liên kết', 'ghost');
+      remove.type = 'button';
+      remove.disabled = profile.busy;
+      remove.onclick = async () => {
+        remove.disabled = true;
+        try {
+          await api('/admin/web-providers/' + provider + '/extension/' + encodeURIComponent(profile.id), {method:'DELETE'});
+          await load();
+        } catch (error) { showStatus(error.message, true); }
+        finally { remove.disabled = profile.busy; }
+      };
+      row.append(clientElement('span', name), remove);
+      list.append(row);
+    }
+  }
+
+  function render(settings){
+    state = settings;
+    mode.querySelector('[value=external]').hidden = !settings.external_configured && settings.mode !== 'external';
+    mode.value = settings.mode;
+    model.value = settings.image_model;
+    updateControls();
+    showStatus(settings.mode === 'official' && !settings.official_configured
+      ? 'Hãy thêm khóa trong mục API chính thức.' : '');
+    renderProfiles(settings.profiles || []);
   }
 
   async function load(){
@@ -3846,50 +3870,55 @@ function setupGatewayForm(prefix, endpoint, label, tab, scopedPath){
     try {
       const settings = await api(endpoint);
       if (activeTab === tab && !form.hasAttribute('aria-busy')) render(settings);
-    } catch (error) {
-      fail(error);
-    }
+    } catch (error) { showStatus(error.message, true); }
   }
 
-  async function submit(body, test){
+  async function submit({check = false} = {}){
     if (form.hasAttribute('aria-busy')) return;
     form.setAttribute('aria-busy', 'true');
-    save.disabled = clear.disabled = true;
-    notice.dataset.error = 'false';
-    notice.textContent = 'Đang lưu kết nối…';
+    save.disabled = true;
+    updateControls();
+    showStatus(check ? 'Đang kiểm tra kết nối…' : 'Đang lưu kết nối…');
     try {
-      render(await api(endpoint, {method:'PUT', body:JSON.stringify(body), timeout:20000}));
-      if (test) {
-        notice.textContent = 'Đang kiểm tra kết nối…';
-        render(await api(endpoint + '/test', {method:'POST', timeout:20000}));
+      if (check) {
+        await api(endpoint + '/test', {method:'POST', timeout:35000});
+        showStatus('Nhà cung cấp đã xác nhận khóa và cả hai mô hình.');
+      } else {
+        render(await api(endpoint, {method:'PUT', body:JSON.stringify({
+          mode: mode.value, image_model: model.value.trim(),
+        }), timeout:20000}));
+        if (state.mode !== 'official' || state.official_configured) showStatus('Đã lưu cách kết nối mặc định.');
       }
-    } catch (error) {
-      fail(error);
-    } finally {
+    } catch (error) { showStatus(error.message, true); }
+    finally {
       form.removeAttribute('aria-busy');
-      save.disabled = clear.disabled = false;
+      save.disabled = false;
+      updateControls();
     }
   }
 
   form.onsubmit = event => {
     event.preventDefault();
-    const body = {base_url: url.value.trim(), text_model: textModel.value.trim(), image_model: imageModel.value.trim()};
-    if (preferred) body.prefer = preferred.checked;
-    if (key.value.trim()) body.api_key = key.value.trim();
-    return submit(body, true);
+    return submit();
   };
-  clear.onclick = () => submit({}, false);
+  mode.onchange = updateControls;
+  test.onclick = () => {
+    if (state?.image_model !== model.value.trim()) return showStatus('Hãy lưu mô hình tạo ảnh trước khi kiểm tra.', true);
+    return submit({check:true});
+  };
   window.addEventListener('mac2api:reset', () => {
+    state = undefined;
     form.reset();
-    key.placeholder = '';
-    clear.hidden = true;
-    notice.textContent = '';
+    updateControls();
+    showStatus('');
+    if (provider === 'chatgpt') $('chatgptChromeProfiles').replaceChildren();
   });
   return {load};
 }
 
-const chatgptGateway = setupGatewayForm('chatgptGateway', '/admin/chatgpt2api', 'ChatGPT2API', 'openai', '/chatgpt/v1');
-const geminiGateway = setupGatewayForm('geminiGateway', '/admin/gemini-web2api', 'Gemini-Web2API', 'gemini', '/gemini/v1');
+const chatgptConnection = setupWebConnection('openai', 'chatgpt', '/chatgpt/v1');
+const geminiConnection = setupWebConnection('gemini', 'gemini-web', '/gemini/v1');
+$('chatgptCopyAdminKey').onclick = () => copyKey();
 
 const chatProviderPanels = new Map([
   ['gemini', 'gemini-web', 'Kết nối Chrome'],

@@ -228,6 +228,86 @@ async def exercise_gemini(server):
             assert (await http.get(ENDPOINT, headers=admin)).json()["ready"]
 
 
+async def exercise_official():
+    import app
+    import chat_providers
+
+    admin = headers("fixture-mac2api-key")
+    encoded = base64.b64encode(PNG).decode()
+    requests = []
+    real_async, real_sync = httpx.AsyncClient, httpx.Client
+
+    def upstream(request):
+        requests.append(request)
+        path = request.url.path
+        openai = request.url.host == "api.openai.com"
+        assert openai or request.url.host == "generativelanguage.googleapis.com"
+        if request.method == "GET":
+            model = path.rsplit("/", 1)[1]
+            if openai:
+                assert request.headers["Authorization"] == "Bearer fixture-openai"
+            else:
+                assert request.headers["x-goog-api-key"] == "fixture-gemini"
+            return httpx.Response(200, json={"id": model} if openai else {"name": "models/" + model})
+        body = json.loads(request.content)
+        if path.endswith("/chat/completions"):
+            assert request.headers["Authorization"] == ("Bearer fixture-openai" if openai else "Bearer fixture-gemini")
+            assert body["model"] == ("gpt-fixture" if openai else "gemini-fixture")
+            return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": "official"}}]})
+        if openai:
+            assert path == "/v1/images/generations" and body == {
+                "model": "gpt-image-1.5", "prompt": "cat", "n": 1}
+            return httpx.Response(200, json={"data": [{"b64_json": encoded}]})
+        assert path == "/v1beta/models/gemini-2.5-flash-image:generateContent"
+        assert request.headers["x-goog-api-key"] == "fixture-gemini"
+        assert body["contents"][0]["parts"][0]["text"] == "cat"
+        assert body["generationConfig"]["responseModalities"] == ["TEXT", "IMAGE"]
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [
+            {"text": "cat"}, {"inlineData": {"mimeType": "image/png", "data": encoded}},
+        ]}}]})
+
+    transport = httpx.MockTransport(upstream)
+    async with real_async(transport=httpx.ASGITransport(app=app.app), base_url="http://127.0.0.1") as http:
+        with patch.object(chat_providers.httpx, "AsyncClient", lambda **kw: real_async(transport=transport, **kw)), \
+             patch.object(chat_providers.httpx, "Client", lambda **kw: real_sync(transport=transport, **kw)), \
+             patch.object(app, "_run_web_generation", side_effect=AssertionError("Unexpected Chrome dispatch")):
+            for module, prefix, provider, image_model in (
+                ("chatgpt", "chatgpt", "openai", "gpt-image-1.5"),
+                ("gemini-web", "gemini", "gemini", "gemini-2.5-flash-image"),
+            ):
+                base = f"/{prefix}/v1"
+                settings = f"/admin/connections/{module}"
+                model = "gpt-fixture" if provider == "openai" else "gemini-fixture"
+                assert (await http.put(f"/admin/chat-providers/{provider}", headers=admin,
+                                       json={"model": model, "api_key": f"fixture-{provider}"})).status_code == 200
+                catalog = (await http.get("/admin/client-keys", headers=admin)).json()["models"]
+                text = next(entry for entry in catalog if entry["id"] == module + "/text")
+                assert f"{provider}:api" in {item["id"] for item in text["accounts"]}
+                new_key = await http.post("/admin/client-keys", headers=admin, json={
+                    "label": "Official " + module,
+                    "rules": {f"{module}/{kind}": {"accounts": [f"{provider}:api"]} for kind in ("text", "image")},
+                })
+                assert new_key.status_code == 201, new_key.text
+                client = headers(new_key.json()["api_key"])
+                assert (await http.get(settings, headers=client)).status_code == 401
+                checked = await http.post(settings + "/test", headers=admin)
+                assert checked.status_code == 200, checked.text
+                assert [x.url.path.rsplit("/", 1)[1] for x in requests[-2:]] == [model, image_model]
+                reply = await http.post(base + "/chat/completions", headers=client, json={"prompt": "hello"})
+                assert reply.status_code == 200 and reply.json()["model"] == module + "/text", reply.text
+                image = await http.post(base + "/images/generations", headers=client,
+                                        json={"prompt": "cat", "response_format": "b64_json"})
+                assert image.status_code == 200 and image.json()["data"][0]["b64_json"] == encoded, image.text
+
+                changed = await http.put(settings, headers=admin, json={"mode": "official", "image_model": image_model})
+                assert changed.json()["mode"] == "official" and f"fixture-{provider}" not in changed.text
+                broad = headers(app.store.create_client(module + " default", [module])["api_key"])
+                cap = (await http.get(base + "/capabilities", headers=broad)).json()
+                assert len(cap["models"]) == 2 and all(entry["ready"] for entry in cap["models"])
+                reply = await http.post(base + "/chat/completions", headers=broad, json={"prompt": "hello"})
+                assert reply.status_code == 200, reply.text
+
+
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory(prefix="web-gateway-fixture-") as root:
         os.environ.update(MUSE2API_HOME=root, MUSE2API_PROFILE_ROOT=root, MUSE2API_KEY="fixture-mac2api-key")
@@ -240,6 +320,7 @@ if __name__ == "__main__":
                 with patch.object(app, "_run_web_generation", side_effect=AssertionError("Unexpected Chrome path")):
                     asyncio.run(exercise(server))
                 asyncio.run(exercise_gemini(server))
+                asyncio.run(exercise_official())
             finally:
                 server.shutdown()
-    print("PASS: ChatGPT and Gemini gateways, Chrome account isolation, streaming, images and delivery reconciliation")
+    print("PASS: official ChatGPT and Gemini APIs, gateway compatibility, account isolation and media")

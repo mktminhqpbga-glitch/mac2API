@@ -106,8 +106,9 @@ class ChatProviders:
             raise HTTPException(503, f"Chưa cấu hình API Key cho {PROVIDERS[provider][0]}.")
         return key, model
 
-    async def test(self, provider: ProviderName):
-        key, model = self._credentials(provider)
+    async def test(self, provider: ProviderName, *, model_override=None):
+        key, default_model = self._credentials(provider)
+        model = model_override or default_model
         if not re.fullmatch(MODEL_ID, model):
             raise HTTPException(400, "Model mặc định không hợp lệ.")
         if provider == "openai":
@@ -136,7 +137,7 @@ class ChatProviders:
         return await compatible_chat(PROVIDERS[provider][4], key, model, payload, timeout)
 
 
-async def compatible_chat(url, key, model, payload, timeout, *, public_model=None):
+async def compatible_chat(url, key, model, payload, timeout, *, public_model=None, trust_env=True):
     body = {**payload, "model": model}
     body.pop("timeout", None)
     prompt = body.pop("prompt", None)
@@ -145,7 +146,7 @@ async def compatible_chat(url, key, model, payload, timeout, *, public_model=Non
             raise HTTPException(400, "Hãy nhập ít nhất một tin nhắn.")
         body["messages"] = [{"role": "user", "content": prompt.strip()}]
 
-    client = httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10), trust_env=public_model is None)
+    client = httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10), trust_env=trust_env)
     response = None
     streaming = False
 
@@ -237,7 +238,7 @@ def _check_response(response: httpx.Response, *, submitted=False):
         raise HTTPException(status, "Đã đạt giới hạn yêu cầu hoặc hạn mức của nhà cung cấp.", headers=headers)
     if submitted and (status == 408 or status >= 500):
         raise HTTPException(502, {"code": "DELIVERY_UNKNOWN",
-                                  "message": "Dịch vụ web gặp lỗi sau khi nhận yêu cầu. Cần đối chiếu kết quả."})
+                                  "message": "Nhà cung cấp gặp lỗi sau khi nhận yêu cầu. Cần đối chiếu kết quả."})
     raise HTTPException(502, f"Nhà cung cấp trả lỗi HTTP {status}.")
 
 
@@ -257,6 +258,72 @@ class WebGatewaySettings(BaseModel):
     api_key: SecretStr | None = Field(default=None, max_length=4096)
     text_model: str = Field(pattern=MODEL_ID)
     image_model: str = Field(pattern=MODEL_ID)
+
+
+class WebConnectionSettings(BaseModel):
+    mode: Literal["browser", "official", "external"]
+    image_model: str = Field(pattern=MODEL_ID)
+
+
+class OfficialWebConnection:
+    def __init__(self, providers, provider, api_provider, image_model):
+        self.providers = providers
+        self.provider = provider
+        self.api_provider = api_provider
+        self.default_image_model = image_model
+        self.label = "OpenAI API" if api_provider == "openai" else "Google Gemini API"
+        self.account_id = f"{api_provider}:api"
+
+    def settings(self):
+        saved = self.providers._read().get("web_connections", {}).get(self.provider, {})
+        return {"mode": saved.get("mode"), "image_model": saved.get("image_model", self.default_image_model)}
+
+    def save(self, settings):
+        with self.providers.lock:
+            saved = self.providers._read()
+            saved.setdefault("web_connections", {})[self.provider] = settings.model_dump()
+            _write(str(self.providers.path), saved)
+
+    def status(self):
+        key, _ = self.providers._settings(self.api_provider, self.providers._read())
+        return {"configured": bool(key), "ready": bool(key)}
+
+    async def test(self):
+        await self.providers.test(self.api_provider)
+        await self.providers.test(self.api_provider, model_override=self.settings()["image_model"])
+        return {"ok": True}
+
+    async def chat(self, messages, prompt, stream, timeout, *, before_send):
+        key, model = self.providers._credentials(self.api_provider)
+        before_send()
+        return await compatible_chat(PROVIDERS[self.api_provider][4], key, model,
+                                     {"messages": messages, "prompt": prompt, "stream": stream},
+                                     timeout, public_model=f"{self.provider}/text")
+
+    def image(self, prompt, timeout, *, before_send):
+        key, _ = self.providers._credentials(self.api_provider)
+        model = self.settings()["image_model"]
+        before_send()
+        if self.api_provider == "openai":
+            response = _post_image(OPENAI_IMAGES_URL, {"Authorization": f"Bearer {key}"},
+                                   {"model": model, "prompt": prompt, "n": 1}, timeout, self.label)
+            return _decode_openai_image(response, self.label)
+        response = _post_image(GEMINI_IMAGES_URL.format(model=model), {"x-goog-api-key": key}, {
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]},
+        }, timeout, self.label)
+        try:
+            for candidate in response["candidates"]:
+                for part in candidate["content"]["parts"]:
+                    if inline := part.get("inlineData"):
+                        return decode_web_image(inline["data"])
+        except (KeyError, TypeError, AttributeError, WebProviderError):
+            pass
+        raise _image_unknown("Google Gemini đã phản hồi nhưng không trả ảnh hợp lệ.")
+
+
+OPENAI_IMAGES_URL = "https://api.openai.com/v1/images/generations"
+GEMINI_IMAGES_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 
 class ChatGPT2APISettings(WebGatewaySettings):
@@ -344,32 +411,43 @@ class WebGateway:
         before_send()
         return await compatible_chat(saved["base_url"] + "/chat/completions", saved["api_key"],
                                      saved["text_model"], {"messages": messages, "prompt": prompt, "stream": stream},
-                                     timeout, public_model=f"{self.provider}/text")
+                                     timeout, public_model=f"{self.provider}/text", trust_env=False)
 
     def image(self, prompt, timeout, *, before_send):
         saved = self._credentials()
         payload = {"model": saved["image_model"], "prompt": prompt, "n": 1, "response_format": "b64_json"}
-        limit = 4 * ((MAX_IMAGE_BYTES + 2) // 3) + 65536
         before_send()
-        deadline = time.monotonic() + timeout
-        try:
-            with httpx.Client(timeout=httpx.Timeout(timeout, connect=10), trust_env=False) as client:
-                with client.stream("POST", saved["base_url"] + "/images/generations",
-                                   json=payload, headers=_headers(saved)) as response:
-                    _check_response(response, submitted=True)
-                    body = bytearray()
-                    for chunk in response.iter_bytes():
-                        if time.monotonic() >= deadline:
-                            raise _image_unknown(f"Hết thời gian chờ ảnh từ {self.label}.", status=504)
-                        if len(body) + len(chunk) > limit:
-                            raise _image_unknown(f"Ảnh do {self.label} trả về vượt quá 20 MiB.")
-                        body.extend(chunk)
-            data = json.loads(body)
-            return decode_web_image(data["data"][0]["b64_json"])
-        except httpx.RequestError as exc:
-            raise _connection_error(exc, submitted=True) from None
-        except (ValueError, KeyError, IndexError, TypeError, WebProviderError):
-            raise _image_unknown(f"{self.label} đã phản hồi nhưng không đọc được tệp ảnh.") from None
+        response = _post_image(saved["base_url"] + "/images/generations", _headers(saved),
+                               payload, timeout, self.label, trust_env=False)
+        return _decode_openai_image(response, self.label)
+
+
+def _post_image(url, headers, payload, timeout, label, *, trust_env=True):
+    limit = 4 * ((MAX_IMAGE_BYTES + 2) // 3) + 65536
+    deadline = time.monotonic() + timeout
+    try:
+        with httpx.Client(timeout=httpx.Timeout(timeout, connect=10), trust_env=trust_env) as client:
+            with client.stream("POST", url, json=payload, headers=headers) as response:
+                _check_response(response, submitted=True)
+                body = bytearray()
+                for chunk in response.iter_bytes():
+                    if time.monotonic() >= deadline:
+                        raise _image_unknown(f"Hết thời gian chờ ảnh từ {label}.", status=504)
+                    if len(body) + len(chunk) > limit:
+                        raise _image_unknown(f"Ảnh do {label} trả về vượt quá 20 MiB.")
+                    body.extend(chunk)
+        return json.loads(body)
+    except httpx.RequestError as exc:
+        raise _connection_error(exc, submitted=True) from None
+    except ValueError:
+        raise _image_unknown(f"{label} đã phản hồi nhưng không đọc được kết quả.") from None
+
+
+def _decode_openai_image(response, label):
+    try:
+        return decode_web_image(response["data"][0]["b64_json"])
+    except (KeyError, IndexError, TypeError, WebProviderError):
+        raise _image_unknown(f"{label} đã phản hồi nhưng không đọc được tệp ảnh.") from None
 
 
 def _image_unknown(message, *, status=502):

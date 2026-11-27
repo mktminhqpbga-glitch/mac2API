@@ -92,7 +92,7 @@ function imageSourceAllowed(source, site) {
   const url = new URL(source);
   if (url.protocol === 'blob:') return url.origin === site.origin;
   if (url.protocol === 'data:') return /^data:image\/(?:png|jpeg|webp)[;,]/i.test(source);
-  const domains = ['gemini.google.com',
+  const domains = ['chatgpt.com', 'oaiusercontent.com', 'oaistatic.com', 'gemini.google.com',
     'googleusercontent.com', 'gstatic.com', 'storage.googleapis.com'];
   return url.protocol === 'https:' && !url.username && !url.password && !url.port &&
     domains.some(domain => url.hostname === domain || url.hostname.endsWith('.' + domain));
