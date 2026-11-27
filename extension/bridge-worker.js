@@ -25,8 +25,8 @@ async function bridgeFetch(base, token, path, {method = 'GET', body, timeout = 1
   });
 }
 
-async function execute(tabId, func, args) {
-  const [frame] = await chrome.scripting.executeScript({target: {tabId}, func, args});
+async function execute(tabId, func, args, injectImmediately = false) {
+  const [frame] = await chrome.scripting.executeScript({target: {tabId}, func, args, injectImmediately});
   return frame?.result;
 }
 
@@ -55,23 +55,24 @@ async function connect(message) {
 }
 
 async function verifyTab(tabId, site) {
-  const deadline = Date.now() + 6000;
+  const deadline = Date.now() + 12000;
   let status;
   do {
     const tab = await chrome.tabs.get(tabId).catch(() => null);
     if (!tab?.url || tab.incognito || new URL(tab.url).origin !== site.origin) {
       throw new Error('Mở đúng tab AI đã đăng nhập trong cửa sổ Chrome thường.');
     }
-    if (tab.status === 'complete') {
-      status = await execute(tab.id, bridgeSiteAction, [site, 'verify']).catch(() => {
-        throw new Error('Chrome chưa cho tiện ích đọc tab này. Kiểm tra Quyền truy cập trang web trong chrome://extensions.');
-      });
-      if (status?.signedIn && status.composerReady) return tab;
-    }
+    status = await execute(tab.id, bridgeSiteAction, [site, 'verify'], true).catch(error => {
+      if (/no frame with id|frame (?:was )?removed|document (?:was )?unloaded|execution context (?:was )?destroyed/i.test(error.message)) {
+        return null;
+      }
+      throw new Error('Chrome chưa cho tiện ích đọc tab này. Kiểm tra Quyền truy cập trang web trong chrome://extensions.');
+    });
+    if (status?.signedIn && status.composerReady) return tab;
     await sleep(250);
   } while (Date.now() < deadline);
   if (!status?.composerReady) {
-    throw new Error('Không tìm thấy ô chat trên tab đang mở. Hãy tải lại trang AI rồi bấm tên dịch vụ để thử lại.');
+    throw new Error('Ô chat chưa sẵn sàng. Hãy mở cuộc trò chuyện mới, đợi gõ được tin nhắn rồi bấm lại tên dịch vụ.');
   }
   throw new Error('Đã thấy ô chat nhưng chưa xác minh được đăng nhập. Hãy kiểm tra hồ sơ Chrome và mở một cuộc trò chuyện mới.');
 }

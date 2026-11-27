@@ -41,18 +41,21 @@ async function runFixture(permit, verifyStates) {
         },
         update: async (id, options) => {events.push(['navigate', id, options.url]);},
         get: async id => {
-          if (id === 27 && verifyStates) return {id, status: 'complete', url: 'https://gemini.google.com/app'};
+          if (id === 27 && verifyStates) return {id, status: 'loading', url: 'https://chatgpt.com/'};
           assert.equal(id, 101);
           return {status: 'complete', url: 'https://gemini.google.com/app'};
         },
         remove: async id => events.push(['close', id]),
       },
       scripting: {
-        executeScript: async ({target, args}) => {
+        executeScript: async ({target, args, injectImmediately}) => {
           if (target.tabId === 27 && verifyStates) {
             assert.equal(args[1], 'verify');
+            assert.equal(injectImmediately, true);
             events.push(['probe']);
-            return [{result: verifyStates.shift() || {signedIn: true, composerReady: true}}];
+            const outcome = verifyStates.shift() || {signedIn: true, composerReady: true};
+            if (outcome instanceof Error) throw outcome;
+            return [{result: outcome}];
           }
           assert.equal(target.tabId, 101);
           const action = args[1];
@@ -70,7 +73,7 @@ async function runFixture(permit, verifyStates) {
   });
   vm.runInContext(worker, context);
   if (verifyStates) {
-    const tab = await vm.runInContext("verifyTab(27, bridgeSites['gemini-web'])", context);
+    const tab = await vm.runInContext("verifyTab(27, bridgeSites.chatgpt)", context);
     assert.equal(tab.id, 27);
     return events;
   }
@@ -94,10 +97,11 @@ test('Chrome bridge closes the task tab when permission was revoked before Send'
   assert.deepEqual(events.at(-1), ['finish', {error: 'interrupted'}]);
 });
 
-test('Chrome bridge waits for both the account and composer on the already-open tab', async () => {
+test('ChatGPT linking retries detached frames and verifies an editable composer before the tab finishes loading', async () => {
   const events = await runFixture(true, [
+    new Error('The frame was removed.'),
     {signedIn: true, composerReady: false},
     {signedIn: false, composerReady: true},
   ]);
-  assert.deepEqual(events, [['probe'], ['probe'], ['probe']]);
+  assert.deepEqual(events, [['probe'], ['probe'], ['probe'], ['probe']]);
 });

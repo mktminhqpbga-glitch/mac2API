@@ -9,6 +9,12 @@ from cdp import CDP
 parser=argparse.ArgumentParser();parser.add_argument('--html',default=str(ROOT/'admin.html'));parser.add_argument('--screenshots',type=Path);parser.add_argument('--probe-only',action='store_true');args=parser.parse_args()
 html=Path(args.html).read_bytes()
 VERSION=json.loads((ROOT/'version.json').read_text())['version']
+EXTENSION_VERSION=json.loads((ROOT/'extension/manifest.json').read_text())['version']
+popup_files={
+ '/extension/popup.html': ((ROOT/'extension/popup.html').read_bytes(), 'text/html; charset=utf-8'),
+ '/extension/popup.js': ((ROOT/'extension/popup.js').read_bytes(), 'text/javascript; charset=utf-8'),
+ '/extension/bridge-site.js': ((ROOT/'extension/bridge-site.js').read_bytes(), 'text/javascript; charset=utf-8'),
+}
 now=int(time.time())
 accounts=[{'id':'fixture'+str(i).zfill(5),'label':'Fixture-'+str(i),'enabled':True,'ok':True,'essential_ok':True,'cookie_count':12,
  'proxy':None,'note':'Lỗi tác vụ: 参考素材上传未确认 (0/1), 已停止生成','last_used':now-43200,'expires_at':now+172800,
@@ -27,6 +33,7 @@ class Handler(BaseHTTPRequestHandler):
   status_code=200
   network.append({'method':'GET','path':path})
   if path in ['/','/admin']:data=html;kind='text/html; charset=utf-8'
+  elif path in popup_files:data,kind=popup_files[path]
   elif path=='/admin/accounts':data={'accounts':accounts,'stats':{'total':8,'healthy':8}};kind='application/json'
   elif path=='/admin/apikey':data={'api_key':'fixture-only'};kind='application/json'
   elif path=='/admin/web-providers':data={'configured':False,'profile_connected':False,'ready':[],'local_setup':True};kind='application/json'
@@ -204,6 +211,56 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
    print('PASS: full-width layout, desktop controls, contained mobile scrolling, Chinese/English/Vietnamese and test-without-saving')
    print('FEATURE_ERRORS',json.dumps(feature_errors),flush=True)
    assert not feature_errors,feature_errors
+
+   page.send('Page.addScriptToEvaluateOnNewDocument', {'source': f"""
+    if (location.pathname === '/extension/popup.html') {{
+      localStorage.setItem('muse2api_lang', new URLSearchParams(location.search).get('lang'));
+      Object.assign(window.chrome, {{
+        runtime: {{getManifest: () => ({{version: {json.dumps(EXTENSION_VERSION)}}})}},
+        storage: {{local: {{get: async () => ({{}})}}}},
+        tabs: {{query: async () => []}},
+      }});
+    }}
+   """})
+   for lang in ('vi','en','zh'):
+    page.send('Emulation.setDeviceMetricsOverride',{'width':216,'height':550,'deviceScaleFactor':1,'mobile':False})
+    page.send('Page.navigate',{'url':f'http://127.0.0.1:{server.server_port}/extension/popup.html?lang={lang}'})
+    wait(f"new URLSearchParams(location.search).get('lang')==='{lang}' && "
+         f"document.getElementById('extensionVersion')?.textContent==='v{EXTENSION_VERSION}'")
+    assert page.js("document.body.getBoundingClientRect().width === 380 && document.documentElement.scrollWidth === 380"), lang
+    page.send('Emulation.setDeviceMetricsOverride',{'width':380,'height':550,'deviceScaleFactor':1,'mobile':False})
+    assert page.js("""(() => {
+     const heading = document.querySelector('h1');
+     const range = document.createRange();
+     range.selectNodeContents(heading);
+     const buttons = [...document.querySelectorAll('.provider-buttons button')].map(b => b.getBoundingClientRect());
+     return document.documentElement.scrollWidth === 380 && range.getClientRects().length === 1
+      && $('langSel').getBoundingClientRect().right < innerWidth
+      && buttons.every((b, i) => b.top === buttons[0].top && (!i || b.left > buttons[i-1].right))
+      && $('directSteps').checkVisibility() === false;
+    })()""") is True, lang
+    page.js("$('checkConnection').click()")
+    wait("document.getElementById('log').classList.contains('show')")
+    assert page.js("document.documentElement.scrollWidth === 380")
+    if lang == 'vi' and args.screenshots:
+     image=page.send('Page.captureScreenshot',{'format':'png'})
+     (args.screenshots/'extension-popup-vi.png').write_bytes(base64.b64decode(image['result']['data']))
+
+   page.js("""new Promise(resolve => {
+    const script = document.createElement('script');
+    script.src = '/extension/bridge-site.js';
+    script.onload = resolve;
+    document.head.append(script);
+   })""",await_promise=True)
+   page.js("""document.body.innerHTML = '<button data-testid="accounts-profile-button">Profile</button>' +
+    '<textarea id="prompt-textarea" hidden></textarea><div contenteditable="true">Unrelated editor</div>' +
+    '<form data-type="unified-composer"><div contenteditable="true" class="ProseMirror">Composer</div></form>'""")
+   verify="bridgeSiteAction({...bridgeSites.chatgpt, origin:location.origin}, 'verify')"
+   assert page.js(verify,await_promise=True)=={'signedIn':True,'composerReady':True}
+   page.js("document.querySelector('form').setAttribute('aria-readonly','true')")
+   assert page.js(verify,await_promise=True)=={'signedIn':True,'composerReady':False}
+   assert not page.js('window.__errors')
+   print('PASS: popup requests its full width, renders in three languages and detects the scoped ChatGPT editor')
  finally:
   if page:
    try:page.send('Browser.close')

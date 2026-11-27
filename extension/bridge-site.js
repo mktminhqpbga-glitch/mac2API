@@ -5,7 +5,14 @@ const bridgeSites = {
     origin: 'https://chatgpt.com',
     path: '/',
     account: '[data-testid="accounts-profile-button"], [data-testid="profile-button"], [data-testid="profile-menu-button"]',
-    composer: '#prompt-textarea, [data-testid="prompt-textarea"][contenteditable="true"], textarea[data-testid="prompt-textarea"]',
+    composer: [
+      '#prompt-textarea',
+      '[data-testid="prompt-textarea"][contenteditable="true"]',
+      'textarea[data-testid="prompt-textarea"]',
+      'form[data-type="unified-composer"] [role="textbox"][contenteditable="true"]',
+      'form[data-type="unified-composer"] .ProseMirror[contenteditable="true"]',
+      '#thread-bottom-container .ProseMirror[contenteditable="true"]',
+    ].join(', '),
     send: '[data-testid="send-button"], #composer-submit-button[data-testid="send-button"]',
     reply: '[data-message-author-role="assistant"]',
     stop: '[data-testid="stop-button"]',
@@ -28,7 +35,11 @@ async function bridgeSiteAction(site, action, prompt) {
   if (location.origin !== site.origin) return {wrongSite: true};
   const visible = element => Boolean(element?.getClientRects().length);
   const find = selector => [...document.querySelectorAll(selector)].find(visible);
-  const editor = find(site.composer);
+  const editor = [...document.querySelectorAll(site.composer)].find(element =>
+    visible(element) && getComputedStyle(element).visibility === 'visible' &&
+    !element.closest('[inert], [aria-disabled="true"], [aria-readonly="true"], dialog, [role="dialog"]') &&
+    (element.isContentEditable || (element.matches('textarea') && !element.matches(':disabled') && !element.readOnly))
+  );
   // A collapsed sidebar can hide the account control in a signed-in profile.
   const signedIn = Boolean(document.querySelector(site.account));
   if (action === 'verify') return {signedIn, composerReady: Boolean(editor)};

@@ -1,5 +1,10 @@
 # Nhật ký và bàn giao mac2API
 
+## 1.6.17
+
+- Tiện ích Chrome 1.0.10 mở lại với chiều rộng đầy đủ. Phiên bản và ngôn ngữ nằm trên hàng riêng, còn thông báo kết nối nằm ngay dưới các nút.
+- Khi liên kết ChatGPT, tiện ích nhận diện thêm ô nhập trong khu vực soạn tin và kiểm tra cả khi tab vẫn đang tải.
+
 ## 1.6.16
 
 - Tải lại Muse một lần trong cùng phiên nếu ô nhập đã xuất hiện nhưng còn bị khóa. Chỉ gửi mô tả khi ô nhập thật sự sẵn sàng.
