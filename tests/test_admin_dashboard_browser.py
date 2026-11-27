@@ -64,6 +64,27 @@ def check_dashboard(app, page, url):
     page.send("Emulation.setDeviceMetricsOverride",
               {"width": 1600, "height": 1000, "deviceScaleFactor": 1, "mobile": False})
 
+    scoped_tabs = (("pool", "muse", "/muse/v1"), ("openai", "chatgpt", "/chatgpt/v1"),
+                   ("gemini", "gemini-web", "/gemini/v1"))
+    with patch.object(app.CFG, "public_base", "https://client-api.example.invalid"):
+        page.js("loadStatus()", await_promise=True)
+        for _, provider, path in scoped_tabs:
+            assert page.js(f'document.querySelector("[data-output-provider={provider}]").value') == (
+                "https://client-api.example.invalid" + path)
+    page.js("loadStatus()", await_promise=True)
+    for tab, provider, path in scoped_tabs:
+        page.js(f"goTab('{tab}');$('tab-{tab}').querySelector('[data-new-provider-key]').click()")
+        wait(lambda: page.js("$('clientKeyDialog').open"))
+        assert page.js(f"""(() => {{
+          const options = [...$('clientRules').querySelectorAll('[data-provider]')];
+          const choice = options[0]?.querySelector('.client-provider-choice');
+          return options.length === 1 && options[0].dataset.provider === '{provider}'
+            && choice.checked && choice.disabled
+            && $('tab-{tab}').querySelector('[data-public-url]').value.endsWith('{path}');
+        }})()""")
+        page.js("$('clientDismiss').click()")
+        wait(lambda: page.js("!$('clientKeyDialog').open"))
+
     def screenshot(name):
         output = os.getenv("MAC2API_DASHBOARD_SCREENSHOTS")
         if output:
@@ -106,13 +127,29 @@ def check_dashboard(app, page, url):
     page.send("Emulation.setDeviceMetricsOverride",
               {"width": 1600, "height": 1000, "deviceScaleFactor": 1, "mobile": False})
     screenshot("create-key")
-    page.js("$('client-accounts-muse').querySelector('.client-account').click();$('clientSave').click()")
+    page.js("$('clientDismiss').click();goTab('pool');$('museOutput').querySelector('[data-new-provider-key]').click()")
+    wait(lambda: page.js("$('clientKeyDialog').open && $('clientRules').querySelectorAll('[data-provider]').length === 1"))
+    page.js("""$('clientKeyLabel').value = 'Giao diện thử';
+      $('client-accounts-muse').querySelector('.client-account').click();$('clientSave').click()""")
     wait(lambda: page.js("$('clientKeyResult').value.startsWith('m2c_')"))
     key = page.js("$('clientKeyResult').value")
     client = app.store.find_client(key)
+    assert client["providers"] == ["muse"]
     assert set(client["rules"]) == {"muse/text", "muse/image", "muse/video"}
     assert all(rule["accounts"] == [app.store.accounts[0]["id"]] for rule in client["rules"].values())
+    assert page.js("!$('clientScopedOutput').hidden && $('clientScopedUrl').value") == url + "/muse/v1"
+    headers = {"Authorization": "Bearer " + key}
+    models = httpx.get(url + "/muse/v1/models", headers=headers)
+    assert models.status_code == 200
+    catalog = models.json()["data"]
+    assert {item["id"] for item in catalog} >= set(client["rules"])
+    assert all(item["owned_by"] == "muse" for item in catalog)
+    for scope in ("chatgpt", "gemini"):
+        assert httpx.get(url + f"/{scope}/v1/models", headers=headers).status_code == 403
+    assert httpx.post(url + "/v1/chat/completions", headers=headers,
+                      json={"model": "chatgpt/text", "prompt": "Denied"}).status_code == 403
     page.js("$('closeClientSecret').click()")
+    page.js("goTab('clients')")
     wait(lambda: page.js("!$('clientKeyResult').value && $('clientKeyList').textContent.includes('Giao diện thử')"))
 
     page.js("""Array.from($('clientKeyList').querySelectorAll('button')).find(b=>b.textContent==='Cài đặt khóa').click()""")

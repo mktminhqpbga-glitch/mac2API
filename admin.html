@@ -320,6 +320,9 @@
   .gateway-form details{margin:12px 0}
   .gateway-public-url{min-width:0}
   .gateway-public-url, .gateway-form button{max-width:100%}
+  .provider-output .copyline{flex-wrap:wrap}
+  .provider-output .copyline label{flex:1;min-width:min(100%,230px)}
+  .provider-output [data-output-status]:empty{display:none}
   .official-form label input{margin-top:5px}
   .disclosure-card summary{font-weight:650}
   .disclosure-card[open]>summary{margin-bottom:13px}
@@ -578,7 +581,8 @@
         </div>
       </div>
     </div>
-    <dialog class="proxy-dialog" id="clientKeyDialog" aria-labelledby="clientKeyFormTitle">
+  </section>
+  <dialog class="proxy-dialog" id="clientKeyDialog" aria-labelledby="clientKeyFormTitle">
       <h2 id="clientKeyFormTitle">Tạo khóa API</h2>
       <form id="clientKeyForm">
         <fieldset class="client-fields" id="clientAccessFields">
@@ -601,6 +605,13 @@
         </div>
       </form>
       <div id="clientKeyNew" hidden>
+        <div id="clientScopedOutput" hidden>
+          <label for="clientScopedUrl" data-ui="macflowAddress">Địa chỉ dùng với MacFlow</label>
+          <div class="copyline">
+            <input id="clientScopedUrl" type="text" readonly spellcheck="false">
+            <button type="button" class="ghost" onclick="copyEl('clientScopedUrl')" data-ui="copyAddress">Sao chép địa chỉ</button>
+          </div>
+        </div>
         <label for="clientKeyResult">Mã khóa chỉ hiện một lần. Sao chép để gửi cho người dùng.</label>
         <div class="row">
           <input id="clientKeyResult" type="text" readonly autocomplete="off" spellcheck="false">
@@ -608,8 +619,7 @@
         </div>
         <div class="proxy-actions"><button type="button" class="ghost" id="closeClientSecret" data-ui="done">Xong</button></div>
       </div>
-    </dialog>
-  </section>
+  </dialog>
   <section class="tab" id="tab-usage">
     <div class="card" id="clientHistory">
       <div class="status-line"><h2 data-ui="filterUsage">Lọc lượt sử dụng</h2></div>
@@ -675,11 +685,19 @@
         </div>
         <p class="hint" data-connection-status role="status"></p>
       </form>
-      <div class="row">
-        <label>Địa chỉ dùng với MacFlow <input type="text" class="gateway-public-url" data-public-url readonly></label>
-        <button type="button" data-copy-public>Sao chép địa chỉ</button>
-      </div>
+      <div class="advanced-settings" data-provider-output></div>
     </div>
+  </template>
+  <template id="providerOutputTemplate">
+    <h3 data-ui="apiOutput">API đầu ra</h3>
+    <div class="copyline">
+      <label><span data-ui="macflowAddress">Địa chỉ dùng với MacFlow</span>
+        <input type="text" class="gateway-public-url" data-public-url readonly spellcheck="false">
+      </label>
+      <button type="button" class="ghost" data-copy-public data-ui="copyAddress">Sao chép địa chỉ</button>
+      <button type="button" data-new-provider-key data-ui="newProviderKey">Tạo khóa riêng</button>
+    </div>
+    <p class="status-text hint" data-output-status role="status"></p>
   </template>
   <section class="tab" id="tab-official">
     <p id="officialNotice" class="hint status-text" role="status"></p>
@@ -745,6 +763,7 @@
       <span id="expWarnText"></span>
       <button class="ghost mini" onclick="goTab('cookie')">去重新登录</button>
     </div>
+    <div class="card" id="museOutput"></div>
     <div class="stats">
       <div class="stat b"><div class="k">账号总数</div><div class="v" id="sTotal">0</div></div>
       <div class="stat g"><div class="k">可用</div><div class="v" id="sOk">0</div></div>
@@ -839,9 +858,6 @@
             <button class="danger mini" onclick="rotateKey()">重新生成</button>
           </div>
         </div>
-      </div>
-      <div class="hint">Base URL riêng cho Muse: <code id="museScopedBase"></code>
-        <button class="ghost mini" onclick="copyText($('museScopedBase').textContent)">Sao chép</button>
       </div>
       <div class="hint" style="margin:11px 0 0" data-i18n="model-names-hint">
         模型名：<code>muse-spark</code>（对话/代码）、<code>muse-image</code>（生图）、<code>muse-video</code>（生视频）。
@@ -2577,7 +2593,6 @@ if (adminUrl.searchParams.has('key')) {
 }
 $('key').value = KEY;
 $('dBase').textContent = location.origin + '/v1';
-$('museScopedBase').textContent = location.origin + '/muse/v1';
 
 /* 登录状态：控制提示条和 Key 输入框高亮 */
 let authOK = null;
@@ -2763,6 +2778,10 @@ const uiCopy = {
              'Paste the admin key above and select Save. It is stored for this tab session.',
              '在上方粘贴管理密钥并保存。密钥保存在当前标签页会话中。'],
   clientList:['Danh sách khóa','API keys','密钥列表'], newKey:['Tạo khóa API','Create API key','创建 API 密钥'],
+  apiOutput:['API đầu ra','Client API','对外 API'],
+  macflowAddress:['Địa chỉ dùng với MacFlow','Address for MacFlow','MacFlow 接入地址'],
+  copyAddress:['Sao chép địa chỉ','Copy address','复制地址'],
+  newProviderKey:['Tạo khóa riêng','Create scoped key','创建专用密钥'],
   searchKeys:['Tìm tên khóa hoặc mô hình','Search key names or models','搜索密钥名称或模型'],
   status:['Trạng thái','Status','状态'], anyStatus:['Tất cả','All','全部'],
   enabled:['Đang bật','Active','已启用'], paused:['Tạm khóa','Paused','已暂停'], revoked:['Đã thu hồi','Revoked','已撤销'],
@@ -2853,8 +2872,8 @@ function showTab(name, {navigate = false, focus = false} = {}){
   if (advanced) advanced.open = true;
   if (!button) return;
   closeMediaPreview();
-  if (activeTab === 'clients' && name !== 'clients') $('clientKeyDialog').close();
   if (activeTab !== name) {
+    $('clientKeyDialog').close();
     usageDetailRequest++;
     $('usageDialog').close();
   }
@@ -2951,6 +2970,7 @@ let usageLoad = 0;
 let clientKeys = [];
 let clientModels = [];
 let editingClient = null;
+let clientCreationProvider = null;
 
 function clientElement(tag, text, className) {
   const node = document.createElement(tag);
@@ -2981,12 +3001,16 @@ function clientMoney(amount, estimated = false) {
 function clearClientSecret() {
   $('clientKeyResult').value = '';
   $('clientKeyNew').hidden = true;
+  $('clientScopedUrl').value = '';
+  $('clientScopedOutput').hidden = true;
 }
 
-function showClientSecret(value) {
+function showClientSecret(value, provider = null) {
   $('clientKeyFormTitle').textContent = ui('copyKey');
   $('clientKeyForm').hidden = true;
   $('clientKeyResult').value = value;
+  $('clientScopedUrl').value = provider ? providerOutputUrl(provider) : '';
+  $('clientScopedOutput').hidden = !provider;
   $('clientKeyNew').hidden = false;
   if (!$('clientKeyDialog').open) $('clientKeyDialog').showModal();
   $('clientKeyResult').select();
@@ -3010,8 +3034,8 @@ function clientNumber(label, value, className, min, max) {
   return wrapper;
 }
 
-function clientProviderGroups(client) {
-  const models = [...clientModels];
+function clientProviderGroups(client, provider = null) {
+  const models = clientModels.filter(model => !provider || model.provider === provider);
   for (const id of Object.keys(client?.rules || {})) {
     if (!models.some(model => model.id === id)) {
       models.push({id, provider: id.split('/')[0], kind: 'text', accounts: [], configured: false});
@@ -3037,14 +3061,14 @@ function clientProviderGroups(client) {
   });
 }
 
-function clientProviderOption(group) {
+function clientProviderOption(group, fixed = false) {
   const section = clientElement('section', undefined, 'client-provider');
   section.dataset.provider = group.id;
   const choice = clientElement('input', undefined, 'client-provider-choice');
   choice.type = 'checkbox';
-  choice.defaultChecked = group.legacy || group.current.length > 0;
+  choice.defaultChecked = fixed || group.legacy || group.current.length > 0;
   const available = group.configured.length && (group.official || group.accounts.size);
-  choice.disabled = !choice.defaultChecked && !available;
+  choice.disabled = fixed || (!choice.defaultChecked && !available);
   if (group.partial) {
     choice.checked = false;
     choice.indeterminate = true;
@@ -3052,7 +3076,8 @@ function clientProviderOption(group) {
   const label = clientElement('label', undefined, 'client-provider-select');
   const models = group.current.length ? group.current : group.configured;
   const kinds = [...new Set(models.map(model => ui(model.kind)))];
-  const summary = choice.disabled ? (group.configured.length ? 'Chưa có tài khoản' : 'Chưa cấu hình') : kinds.join(' · ');
+  const summary = !available && !choice.defaultChecked
+    ? (group.configured.length ? 'Chưa có tài khoản' : 'Chưa cấu hình') : kinds.join(' · ');
   const description = clientElement('span', summary, 'hint');
   label.append(choice, clientElement('strong', clientKeyLabels[group.id] || group.id), description);
   section.append(label);
@@ -3098,7 +3123,7 @@ function clientAccessChanges() {
   let changed = !editingClient;
   let legacySelection = Boolean(editingClient && !editingClient.rules);
   const selected = [];
-  for (const group of clientProviderGroups(editingClient)) {
+  for (const group of clientProviderGroups(editingClient, clientCreationProvider)) {
     const block = $('clientRules').querySelector('[data-provider="' + group.id + '"]');
     const choice = block.querySelector('.client-provider-choice');
     const enabled = choice.checked || choice.indeterminate;
@@ -3178,8 +3203,9 @@ function clientSettingsChanges() {
   return updated ? {...changes, rules} : changes;
 }
 
-function editClient(client, settings) {
+function editClient(client, settings, provider) {
   editingClient = client;
+  clientCreationProvider = client ? null : provider;
   clearClientSecret();
   $('clientKeyForm').hidden = false;
   $('clientFormStatus').textContent = '';
@@ -3187,12 +3213,13 @@ function editClient(client, settings) {
   $('clientAccessFields').hidden = $('clientAccessFields').disabled = settings;
   $('clientSettingsFields').hidden = $('clientSettingsFields').disabled = !settings;
   $('clientKeyFormTitle').textContent = settings ? 'Cài đặt khóa API' : ui(client ? 'editKey' : 'newKey');
+  if (clientCreationProvider) $('clientKeyFormTitle').textContent += ' · ' + clientKeyLabels[clientCreationProvider];
   $('clientSave').textContent = ui(client ? 'updateKey' : 'newKey');
   $('clientKeyLabel').value = client?.label || '';
   $('clientHistoryDays').value = client?.history_days ?? 0;
   $('clientEnabled').checked = client?.enabled ?? true;
-  const groups = clientProviderGroups(client);
-  const options = settings ? [] : groups.map(clientProviderOption);
+  const groups = clientProviderGroups(client, clientCreationProvider);
+  const options = settings ? [] : groups.map(group => clientProviderOption(group, Boolean(clientCreationProvider)));
   if (!settings && groups.some(group => group.legacy && !group.official)) {
     options.push(clientElement('p', 'Khóa cũ dùng mọi tài khoản khả dụng. Khi đổi tài khoản hoặc thêm nhà cung cấp, khóa dùng các tài khoản đã chọn.', 'hint'));
   }
@@ -3282,8 +3309,7 @@ function paintClientKeys(page = 0){
   $('clientNext').disabled = keyPage + 1 >= pages;
 }
 
-async function loadClientKeys({paint = true} = {}){
-  const status = $(paint ? 'clientKeyStatus' : 'usageStatus');
+async function loadClientKeys({paint = true, status = $(paint ? 'clientKeyStatus' : 'usageStatus')} = {}){
   status.textContent = ui('loading');
   try {
     const {clients, models} = await api('/admin/client-keys');
@@ -3319,8 +3345,8 @@ async function loadUsageView(){
   return loadApiUsage(0);
 }
 
-function openClientEditor(client = null, settings = false){
-  editClient(client, settings);
+function openClientEditor(client = null, settings = false, provider = null){
+  editClient(client, settings, provider);
   $('clientKeyDialog').showModal();
   $(settings ? 'clientHistoryDays' : 'clientKeyLabel').focus();
 }
@@ -3332,7 +3358,11 @@ $('clientPrev').onclick = () => paintClientKeys(keyPage - 1);
 $('clientNext').onclick = () => paintClientKeys(keyPage + 1);
 $('clientDismiss').onclick = () => $('clientKeyDialog').close();
 $('closeClientSecret').onclick = () => $('clientKeyDialog').close();
-$('clientKeyDialog').addEventListener('close', clearClientSecret);
+$('clientKeyDialog').addEventListener('close', () => {
+  if ($('clientKeyDialog').open) return;
+  clientCreationProvider = null;
+  clearClientSecret();
+});
 $('clientKeyDialog').addEventListener('cancel', event => {
   if ($('clientSave').disabled) event.preventDefault();
 });
@@ -3359,7 +3389,7 @@ $('clientKeyForm').addEventListener('submit', async event => {
     if (saved.api_key) {
       $('clientSearch').value = $('clientState').value = '';
       keyPage = 0;
-      showClientSecret(saved.api_key);
+      if ($('clientKeyDialog').open) showClientSecret(saved.api_key, clientCreationProvider);
     } else {
       $('clientKeyDialog').close();
     }
@@ -3800,7 +3830,51 @@ async function loadOfficialProviders(){
   }
 }
 
-function setupWebConnection(tab, provider, scopedPath){
+const providerOutputPaths = {muse:'/muse/v1', chatgpt:'/chatgpt/v1', 'gemini-web':'/gemini/v1'};
+let providerOutputBase = location.origin;
+
+function providerOutputUrl(provider){
+  return providerOutputBase + providerOutputPaths[provider];
+}
+
+function updateProviderOutputUrls(publicBase){
+  providerOutputBase = (publicBase || location.origin).replace(/\/+$/, '');
+  for (const field of document.querySelectorAll('[data-output-provider]')) {
+    field.value = providerOutputUrl(field.dataset.outputProvider);
+  }
+  if (!$('clientScopedOutput').hidden && clientCreationProvider) {
+    $('clientScopedUrl').value = providerOutputUrl(clientCreationProvider);
+  }
+}
+
+function setupProviderOutput(container, provider){
+  container.classList.add('provider-output');
+  container.append($('providerOutputTemplate').content.cloneNode(true));
+  localizeUi(container);
+  const url = container.querySelector('[data-public-url]');
+  const status = container.querySelector('[data-output-status]');
+  const button = container.querySelector('[data-new-provider-key]');
+  url.dataset.outputProvider = provider;
+  url.value = providerOutputUrl(provider);
+  container.querySelector('[data-copy-public]').onclick = () => copyText(url.value);
+  button.onclick = async () => {
+    const tab = activeTab;
+    button.disabled = true;
+    status.dataset.error = 'false';
+    try {
+      if (!await loadClientKeys({status})) {
+        status.dataset.error = 'true';
+        return;
+      }
+      status.textContent = '';
+      if (tab === activeTab && !$('clientKeyDialog').open) openClientEditor(null, false, provider);
+    } finally {
+      button.disabled = false;
+    }
+  };
+}
+
+function setupWebConnection(tab, provider){
   const section = $('tab-' + tab);
   const card = $('webConnectionTemplate').content.firstElementChild.cloneNode(true);
   section.prepend(card);
@@ -3811,12 +3885,10 @@ function setupWebConnection(tab, provider, scopedPath){
   const official = form.querySelector('[data-official-connection]');
   const test = official.querySelector('[data-test-official]');
   const save = form.querySelector('button[type=submit]');
-  const url = card.querySelector('[data-public-url]');
   const endpoint = '/admin/connections/' + provider;
   let state;
 
-  url.value = location.origin + scopedPath;
-  card.querySelector('[data-copy-public]').onclick = () => copyText(url.value);
+  setupProviderOutput(card.querySelector('[data-provider-output]'), provider);
   form.querySelector('[data-open-try]').onclick = () => goTab('play');
   form.querySelector('[data-open-official]').onclick = () => goTab('official');
 
@@ -3916,8 +3988,9 @@ function setupWebConnection(tab, provider, scopedPath){
   return {load};
 }
 
-const chatgptConnection = setupWebConnection('openai', 'chatgpt', '/chatgpt/v1');
-const geminiConnection = setupWebConnection('gemini', 'gemini-web', '/gemini/v1');
+setupProviderOutput($('museOutput'), 'muse');
+const chatgptConnection = setupWebConnection('openai', 'chatgpt');
+const geminiConnection = setupWebConnection('gemini', 'gemini-web');
 $('chatgptCopyAdminKey').onclick = () => copyKey();
 
 const chatProviderPanels = new Map([
@@ -5195,6 +5268,7 @@ async function loadStatus(){
     $('sMedia').textContent = d.media_count ?? 0;
     if (d.base_url){ $('dBase').textContent = d.base_url; $('inBase').value = d.base_url; }
     $('overviewBase').value = d.base_url || location.origin + '/v1';
+    updateProviderOutputUrls(d.config?.public_base);
   }catch(e){
     if (authOK === false){
       $('pSvc').className = 'pill';

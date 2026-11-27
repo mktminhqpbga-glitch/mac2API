@@ -1,6 +1,6 @@
 # MUSE2API
 
-Bản tổng hợp mac2API 1.6.21 gồm mã máy chủ, bảng quản trị, tiện ích Chrome/Edge 1.0.13 và các adapter MacFlow/Toonflow. [Nhật ký phiên bản](CHANGELOG.md)
+Bản tổng hợp mac2API 1.6.22 gồm mã máy chủ, bảng quản trị, tiện ích Chrome/Edge 1.0.13 và các adapter MacFlow/Toonflow. [Nhật ký phiên bản](CHANGELOG.md)
 
 MUSE2API cung cấp API kiểu OpenAI để gọi các tính năng chat, tạo ảnh và tạo video của [Muse.ai](https://muse.ai/). Máy chủ Python chạy FastAPI và điều khiển Chromium qua Chrome DevTools Protocol (CDP). Muse.ai thực hiện việc tạo nội dung. Dịch vụ quản lý cookie, hàng đợi, tài khoản, proxy và kết quả tải về.
 
@@ -175,6 +175,8 @@ Dùng khóa mac2API có quyền gọi nhà cung cấp tương ứng. Thay `http:
 Mỗi địa chỉ riêng có `GET /models` và chỉ chấp nhận mô-đun phù hợp. Nếu bỏ `model`, API riêng tự chọn theo đường dẫn và loại tác vụ. Ví dụ, `POST /gemini/v1/chat/completions` mặc định dùng `gemini-web/text`. Tạo và thăm dò tác vụ ảnh với cùng Base URL. URL tải tệp kết quả vẫn có dạng `/v1/media/...`. Có thể nhập một trong các Base URL này vào trường **Base URL mac2API** của adapter MacFlow.
 
 ### Cấp khóa API cho nhiều người dùng
+
+Để cấp khóa cho một nhà cung cấp, mở **Muse**, **ChatGPT** hoặc **Gemini Web** rồi bấm **Tạo khóa riêng** trong **API đầu ra**. Nhập tên khách, chọn tài khoản được phép dùng và xác nhận. Hộp thoại hiện địa chỉ riêng cùng khóa mới để sao chép vào MacFlow. Nếu đã đặt `MUSE2API_PUBLIC_BASE`, địa chỉ sao chép dùng tên máy chủ đó.
 
 Trong bảng quản trị, mở **Khóa người dùng**, nhập tên rồi chọn nhà cung cấp và các tài khoản được dùng. Nhà cung cấp mới dùng các khả năng văn bản, ảnh và video theo cấu hình hiện có. Với ChatGPT và Gemini Web, chọn hồ sơ Chrome đã liên kết hoặc kết nối API chính thức của dịch vụ đó. OpenAI API và Gemini API dùng thông tin xác thực chính thức đã cấu hình trên máy chủ. Sao chép mã `m2c_…` ngay sau khi tạo và điền vào trường **API Key** trong MacFlow hoặc ứng dụng gọi API.
 

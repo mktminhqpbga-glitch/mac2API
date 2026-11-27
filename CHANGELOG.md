@@ -1,5 +1,9 @@
 # Nhật ký và bàn giao mac2API
 
+## 1.6.22
+
+- Các mục Muse, ChatGPT và Gemini có địa chỉ API riêng và nút **Tạo khóa riêng**. Khi tạo khóa tại một mục, chọn tài khoản trong mục đó rồi sao chép địa chỉ và khóa để dùng với MacFlow.
+
 ## 1.6.21
 
 - Tiện ích Chrome 1.0.13 cho phép liên kết hồ sơ ChatGPT đã đăng nhập trong lúc ô nhập chưa sẵn sàng. Khi chạy tác vụ, tiện ích kiểm tra ô nhập trong tab riêng trước khi gửi.
