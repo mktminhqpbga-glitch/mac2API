@@ -44,7 +44,7 @@ class BrowserJob:
 
 
 class ChromeBridge:
-    def __init__(self, data_dir):
+    def __init__(self, data_dir, *, is_managed=None):
         self.path = os.path.join(data_dir, "chrome-extensions.json")
         self.accounts = _read(self.path, {})
         self.condition = threading.Condition()
@@ -53,16 +53,20 @@ class ChromeBridge:
         self.last_used = {}
         self.reserved = set()
         self.jobs = {}
+        self.is_managed = is_managed or (lambda aid: False)
 
     def pair(self, provider, profile, label):
         if provider not in EXTENSION_PROVIDERS:
             raise WebProviderError("Không tìm thấy nhà cung cấp web.", 404)
         aid = f"ext-{provider}-{profile}"
         with self.condition:
+            if self.is_managed(aid):
+                raise WebProviderError("Hồ sơ này dùng Chromium riêng. Hãy mở tài khoản trong mac2API để đăng nhập.", 409)
             if aid in self.reserved:
                 raise WebProviderError("Hồ sơ Chrome đang chạy tác vụ. Hãy đợi tác vụ kết thúc.", 409)
             token = f"{aid}.{secrets.token_urlsafe(32)}"
             record = {"id": aid, "label": label, "provider": provider,
+                      "enabled": self.accounts.get(aid, {}).get("enabled", True),
                       "digest": hashlib.sha256(token.encode()).hexdigest()}
             if provider == "chatgpt":
                 record["direct_link"] = True
@@ -90,7 +94,7 @@ class ChromeBridge:
 
     def _authenticate(self, token):
         account = self.accounts.get(token.partition(".")[0])
-        if not account or not self._supported(account) or not hmac.compare_digest(
+        if not account or not self._supported(account) or self.is_managed(account["id"]) or not hmac.compare_digest(
             account["digest"], hashlib.sha256(token.encode()).hexdigest()
         ):
             raise WebProviderError("Kết nối tiện ích đã hết hiệu lực. Hãy liên kết lại.", 401)
@@ -104,19 +108,44 @@ class ChromeBridge:
     def _connected(self, aid):
         return self.seen.get(aid, -HEARTBEAT_TTL) > time.monotonic() - HEARTBEAT_TTL
 
+    @contextmanager
+    def operation(self, provider, aid):
+        with self.condition:
+            account = self.accounts.get(aid)
+            if not account or account["provider"] != provider or not self._supported(account) or self.is_managed(aid):
+                raise WebProviderError("Không tìm thấy hồ sơ tiện ích Chrome.", 404)
+            if aid in self.reserved:
+                raise WebProviderError("Hồ sơ Chrome đang được dùng. Hãy đợi tác vụ kết thúc.", 409)
+            self.reserved.add(aid)
+        try:
+            yield account
+        finally:
+            with self.condition:
+                self.reserved.discard(aid)
+                self.condition.notify_all()
+
+    def update(self, account, changes):
+        with self.condition:
+            updated = {**self.accounts, account["id"]: {**account, **changes}}
+            try:
+                _write(self.path, updated)
+            except OSError as exc:
+                raise WebProviderError("Không lưu được cài đặt tài khoản Chrome.", 507) from exc
+            self.accounts = updated
+
     def list_accounts(self):
         with self.condition:
             return [{key: item[key] for key in ("id", "label", "provider")}
-                    | {"enabled": True, "verified": self._connected(aid) and aid not in self.expired_sessions,
+                    | {"enabled": item.get("enabled", True), "verified": self._connected(aid) and aid not in self.expired_sessions,
                        "busy": aid in self.reserved}
-                    for aid, item in self.accounts.items() if self._supported(item)]
+                    for aid, item in self.accounts.items() if self._supported(item) and not self.is_managed(aid)]
 
     def state(self, provider, allowed_ids=None):
         accounts = [item for item in self.list_accounts() if item["provider"] == provider
                     and (allowed_ids is None or item["id"] in allowed_ids)]
         if not accounts:
             return None
-        ready = [item for item in accounts if item["verified"]]
+        ready = [item for item in accounts if item["verified"] and item["enabled"]]
         busy = bool(ready) and all(item["busy"] for item in ready)
         return {"configured": True, "connected": bool(ready), "ready": bool(ready), "busy": busy,
                 "reason": "busy" if busy else "ready" if ready else "session_unverified"}
@@ -130,6 +159,7 @@ class ChromeBridge:
                     guard()
                 allowed = allowed_accounts() if allowed_accounts else None
                 ready = [item for aid, item in self.accounts.items() if item["provider"] == provider
+                         and self._supported(item) and item.get("enabled", True) and not self.is_managed(aid)
                          and (allowed is None or aid in allowed) and self._connected(aid)
                          and aid not in self.expired_sessions]
                 if not ready:

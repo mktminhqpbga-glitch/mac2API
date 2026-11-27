@@ -1,4 +1,4 @@
-"""Drive authenticated Gemini tabs through a local DevTools port.
+"""Drive authenticated ChatGPT and Gemini tabs through Chromium.
 
 The browser is started and logged into by the operator. Only tabs created for
 requests are closed here. Cookies and third-party API keys are never read.
@@ -43,6 +43,25 @@ PROVIDERS = {
         'button[aria-label="Copy"], button[aria-label="Sao chép"], [data-test-id="copy-button"]',
     ),
 }
+MANAGED_PROVIDER_IDS = frozenset((*PROVIDERS, "chatgpt"))
+CHATGPT_MANAGED = WebProvider(
+    "https://chatgpt.com/",
+    '#prompt-textarea, textarea[name="prompt-textarea"], '
+    '[data-testid="prompt-textarea"] :is(textarea,[contenteditable]), '
+    'form[data-type="unified-composer"] [role="textbox"][contenteditable], '
+    '#thread-bottom-container :is(textarea,[role="textbox"][contenteditable],.ProseMirror[contenteditable]), '
+    'form:has([data-testid="send-button"]) :is(textarea,[role="textbox"][contenteditable],.ProseMirror[contenteditable])',
+    '[data-testid="send-button"], #composer-submit-button[data-testid="send-button"]',
+    '[data-message-author-role="assistant"]',
+    '[data-testid="stop-button"]',
+    '[data-testid="copy-turn-action-button"]',
+)
+
+
+def managed_definition(provider_id):
+    return CHATGPT_MANAGED if provider_id == "chatgpt" else PROVIDERS[provider_id]
+
+
 DEFAULT_WEB_CDP_PORT = 19211
 WEB_SETUP_MESSAGE = (
     "Chưa kết nối Chrome Web. Trong bảng quản trị, mở tab Gemini Web, "
@@ -370,17 +389,20 @@ class WebProviders:
             self._wait_managed_login(page, provider_id, time.monotonic() + 15)
 
     def _wait_managed_login(self, page, provider_id, deadline):
-        provider = PROVIDERS[provider_id]
+        provider = managed_definition(provider_id)
         selectors = {
+            "chatgpt": '[data-testid="accounts-profile-button"], [data-testid="profile-button"], '
+                       '[data-testid="profile-menu-button"], [data-testid="profile-menu-trigger"]',
             "gemini-web": 'a[href^="https://accounts.google.com/SignOutOptions"], button[aria-label^="Google Account"], '
                           'button[aria-label^="Tài khoản Google"]',
         }
         while (remaining := deadline - time.monotonic()) > 0:
             present = page.js(f"""(() => {{
                 if (location.origin !== {json.dumps(_origin(provider.url))}) return false;
-                const editor = document.querySelector({json.dumps(provider.composer)});
                 const account = document.querySelector({json.dumps(selectors[provider_id])});
-                return Boolean(editor?.getClientRects().length && account?.getClientRects().length);
+                const signedIn = account && ({json.dumps(provider_id == "chatgpt")} || account.getClientRects().length);
+                return Boolean(signedIn && [...document.querySelectorAll({json.dumps(provider.composer)})]
+                    .some(editor => editor.getClientRects().length));
             }})()""", timeout=min(remaining, 3))
             if present is True:
                 return
@@ -453,7 +475,7 @@ class WebProviders:
 
     def generate(self, provider_id: str, prompt: str, *, image: bool, timeout: int, managed_page=None,
                  before_submit=None):
-        provider = PROVIDERS[provider_id]
+        provider = managed_definition(provider_id) if managed_page else PROVIDERS[provider_id]
         deadline = time.monotonic() + timeout
         with (managed_page() if managed_page else self._page(provider_id)) as page:
             composer_deadline = min(deadline, time.monotonic() + 25)
@@ -489,7 +511,7 @@ class WebProviders:
             const inputs = [...root.querySelectorAll('input[type=file]')];"""
         reset = f"""(() => {{
             if (location.origin !== {origin}) return false;
-            const editor = document.querySelector({payload});
+            const editor = [...document.querySelectorAll({payload})].find(node => node.getClientRects().length);
             if (!editor) return false;
             {composer}
             removeButtons.forEach(button => button.click());
@@ -506,7 +528,7 @@ class WebProviders:
             raise WebProviderError("Không thể dọn ô nhập của phiên web.")
         verify = f"""(() => {{
             if (location.origin !== {origin}) return false;
-            const editor = document.querySelector({payload});
+            const editor = [...document.querySelectorAll({payload})].find(node => node.getClientRects().length);
             if (!editor) return false;
             {composer}
             const cards = root.querySelectorAll('[data-testid*="attachment-preview"],[data-test-id*="attachment-preview"],'
@@ -596,7 +618,8 @@ def _read_image(page, source: str, *, timeout=15):
     try:
         address = urlsplit(source)
         host = address.hostname or ""
-        public_hosts = ("gemini.google.com", "googleusercontent.com", "gstatic.com",
+        public_hosts = ("chatgpt.com", "oaiusercontent.com", "oaistatic.com",
+                        "gemini.google.com", "googleusercontent.com", "gstatic.com",
                         "storage.googleapis.com")
         allowed_cdn = (address.scheme == "https" and not address.username and not address.password
                        and address.port in (None, 443)

@@ -8,7 +8,7 @@ assert m['version'] in '\n'.join(v['highlights']) and m['version'] in '\n'.join(
 assert '手动' in '\n'.join(v['highlights']) and 'every browser profile' in '\n'.join(v['highlights_en'])
 html=(root/'admin.html').read_text()
 assert 'id="extensionUpgradeNotice"' in html and '"extension-upgrade-notice":' in html
-assert html.index('id="tab-cookie"') < html.index('id="extensionUpgradeNotice"') < html.index('id="tab-tasks"')
+assert html.index('id="tab-pool"') < html.index('id="museExtension"') < html.index('id="extensionUpgradeNotice"') < html.index('id="tab-tasks"')
 assert 'href="/admin/extension"' in html
 setup = html.split('id="chatProviderTemplate"', 1)[1].split('</template>', 1)[0]
 assert 'chrome://inspect/#remote-debugging' in setup and '--user-data-dir' not in setup

@@ -165,6 +165,9 @@ def exercise(api, browser, fixture, pool, app):
                           json={"model": "chatgpt/text", "prompt": "Before revoke", "timeout": 12})
     job = api.get("/browser-bridge/next", headers=chat).json()
     endpoint = f"/browser-bridge/jobs/{job['id']}"
+    chat_path = f"/admin/web-providers/chatgpt/extension/{chat_id}"
+    proxy = {"proxy": {"server": "http://127.0.0.1:9876", "username": "fixture", "password": "fixture-secret"}}
+    assert api.post(chat_path + "/proxy", headers=admin, json=proxy).status_code == 409
     assert not api.post(endpoint + "/permit", headers=gemini).json()["ok"]
     key_path = "/admin/client-keys/" + client_key.json()["id"]
     assert api.patch(key_path, headers=admin, json={"enabled": False}).status_code == 200
@@ -172,11 +175,32 @@ def exercise(api, browser, fixture, pool, app):
     assert app.GEN_LOCK.locked() and not pending.done()
     assert api.post(endpoint + "/finish", headers=chat, json={"error": "interrupted"}).json()["ok"]
     assert pending.result(timeout=8).status_code == 403
-    assert api.delete(f"/admin/web-providers/chatgpt/extension/{chat_id}", headers=admin).status_code == 204
+    assert api.delete(chat_path, headers=admin).status_code == 204
     assert api.get("/browser-bridge/next", headers=chat).status_code == 401
     assert api.get("/browser-bridge/next", headers=admin).status_code == 401
     assert api.post(endpoint + "/permit", headers={
         **admin, "X-Forwarded-For": "127.0.0.1"}).status_code == 403
+
+    chat, chat_id = pair(api, "chatgpt", "a" * 32, admin)
+    assert api.post("/browser-bridge/jobs/unknown/heartbeat", headers=chat).status_code == 200
+    assert api.patch(chat_path, headers=admin, json={"enabled": False, "label": "Proxy test"}).status_code == 200
+    assert "chatgpt" not in api.get("/admin/web-providers", headers=admin).json()["ready"]
+    pair_path = "/admin/web-providers/chatgpt/extension"
+    chat, _ = pair(api, "chatgpt", "a" * 32, admin)
+    assert api.post("/browser-bridge/jobs/unknown/heartbeat", headers=chat).status_code == 200
+    assert "chatgpt" not in api.get("/admin/web-providers", headers=admin).json()["ready"]
+    assert api.patch(chat_path, headers=admin, json={"enabled": True, "label": "Proxy test"}).status_code == 200
+    migrated = api.post(chat_path + "/proxy", json=proxy, headers=admin)
+    assert migrated.status_code == 201 and migrated.json()["id"] == chat_id, migrated.text
+    assert migrated.json()["label"] == "Proxy test"
+    assert "fixture-secret" not in migrated.text and migrated.json()["proxy"]["has_password"]
+    assert not migrated.json()["verified"] and not migrated.json()["enabled"]
+    assert api.get("/browser-bridge/next", headers=chat).status_code == 401
+    assert api.post(pair_path, json={"profile": "a" * 32}, headers=admin).status_code == 409
+    assert api.patch(key_path, headers=admin, json={"enabled": True}).status_code == 200
+    unavailable = api.post("/chatgpt/v1/chat/completions", headers=customer,
+                           json={"model": "chatgpt/text", "prompt": "Before checking the migrated account"})
+    assert unavailable.status_code == 503 and len(fixture.submissions) == 3
 
 
 def main():

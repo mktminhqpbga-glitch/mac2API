@@ -14,7 +14,7 @@ import uuid
 from cdp import CDP
 from proxy import HTTPProxyRelay, public_proxy
 from store import _read, _write
-from web_providers import CHROME_ERRORS, PROVIDERS, ChromeProfileConnection, WebProviderError
+from web_providers import CHROME_ERRORS, MANAGED_PROVIDER_IDS, ChromeProfileConnection, WebProviderError
 
 
 def visible_chrome_available():
@@ -117,12 +117,18 @@ class ManagedWebAccounts:
         self.accounts = updated
         self.condition.notify_all()
 
-    def create(self, provider, label):
-        account = {"id": uuid.uuid4().hex, "provider": provider, "label": label,
-                   "proxy": None, "enabled": False, "verified": False}
+    def create(self, provider, label, *, aid=None, proxy=None):
+        account = {"id": aid or uuid.uuid4().hex, "provider": provider, "label": label,
+                   "proxy": proxy, "enabled": False, "verified": False}
         with self.condition:
+            if account["id"] in self.accounts:
+                raise WebProviderError("Hồ sơ này đã có trong mac2API.", 409)
             self._save(account)
         return account
+
+    def has_account(self, aid, provider=None):
+        account = self.accounts.get(aid)
+        return bool(account and (provider is None or account["provider"] == provider))
 
     def update(self, account, **changes):
         with self.condition:
@@ -135,7 +141,8 @@ class ManagedWebAccounts:
 
     def list_accounts(self):
         with self.condition:
-            return [self.public(account) for account in self.accounts.values() if account["provider"] in PROVIDERS]
+            return [self.public(account) for account in self.accounts.values()
+                    if account["provider"] in MANAGED_PROVIDER_IDS]
 
     def enabled(self, provider):
         return [account for account in self.accounts.values()
@@ -161,7 +168,7 @@ class ManagedWebAccounts:
     def operation(self, provider, aid):
         with self.condition:
             account = self.accounts.get(aid)
-            if provider not in PROVIDERS or not account or account["provider"] != provider:
+            if provider not in MANAGED_PROVIDER_IDS or not account or account["provider"] != provider:
                 raise WebProviderError("Không tìm thấy tài khoản web.", 404)
             if aid in self.in_use:
                 raise WebProviderError("Tài khoản đang được sử dụng. Hãy thử lại khi tác vụ kết thúc.", 409)

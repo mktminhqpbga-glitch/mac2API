@@ -289,7 +289,7 @@ async def check_existing_profile(port_file):
         app.web_providers.close()
 
 
-async def check_managed_profile(tmp, chromium, server):
+async def check_managed_profile(tmp, chromium, server, provider, prefix):
     import app
     from managed_web import ManagedBrowser, ManagedWebAccounts
     from web_providers import ChromeProfileConnection
@@ -303,7 +303,9 @@ async def check_managed_profile(tmp, chromium, server):
         return ManagedBrowser(cfg, account, visible=False, url=url + "?fixture-login" if visible else url)
 
     admin = {"Authorization": "Bearer fixture"}
-    endpoint = "/admin/web-providers/gemini-web/accounts"
+    endpoint = f"/admin/web-providers/{provider}/accounts"
+    other = "chatgpt" if provider == "gemini-web" else "gemini-web"
+    completions = f"/{prefix}/v1/chat/completions"
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app.app), base_url="http://test") as client:
         with patch.object(app.CFG, "chromium", str(launcher)), \
              patch("managed_web.ManagedBrowser", side_effect=launch), \
@@ -314,7 +316,7 @@ async def check_managed_profile(tmp, chromium, server):
             aid = added.json()["id"]
             path = f"{endpoint}/{aid}"
             assert (await client.patch(path, headers=admin, json={"enabled": True})).status_code == 409
-            assert (await client.post(path.replace("gemini-web", "chatgpt") + "/test", headers=admin)).status_code == 404
+            assert (await client.post(path.replace(provider, other) + "/test", headers=admin)).status_code == 404
             logged = await client.post(path + "/login", headers=admin)
             assert logged.status_code == 200, logged.text
             browser = app.managed_web.login_windows[aid].browser
@@ -335,7 +337,7 @@ async def check_managed_profile(tmp, chromium, server):
 
             restarted = ManagedWebAccounts(app.CFG)
             with patch.object(app, "managed_web", restarted):
-                reply = await client.post("/gemini/v1/chat/completions", headers=admin, json={"prompt": "Hello"})
+                reply = await client.post(completions, headers=admin, json={"prompt": "Hello"})
                 assert reply.status_code == 200, reply.text
                 assert reply.json()["choices"][0]["message"]["content"] == "Test answer: Hello"
                 assert not restarted.login_windows
@@ -347,15 +349,28 @@ async def check_managed_profile(tmp, chromium, server):
                 assert "fixture-secret" not in stored_proxy.text and stored_proxy.json()["proxy"]["has_password"]
                 # An enabled profile that needs checking must never fall back to the old Chrome path.
                 with patch.object(app.web_providers, "generate", side_effect=AssertionError("unexpected fallback")):
-                    reply = await client.post("/gemini/v1/chat/completions", headers=admin, json={"prompt": "Hello"})
+                    reply = await client.post(completions, headers=admin, json={"prompt": "Hello"})
                 assert reply.status_code == 503, reply.text
                 proxied_before = server.proxied_requests
                 checked = await client.post(path + "/test", headers=admin)
                 assert checked.status_code == 200, checked.text
                 assert server.proxied_requests > proxied_before
                 proxied_before = server.proxied_requests
-                reply = await client.post("/gemini/v1/chat/completions", headers=admin, json={"prompt": "Hello"})
+                reply = await client.post(completions, headers=admin, json={"prompt": "Hello"})
                 assert reply.status_code == 200 and server.proxied_requests > proxied_before, reply.text
+                if provider == "chatgpt":
+                    key = await client.post("/admin/client-keys", headers=admin, json={
+                        "label": "Proxy fixture", "rules": {
+                            "chatgpt/text": {"accounts": [aid]}, "chatgpt/image": {"accounts": [aid]},
+                        },
+                    })
+                    assert key.status_code == 201, key.text
+                    customer = {"Authorization": f"Bearer {key.json()['api_key']}"}
+                    image = await client.post("/chatgpt/v1/images/generations", headers=customer, json={
+                        "prompt": "A cat", "response_format": "b64_json",
+                    })
+                    assert image.status_code == 200, image.text
+                    assert image.json()["data"][0]["b64_json"].startswith("iVBORw0")
 
 
 if __name__ == "__main__":
@@ -381,13 +396,15 @@ if __name__ == "__main__":
             import web_providers
             fixtures = {name: replace(provider, url=f"http://127.0.0.1:{server.server_port}/")
                         for name, provider in web_providers.PROVIDERS.items()}
-            with patch.dict(web_providers.PROVIDERS, fixtures):
+            chatgpt = replace(web_providers.CHATGPT_MANAGED, url=f"http://127.0.0.1:{server.server_port}/")
+            with patch.dict(web_providers.PROVIDERS, fixtures), patch.object(web_providers, "CHATGPT_MANAGED", chatgpt):
                 asyncio.run(check())
                 asyncio.run(check_existing_profile(port_file))
-                asyncio.run(check_managed_profile(tmp, chromium, server))
+                asyncio.run(check_managed_profile(tmp, chromium, server, "gemini-web", "gemini"))
+                asyncio.run(check_managed_profile(tmp, chromium, server, "chatgpt", "chatgpt"))
             print("PASS: Gemini module routes, real CDP transport, image polling, media and input validation")
             print("PASS: existing Chrome profile linkage, correct session storage, original tab retained")
-            print("PASS: managed profile persists across restart, starts from idle and uses the saved proxy after recheck")
+            print("PASS: managed ChatGPT and Gemini profiles persist across restart and use the saved proxy after recheck")
         finally:
             proc.terminate()
             proc.wait(timeout=10)

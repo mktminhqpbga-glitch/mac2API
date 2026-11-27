@@ -72,8 +72,9 @@ from generation_timing import PendingMedia, PendingMediaStore, QueuePolicy, Queu
 from managed_web import ManagedWebAccounts, visible_chrome_available
 from proxy import normalize_server, request_proxy_context, split_proxy_url
 from media_storage import CAPACITY_BYTES, CLEANUP_BYTES, delete_media_file, media_entries, media_owner, new_media_name, save_media
-from web_providers import (DEFAULT_WEB_CDP_PORT, MAX_IMAGE_BYTES, PROVIDERS as WEB_PROVIDERS, WebPostSendError,
-                           WebProviderError, WebProviders, WebSessionUnavailable, decode_web_image)
+from web_providers import (DEFAULT_WEB_CDP_PORT, MANAGED_PROVIDER_IDS, MAX_IMAGE_BYTES, PROVIDERS as WEB_PROVIDERS,
+                           WebPostSendError, WebProviderError, WebProviders, WebSessionUnavailable,
+                           decode_web_image, managed_definition)
 from thumbnails import (VIDEO_FORMATS, ThumbnailUnavailable,
                         source_version, video_thumbnail)
 from workflows import WorkflowRequest, WorkflowStepError, Workflows, workflow_prompt
@@ -171,7 +172,7 @@ if not web_port and CFG.cdp_port != DEFAULT_WEB_CDP_PORT and store.web_chrome_en
     web_port = DEFAULT_WEB_CDP_PORT
 web_providers = WebProviders(web_port, profile_preferred=store.web_chrome_profile_preferred())
 managed_web = ManagedWebAccounts(CFG)
-chrome_bridge = ChromeBridge(CFG.data_dir)
+chrome_bridge = ChromeBridge(CFG.data_dir, is_managed=lambda aid: managed_web.has_account(aid))
 MODULES = {f"muse/{kind}": ("muse", kind) for kind in ("text", "image", "video")}
 MODULES.update({f"{provider}/{kind}": (provider, kind)
                 for provider in (*WEB_PROVIDERS, "chatgpt") for kind in ("text", "image")})
@@ -279,19 +280,16 @@ def _run_web_generation(provider, prompt, *, image, timeout, on_acquired=None, o
             reserve_options = {"allowed_accounts": allowed_accounts} if allowed_accounts else {}
             allowed = allowed_accounts() if allowed_accounts else None
             paired = chrome_bridge.state(provider, allowed)
-            if provider == "chatgpt":
-                if paired and paired["ready"]:
-                    raise WebAccountChanged()
-                if allowed is not None and not any(aid.startswith("ext-chatgpt-") for aid in allowed):
-                    _check_dispatch(allowed_accounts, None)
-                raise WebProviderError("Hãy mở Chrome, đăng nhập ChatGPT rồi bấm ChatGPT trong tiện ích mac2API.", 503)
             managed = managed_web.state(provider, allowed)
-            if paired and not (managed and managed["configured"]) and (allowed is not None or not web_providers.ready(provider)):
+            if (paired and not (managed and managed["configured"])
+                    and (allowed is not None or provider not in WEB_PROVIDERS or not web_providers.ready(provider))):
                 if paired["ready"]:
                     # The extension came online after the reservation check.
                     raise WebAccountChanged()
                 raise WebProviderError("Hồ sơ tiện ích Chrome chưa sẵn sàng. Hãy mở Chrome hoặc đăng nhập và liên kết lại.", 503)
             with managed_web.reserve(provider, deadline, queue_guard, **reserve_options) as account:
+                if account is None and provider not in WEB_PROVIDERS:
+                    raise WebProviderError("Hãy thêm tài khoản ChatGPT hoặc liên kết tiện ích trong mac2API.", 503)
                 aid = account["id"] if account else None
 
                 def generate():
@@ -307,7 +305,7 @@ def _run_web_generation(provider, prompt, *, image, timeout, on_acquired=None, o
                     if allowed_accounts:
                         options["before_submit"] = lambda: _check_dispatch(allowed_accounts, aid)
                     if account:
-                        options["managed_page"] = lambda: managed_web.page(account, WEB_PROVIDERS[provider].url)
+                        options["managed_page"] = lambda: managed_web.page(account, managed_definition(provider).url)
                     try:
                         return web_providers.generate(provider, prompt, image=image, timeout=timeout, **options)
                     except WebSessionUnavailable:
@@ -345,9 +343,13 @@ def _generation_gateway(provider, callbacks):
     allowed = allowed_accounts() if allowed_accounts else None
     connection = _select_web_gateway(provider, allowed)
     if not connection and provider == "chatgpt" and allowed is not None:
-        if not any(account.startswith("ext-chatgpt-") for account in allowed):
+        if not any(_chatgpt_browser_account(account) for account in allowed):
             _check_dispatch(allowed_accounts, None)
     return connection
+
+
+def _chatgpt_browser_account(aid):
+    return aid.startswith("ext-chatgpt-") or managed_web.has_account(aid, "chatgpt")
 
 
 def _select_web_gateway(provider, allowed_ids=None):
@@ -367,7 +369,7 @@ def _select_web_gateway(provider, allowed_ids=None):
             return connection
         if not connection:
             browser = allowed_ids - {official.account_id, external.account_id}
-            if any(provider == "gemini-web" or aid.startswith("ext-chatgpt-") for aid in browser):
+            if any(provider == "gemini-web" or _chatgpt_browser_account(aid) for aid in browser):
                 return None
     return None
 
@@ -2276,8 +2278,13 @@ def _gateway_state(gateway, allowed_ids):
 def _chrome_account_state(provider, allowed_ids=None):
     extension = chrome_bridge.state(provider, allowed_ids)
     if provider == "chatgpt":
-        state = extension or {"configured": False, "connected": False, "ready": False,
-                              "busy": False, "reason": "not_configured"}
+        managed = managed_web.state(provider, allowed_ids)
+        state = extension
+        if managed and (not extension or (managed["configured"] and not extension["ready"])):
+            state = managed
+        if not state:
+            state = {"configured": False, "connected": False, "ready": False,
+                     "busy": False, "reason": "not_configured"}
         if state["ready"] and GEN_LOCK.full():
             state.update(busy=True, reason="busy")
         return state
@@ -3587,6 +3594,35 @@ def revoke_chrome_extension(provider: str, aid: str, _=Depends(auth)):
     return Response(status_code=204)
 
 
+@app.patch("/admin/web-providers/{provider}/extension/{aid}")
+def patch_chrome_extension(provider: str, aid: str, req: AccountPatch, _=Depends(auth)):
+    if "proxy" in req.model_fields_set:
+        raise HTTPException(400, "Dùng mục Proxy của hồ sơ để chuyển sang Chromium riêng.")
+    changes = req.model_dump(exclude_none=True)
+    if "label" in changes:
+        changes["label"] = changes["label"].strip()
+        if not changes["label"] or len(changes["label"]) > 120:
+            raise HTTPException(400, "Tên hồ sơ phải có từ 1 đến 120 ký tự.")
+    with chrome_bridge.operation(provider, aid) as account:
+        if changes:
+            chrome_bridge.update(account, changes)
+    return {"ok": True}
+
+
+@app.post("/admin/web-providers/{provider}/extension/{aid}/proxy", status_code=201)
+def migrate_chrome_extension_proxy(provider: str, aid: str, req: ProxyTestRequest, _=Depends(auth)):
+    proxy = req.proxy.configuration()
+    with chrome_bridge.operation(provider, aid) as account:
+        created = managed_web.create(provider, account["label"], aid=aid, proxy=proxy)
+    return managed_web.public(created)
+
+
+@app.post("/admin/web-providers/{provider}/extension/{aid}/proxy/test")
+def test_chrome_extension_proxy(provider: str, aid: str, req: ProxyTestRequest, _=Depends(auth)):
+    with chrome_bridge.operation(provider, aid):
+        return _test_web_proxy(req.proxy.configuration())
+
+
 @app.get("/browser-bridge/next")
 async def chrome_extension_next(request: Request, authorization: str | None = Header(default=None)):
     _require_local_extension(request)
@@ -3671,7 +3707,7 @@ class WebAccountCreate(BaseModel):
 
 @app.post("/admin/web-providers/{provider}/accounts", status_code=201)
 def create_managed_web_account(provider: str, req: WebAccountCreate, _=Depends(auth)):
-    if provider not in WEB_PROVIDERS:
+    if provider not in MANAGED_PROVIDER_IDS:
         raise HTTPException(404, "Không tìm thấy nhà cung cấp web.")
     if not (label := req.label.strip()):
         raise HTTPException(400, "Hãy đặt tên hồ sơ.")
@@ -3704,13 +3740,13 @@ def patch_managed_web_account(provider: str, aid: str, req: AccountPatch, _=Depe
 @app.post("/admin/web-providers/{provider}/accounts/{aid}/login")
 def open_managed_web_login(provider: str, aid: str, _=Depends(auth)):
     with managed_web.operation(provider, aid) as account:
-        _web_call(managed_web.login, account, WEB_PROVIDERS[provider].url)
+        _web_call(managed_web.login, account, managed_definition(provider).url)
     return {"ok": True}
 
 
 def _check_managed_session(provider, account):
     try:
-        web_providers.check_managed(provider, lambda: managed_web.page(account, WEB_PROVIDERS[provider].url))
+        web_providers.check_managed(provider, lambda: managed_web.page(account, managed_definition(provider).url))
     except WebSessionUnavailable:
         managed_web.update(account, verified=False)
         raise
@@ -3727,14 +3763,17 @@ def test_managed_web_account(provider: str, aid: str, _=Depends(auth)):
 
 @app.post("/admin/web-providers/{provider}/accounts/{aid}/proxy/test")
 def test_managed_web_proxy(provider: str, aid: str, req: ProxyTestRequest, _=Depends(auth)):
-    import requests
     with managed_web.operation(provider, aid) as account:
-        proxy = req.proxy.configuration(account.get("proxy"))
-        try:
-            return {"ok": True, "proxy_reachable": True, "exit_ip": _proxy_exit_ip(proxy)}
-        except (MuseProxyError, requests.RequestException, ValueError, KeyError, TypeError):
-            return {"ok": False, "proxy_reachable": False,
-                    "message": "Không kiểm tra được proxy. Hãy kiểm tra địa chỉ và thông tin xác thực."}
+        return _test_web_proxy(req.proxy.configuration(account.get("proxy")))
+
+
+def _test_web_proxy(proxy):
+    import requests
+    try:
+        return {"ok": True, "proxy_reachable": True, "exit_ip": _proxy_exit_ip(proxy)}
+    except (MuseProxyError, requests.RequestException, ValueError, KeyError, TypeError):
+        return {"ok": False, "proxy_reachable": False,
+                "message": "Không kiểm tra được proxy. Hãy kiểm tra địa chỉ và thông tin xác thực."}
 
 
 @app.post("/admin/web-providers/{provider}/link")
@@ -4042,8 +4081,9 @@ def _overview_accounts():
         state = "paused" if not item["enabled"] else "ready" if item["verified"] else "needs_check"
         accounts.append({key: item[key] for key in ("id", "label", "provider", "busy")} | {"state": state})
     for item in chrome_bridge.list_accounts():
+        state = "paused" if not item["enabled"] else "ready" if item["verified"] else "needs_check"
         accounts.append({key: item[key] for key in ("id", "label", "provider", "busy")}
-                        | {"state": "ready" if item["verified"] else "needs_check"})
+                        | {"state": state})
     for gateway in (*OFFICIAL_WEB_CONNECTIONS.values(), *WEB_GATEWAYS.values()):
         status = gateway.status()
         if status["configured"]:

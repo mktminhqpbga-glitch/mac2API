@@ -1,5 +1,10 @@
 # Nhật ký và bàn giao mac2API
 
+## 1.6.23
+
+- Mỗi mục Muse, ChatGPT và Gemini có nút tải và hướng dẫn cho đúng dịch vụ. Ba mục dùng chung tiện ích Chrome/Edge 1.0.13.
+- ChatGPT và Gemini hỗ trợ đổi tên, kiểm tra, bật/tắt và dùng proxy theo hồ sơ Chromium riêng. Khi chuyển từ tiện ích sang hồ sơ proxy, tài khoản giữ mã và quyền khóa đã cấp. Đăng nhập lại trong cửa sổ hồ sơ riêng trước khi bật.
+
 ## 1.6.22
 
 - Các mục Muse, ChatGPT và Gemini có địa chỉ API riêng và nút **Tạo khóa riêng**. Khi tạo khóa tại một mục, chọn tài khoản trong mục đó rồi sao chép địa chỉ và khóa để dùng với MacFlow.

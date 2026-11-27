@@ -57,10 +57,13 @@ def check_dashboard(app, page, url):
             page.js("$('mobileNav').value='clients';$('mobileNav').dispatchEvent(new Event('change'))")
             assert page.js("$('tab-clients').classList.contains('active')")
         for tab in ("overview", "clients", "usage", "pool", "openai", "gemini", "official",
-                    "cookie", "tasks", "media", "workflows", "play", "docs"):
+                    "tasks", "media", "workflows", "play", "docs"):
             page.js(f"goTab('{tab}')")
             wait(lambda: page.js(f"$('tab-{tab}').classList.contains('active')"))
             assert page.js("document.documentElement.scrollWidth <= innerWidth + 1"), (width, tab)
+    page.js("location.hash = 'cookie'")
+    wait(lambda: page.js("$('tab-pool').classList.contains('active') && $('museExtension').open"))
+    assert page.js("Boolean($('museExtension').querySelector('a[href=\"/admin/extension\"]').getClientRects().length)")
     page.send("Emulation.setDeviceMetricsOverride",
               {"width": 1600, "height": 1000, "deviceScaleFactor": 1, "mobile": False})
 
@@ -84,6 +87,24 @@ def check_dashboard(app, page, url):
         }})()""")
         page.js("$('clientDismiss').click()")
         wait(lambda: page.js("!$('clientKeyDialog').open"))
+
+    for tab, provider in (("openai", "chatgpt"), ("gemini", "gemini-web")):
+        aid = app.chrome_bridge.pair(provider, "c" * 32, "Hồ sơ thử proxy").split(".")[0]
+        page.js(f"goTab('{tab}')")
+        panel = f"$('tab-{tab}')"
+        assert page.js(f"""Boolean({panel}.querySelector('[data-web-extension] a[download]').getClientRects().length)""")
+        wait(lambda: page.js(f"{panel}.querySelector('[data-web-extension-accounts]').textContent.includes('Hồ sơ thử proxy')"))
+        page.js(f"""[...{panel}.querySelectorAll('[data-web-extension-accounts] button')]
+            .find(button => button.textContent === 'Proxy').click()""")
+        assert page.js("$('proxyDialog').open && $('proxyMode').value === 'proxy' && $('proxyMode').disabled")
+        page.js("""$('proxyServer').value = 'http://127.0.0.1:9876';
+            $('proxyServer').dispatchEvent(new Event('input', {bubbles: true}));""")
+        with patch.object(app, "_proxy_exit_ip", return_value="192.0.2.10"):
+            page.js("$('proxyTest').click()")
+            wait(lambda: page.js("$('proxyResult').textContent.includes('192.0.2.10')"))
+        page.js("$('proxySave').click()")
+        wait(lambda: page.js(f"!$('proxyDialog').open && {panel}.querySelector('[data-web-accounts]').textContent.includes('127.0.0.1:9876')"))
+        assert app.managed_web.has_account(aid, provider)
 
     def screenshot(name):
         output = os.getenv("MAC2API_DASHBOARD_SCREENSHOTS")
@@ -388,8 +409,7 @@ if __name__ == "__main__":
             try:
                 wait(lambda: server.started)
                 port_file = chrome_path / "DevToolsActivePort"
-                wait(port_file.exists)
-                port = port_file.read_text().splitlines()[0]
+                port = wait(lambda: port_file.exists() and next(iter(port_file.read_text().splitlines()), None))
                 target = wait(lambda: next(item for item in httpx.get(f"http://127.0.0.1:{port}/json/list").json()
                                            if item["type"] == "page"))
                 page = CDP(target["webSocketDebuggerUrl"])
@@ -409,6 +429,10 @@ if __name__ == "__main__":
                         page.close()
                 if process.poll() is None:
                     process.terminate()
-                process.wait(timeout=10)
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
                 server.should_exit = True
                 thread.join(timeout=7)
