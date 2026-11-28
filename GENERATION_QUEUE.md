@@ -6,7 +6,7 @@ Trong **Muse → Cài đặt nâng cao**, đặt thời gian chờ riêng. API c
 
 Bản ghi tác vụ giữ tài khoản, lần thử, lỗi gốc, thời gian chờ, thời gian tạo và tổng thời gian. Nếu hết thời gian thử lại, hệ thống giữ lỗi gốc. Bản ghi cũ tiếp tục hiển thị thời lượng đã lưu.
 
-Video luôn chạy bất đồng bộ. Với ảnh có thể chạy lâu hơn thời gian chờ HTTP của client, dùng `/v1/images/tasks` và kiểm tra trạng thái bằng mã tác vụ. Nếu lần kiểm tra bị timeout, hãy tiếp tục dùng mã cũ để tránh tạo trùng. Nếu POST video hoặc ảnh bất đồng bộ mất phản hồi, gửi lại cùng nội dung và `Idempotency-Key` đã dùng để lấy mã tác vụ đã tiếp nhận.
+Video luôn chạy bất đồng bộ. Với ảnh có thể chạy lâu hơn thời gian chờ HTTP của client, dùng `/v1/images/tasks` và kiểm tra trạng thái bằng mã tác vụ. Nếu lần kiểm tra bị timeout, tiếp tục dùng mã cũ. Nếu POST mất phản hồi trước khi nhận mã tác vụ, tra biên nhận bằng `GET /tasks/by-request` trên Base URL đã dùng và gửi kèm `Idempotency-Key` gốc. [Hướng dẫn theo dõi tác vụ](MAC2API_API_CONTRACT_TESTS.md#theo-dõi-tác-vụ-mất-kết-nối-và-hủy)
 
 Sau khi khởi động lại, tác vụ ảnh và video còn trong hàng chờ có dữ liệu tạm được xử lý tiếp với cùng mã tác vụ và tính cả thời gian đã chờ. Quyền tài khoản được kiểm tra lại trước khi gửi. mac2API lưu nội dung và tệp tham chiếu tạm trong `data/pending-media/` cho yêu cầu quản trị và khóa người dùng có bật lưu nội dung. Tệp tạm được dọn khi tác vụ bắt đầu hoặc bị hủy.
 

@@ -81,66 +81,7 @@ Gọi API quản trị bằng `Authorization: Bearer <key>`. `PATCH /admin/accou
 
 ## Gọi API
 
-Các endpoint được bảo vệ cần `Authorization: Bearer <key>`. Trong các ví dụ, đặt `BASE_URL` và `MUSE2API_KEY` trong terminal.
-
-```bash
-BASE_URL=http://127.0.0.1:18610
-```
-
-| Tác vụ | Endpoint |
-|---|---|
-| Liệt kê model | `GET /v1/models` |
-| Chat và tạo mã | `POST /v1/chat/completions`, `POST /v1/responses` |
-| Tạo ảnh | `POST /v1/images/generations` |
-| Chỉnh sửa ảnh | `POST /v1/images/edits` |
-| Ảnh bất đồng bộ | `POST /v1/images/tasks`, `GET /v1/images/tasks/{task_id}` |
-| Video bất đồng bộ | `POST /v1/videos`, `GET /v1/videos/{task_id}` |
-| Tải tệp kết quả | `GET /v1/media/{name}` |
-
-MacFlow dùng khóa `m2c_…` để đọc `GET /v1/capabilities`, tra cứu `GET /v1/tasks/by-request` bằng UUID đã lưu và hủy tác vụ chờ qua các tuyến `/cancel`. Xem [hợp đồng API và mẫu HTTP đã kiểm thử](MAC2API_API_CONTRACT_TESTS.md).
-
-Model chính gồm `muse-spark`, `muse-image` và `muse-video`. Bí danh như `gpt-4o`, `claude-sonnet-4` và `gemini-2.5-pro` được ánh xạ sang Muse. Với chat, thêm `"stream":true` để nhận SSE. Khả năng gọi công cụ phụ thuộc vào phản hồi Muse.
-
-### Chat
-
-```bash
-curl "$BASE_URL/v1/chat/completions" \
-  -H "Authorization: Bearer $MUSE2API_KEY" \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"muse-spark","messages":[{"role":"user","content":"Giải thích cách sắp xếp nhanh bằng Python."}],"stream":false}'
-```
-
-### Tạo hoặc chỉnh sửa ảnh
-
-```bash
-curl "$BASE_URL/v1/images/generations" \
-  -H "Authorization: Bearer $MUSE2API_KEY" \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"muse-image","prompt":"Một chú chó Shiba đeo mũ phi hành gia","size":"16:9","response_format":"url"}'
-```
-
-Dùng `response_format: b64_json` để nhận dữ liệu base64. Dùng `images` theo thứ tự mong muốn khi có nhiều tham chiếu. Với endpoint chỉnh sửa, có thể lặp trường multipart `image`:
-
-```bash
-curl "$BASE_URL/v1/images/edits" \
-  -H "Authorization: Bearer $MUSE2API_KEY" \
-  -F 'prompt=Phối hai ảnh tham chiếu thành ảnh mới' \
-  -F 'image=@subject.png' -F 'image=@style.png'
-```
-
-### Video
-
-```bash
-curl "$BASE_URL/v1/videos" \
-  -H "Authorization: Bearer $MUSE2API_KEY" \
-  -H 'Content-Type: application/json' \
-  -d '{"prompt":"Lá phong rơi dưới ánh nắng","duration":5,"size":"16:9"}'
-
-curl "$BASE_URL/v1/videos/<task_id>" \
-  -H "Authorization: Bearer $MUSE2API_KEY"
-```
-
-Dùng `images` để gửi ảnh tham chiếu cho video. Ảnh đầu tiên là tham chiếu chính. Thời lượng thực tế do Muse quyết định. Khi tác vụ thành công, đọc `result.url`. Nếu mất kết nối trong lúc kiểm tra tiến độ, tiếp tục dùng mã tác vụ đã có. Xem [quy tắc hàng đợi](GENERATION_QUEUE.md).
+Mở **API đầu ra** trong trang Muse, ChatGPT hoặc Gemini để lấy Base URL và tạo khóa người dùng `m2c_…`. Xem [tài liệu API mac2API v1](MAC2API_API_CONTRACT_TESTS.md) để kiểm tra kết nối, thử chat, gửi ảnh hoặc video và tải tệp kết quả. Dùng cùng tài liệu khi nhập các nhà cung cấp media vào Toonflow hoặc MacFlow.
 
 ## Ngôn ngữ chỉ dẫn Muse
 
@@ -260,11 +201,11 @@ Các model dạng `openai/<model>` và `gemini/<model>` dành cho ứng dụng �
 
 Có thể cấp khóa qua `OPENAI_API_KEY` hoặc `GEMINI_API_KEY`. Khóa từ môi trường được ưu tiên. Model mặc định có thể đặt qua `OPENAI_MODEL` hoặc `GEMINI_MODEL`. Khóa API đã cấu hình ở các bản trước được lưu tại `data/chat-providers.json` và chỉ ghi xuống máy chủ. Hãy bảo vệ thư mục dữ liệu và bản sao lưu. Khi nhập khóa từ xa, dùng HTTPS hoặc đường hầm SSH.
 
-Cả hai cùng dùng `POST /v1/chat/completions` với API Key của **MUSE2API** trong header. Thêm tiền tố vào tên model để chọn nhà cung cấp. Ví dụ `openai/gpt-4.1-mini` hoặc `gemini/gemini-2.5-flash`. Thay model theo danh sách tài khoản của bạn. Bật `"stream":true` để nhận SSE. `GET /v1/models` hiển thị model mặc định của các nhà cung cấp đã cấu hình.
+Cả hai dùng `POST /v1/chat/completions` với khóa mac2API. Đặt `MAC2API_ORIGIN` và `MAC2API_KEY` như trong [ví dụ kiểm tra kết nối](MAC2API_API_CONTRACT_TESTS.md#kiểm-tra-kết-nối). Thêm tiền tố vào tên model để chọn nhà cung cấp. Ví dụ `openai/gpt-4.1-mini` hoặc `gemini/gemini-2.5-flash`. Thay model theo danh sách tài khoản của bạn. Bật `"stream":true` để nhận SSE. `GET /v1/models` hiển thị model mặc định của các nhà cung cấp đã cấu hình.
 
 ```bash
-curl -N "$BASE_URL/v1/chat/completions" \
-  -H "Authorization: Bearer $MUSE2API_KEY" \
+curl -N "$MAC2API_ORIGIN/v1/chat/completions" \
+  -H "Authorization: Bearer $MAC2API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"model":"openai/gpt-4.1-mini","messages":[{"role":"user","content":"Xin chào!"}],"stream":true}'
 ```
@@ -294,7 +235,7 @@ Trình duyệt và dịch vụ cần truy cập cùng tệp tham chiếu. Tệp 
 
 ### Tạo ảnh qua CDN hoặc proxy ngược
 
-Với các yêu cầu dài, gửi `POST /v1/images/tasks` và kiểm tra `GET /v1/images/tasks/{id}` bằng mã trả về trong HTTP 202. Cả `POST /v1/images/tasks` và `POST /v1/videos` hỗ trợ `Idempotency-Key`. Tạo một giá trị riêng cho mỗi tác vụ mới, dùng lại giá trị và dữ liệu đó khi gửi lại yêu cầu bị mất kết nối. API trả mã tác vụ cũ nếu bản ghi còn trong lịch sử, kể cả sau khi khởi động lại. Dùng cùng giá trị với dữ liệu khác trả HTTP 409. Khi đạt giới hạn hàng đợi, API trả HTTP 429. Khi trạng thái là `completed`, đọc `url` hoặc `data[0]`. Khi trạng thái là `failed`, xem `error`.
+Dùng `POST /images/tasks` trên Base URL của dịch vụ để nhận mã tác vụ ngay. Khi mất phản hồi POST, tra biên nhận bằng `GET /tasks/by-request` với UUID đã gửi. [Theo dõi tác vụ, mất kết nối và hủy](MAC2API_API_CONTRACT_TESTS.md#theo-dõi-tác-vụ-mất-kết-nối-và-hủy)
 
 ### Chẩn đoán phiên Muse
 
