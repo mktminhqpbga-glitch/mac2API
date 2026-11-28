@@ -1,5 +1,9 @@
 # Nhật ký và bàn giao mac2API
 
+## 1.6.32
+
+- Tiện ích Chrome/Edge 1.0.14 nhận diện phiên ChatGPT qua tài khoản hoặc lịch sử trò chuyện trong thanh bên. Khi trang đang hiện nút đăng nhập, tiện ích báo rõ cần đăng nhập trong Chrome.
+
 ## 1.6.31
 
 - Nút **Lưu** xác minh khóa quản trị trước khi lưu. Bảng điều khiển hiển thị lỗi khi khóa bị từ chối hoặc mất kết nối.

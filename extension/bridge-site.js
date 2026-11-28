@@ -4,7 +4,25 @@ const bridgeSites = {
     url: 'https://chatgpt.com/',
     origin: 'https://chatgpt.com',
     path: '/',
-    account: '[data-testid="accounts-profile-button"], [data-testid="profile-button"], [data-testid="profile-menu-button"], [data-testid="profile-menu-trigger"]',
+    account: [
+      '[data-testid="accounts-profile-button"]',
+      '[data-testid="profile-button"]',
+      '[data-testid="profile-menu-button"]',
+      '[data-testid="profile-menu-trigger"]',
+      'button[aria-label="Open profile menu" i]',
+      'button[aria-label="Mở trình đơn hồ sơ" i]',
+      'button[aria-label="Mở menu hồ sơ" i]',
+    ].join(', '),
+    history: [
+      'a[data-testid^="history-item-"][href]',
+      ':is(nav, #sidebar, #stage-slideover-sidebar) a[href]',
+    ].join(', '),
+    signIn: [
+      '[data-testid="login-button"]',
+      '[data-testid="signup-button"]',
+      'header a[href^="/auth/login"]',
+      'header a[href^="/auth/signup"]',
+    ].join(', '),
     composer: [
       '#prompt-textarea',
       '[data-testid="prompt-textarea"][contenteditable="true"]',
@@ -54,8 +72,15 @@ async function bridgeSiteAction(site, action, prompt) {
     }
   }
   // A collapsed sidebar can hide the account control in a signed-in profile.
-  const signedIn = Boolean(document.querySelector(site.account));
-  if (action === 'verify') return {signedIn, composerReady: Boolean(editor)};
+  const signIn = site.signIn && [...document.querySelectorAll(site.signIn)].some(element =>
+    visible(element) && getComputedStyle(element).visibility === 'visible'
+  );
+  const history = !signIn && site.history && [...document.querySelectorAll(site.history)].some(link =>
+    visible(link) && link.origin === site.origin &&
+    /^\/c\/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\/?$/i.test(link.pathname)
+  );
+  const signedIn = !signIn && Boolean(document.querySelector(site.account) || history);
+  if (action === 'verify') return {signedIn, composerReady: Boolean(editor), ...(signIn ? {signedOut: true} : {})};
   const replies = [...document.querySelectorAll(site.reply)].filter(element =>
     visible(element) && !element.parentElement?.closest(site.reply)
   );

@@ -24,7 +24,7 @@ function fixture({incognito = false, tab = true, stores, cookies, locale = null,
     crypto: {getRandomValues: bytes => bytes.fill(0xab)},
     chrome: {
       runtime: {
-        getManifest: () => ({version: '1.0.13'}),
+        getManifest: () => ({version: '1.0.14'}),
         sendMessage: async message => {calls.messages.push(message); return {ok: true};},
       },
       storage: {local: {get: async () => ({}), set: async () => {}}},
@@ -160,7 +160,7 @@ console.log('PASS: connection diagnostics and strict confirmation before showing
   assert.equal(f.calls.uploads.length, 1);
   assert.equal(f.calls.uploads[0].url, `https://test.invalid/admin/web-providers/${provider}/link`);
   assert.equal(f.calls.uploads[0].body.marker, 'ab'.repeat(16));
-  assert.equal(f.calls.uploads[0].body.extension_version, '1.0.13');
+  assert.equal(f.calls.uploads[0].body.extension_version, '1.0.14');
   assert.match(f.element('log').innerHTML, /Đã xác minh tab/);
 }
 for (const url of ['https://gemini.google.com.example/', 'https://chatgpt.com/']) {

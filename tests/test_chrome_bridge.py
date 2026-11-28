@@ -105,6 +105,26 @@ def serve_job(api, browser, origin, pool, app, auth, bridge, prefix, provider, k
             page.js("document.querySelector(site.account).hidden = true")
             verified = page.js(call.format("verify"), await_promise=True)
             assert verified["signedIn"] and verified["composerReady"]
+            if provider == "chatgpt":
+                page.js("""document.querySelector(site.account).remove();
+                    const link = document.createElement('a');
+                    link.href = '/c/67c630c8-6595-800d-bbe4-74760c55e612';
+                    link.textContent = 'Cuộc trò chuyện trước';
+                    document.body.append(link);
+                    window.fixtureHistory = link;""")
+                assert page.js(call.format("verify"), await_promise=True) == {
+                    "signedIn": False, "composerReady": True}
+                page.js("""const sidebar = document.createElement('nav');
+                    sidebar.append(window.fixtureHistory);
+                    document.body.prepend(sidebar);""")
+                assert page.js(call.format("verify"), await_promise=True) == {
+                    "signedIn": True, "composerReady": True}
+                page.js("""document.body.insertAdjacentHTML('afterbegin',
+                    '<button data-testid="login-button">Đăng nhập</button>');""")
+                assert page.js(call.format("verify"), await_promise=True) == {
+                    "signedIn": False, "composerReady": True, "signedOut": True}
+                assert page.js(call.format("prepare"), await_promise=True) == {"signedIn": False}
+                page.js("""document.querySelector('[data-testid="login-button"]').remove()""")
             page.js("document.querySelector(site.composer).innerText = 'previous draft'")
             assert page.js(call.format("prepare"), await_promise=True)["dirty"]
             page.js("document.querySelector(site.composer).innerText = ''")

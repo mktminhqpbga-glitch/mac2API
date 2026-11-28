@@ -71,10 +71,15 @@ async function verifyTab(tabId, site, {requireComposer = true} = {}) {
     if (status?.signedIn && (!requireComposer || status.composerReady)) return tab;
     await sleep(250);
   } while (Date.now() < deadline);
+  if (status?.signedOut) {
+    throw new Error('Tab ChatGPT đang hiện nút đăng nhập. Hãy đăng nhập trong Chrome này rồi kết nối lại.');
+  }
   if (requireComposer && status?.signedIn) {
     throw new Error('Đã xác minh phiên đăng nhập. Tiện ích chưa nhận diện được ô nhập. Hãy tải lại tab AI rồi kiểm tra lại.');
   }
-  throw new Error('Chưa xác minh được đăng nhập. Hãy kiểm tra hồ sơ Chrome và mở một cuộc trò chuyện mới.');
+  throw new Error(site.origin === bridgeSites.chatgpt.origin
+    ? 'Chưa xác minh được đăng nhập ChatGPT. Hãy mở thanh bên để thấy ảnh tài khoản hoặc lịch sử trò chuyện rồi thử lại.'
+    : 'Chưa xác minh được đăng nhập. Hãy kiểm tra hồ sơ Chrome và mở một cuộc trò chuyện mới.');
 }
 
 function jobAction(connection, id, action, report) {

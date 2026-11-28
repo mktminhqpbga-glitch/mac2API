@@ -126,3 +126,8 @@ test('ChatGPT linking rejects a signed-out tab even with a usable composer', asy
   const states = Array.from({length: 50}, () => ({signedIn: false, composerReady: true}));
   await assert.rejects(runFixture(true, states, {provider: 'chatgpt', pair: true}), /Chưa xác minh được đăng nhập/);
 });
+
+test('ChatGPT reports the sign-in prompt when it is present', async () => {
+  const states = Array.from({length: 50}, () => ({signedIn: false, composerReady: true, signedOut: true}));
+  await assert.rejects(runFixture(true, states, {provider: 'chatgpt', pair: true}), /đang hiện nút đăng nhập/);
+});
