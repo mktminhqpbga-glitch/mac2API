@@ -368,11 +368,11 @@
       <span class="pill" id="pAcc"><span class="led"></span>账号 <b>—</b></span>
       <span class="pill" id="pBr"><span class="led"></span>Muse 浏览器 <b>—</b></span>
       <span class="live" id="live"><span class="led"></span>自动刷新</span>
-      <span class="keybox" id="keyBox">
+      <form class="keybox" id="keyBox" onsubmit="event.preventDefault(); saveKey()">
         <span class="lbl" id="keyLbl">Khóa quản trị</span>
-        <input id="key" type="password" aria-label="Khóa quản trị" autocomplete="off">
-        <button class="ghost mini" onclick="saveKey()">保存</button>
-      </span>
+        <input id="key" type="password" aria-label="Khóa quản trị" aria-describedby="authFeedback" autocomplete="off">
+        <button class="ghost mini" id="saveAdminKey" type="submit">保存</button>
+      </form>
       <select id="langSel" class="langsel" data-no-i18n onchange="setLang(this.value)" title="Ngôn ngữ / Language / 语言">
         <option value="vi">Tiếng Việt</option>
         <option value="zh">中文</option>
@@ -452,6 +452,7 @@
       <p class="auth-help hint" data-ui="loginHelp">Dán khóa quản trị ở phía trên và bấm Lưu. Khóa được giữ trong phiên của tab này.</p>
     </div>
   </div>
+  <p class="hint status-text" id="authFeedback" role="status" hidden></p>
 
   <div class="page-heading">
     <div><h1 id="pageTitle" tabindex="-1" data-ui="overview">Tổng quan</h1><p class="hint" id="pageContext"></p></div>
@@ -2621,17 +2622,61 @@ function setAuth(ok){
   }
 }
 
-function saveKey(){
-  const next = $('key').value.trim();
-  authRevision++;
-  if (next !== KEY) clearAdminView();
-  KEY = next;
-  const saved = writeStored('sessionStorage', KEY_STORE, KEY);
-  if (!KEY){ setAuth(false); toast('已清除 API Key', 'warn'); return; }
-  if (!saved) toast('Trình duyệt chỉ giữ khóa đến khi tải lại trang.', 'warn');
-  authOK = null;
-  refreshDashboardStatus();
-  loadActiveTab();
+async function saveKey(){
+  const keyField = $('key');
+  const save = $('saveAdminKey');
+  if (save.disabled) return;
+  const next = keyField.value.trim();
+  const feedback = $('authFeedback');
+  feedback.hidden = !next;
+  feedback.dataset.error = 'false';
+  if (!next) {
+    authRevision++;
+    KEY = '';
+    writeStored('sessionStorage', KEY_STORE, '');
+    setAuth(false);
+    return;
+  }
+  feedback.textContent = ['Đang xác minh khóa quản trị…', 'Checking the administrator key…', '正在验证管理密钥…'][uiLang];
+  save.disabled = keyField.readOnly = true;
+  try {
+    const verification = await api('/admin/session', {authKey:next, cache:'no-store', timeout:8000});
+    if (keyField.value.trim() !== next) return;
+    if (verification !== null) throw new Error([
+      'mac2API chưa xác nhận được khóa. Hãy tải lại trang rồi thử lại.',
+      'mac2API did not confirm the key. Reload this page and try again.',
+      'mac2API 未确认密钥。请重新加载页面再试。',
+    ][uiLang]);
+    authRevision++;
+    if (next !== KEY) clearAdminView();
+    KEY = next;
+    const saved = writeStored('sessionStorage', KEY_STORE, KEY);
+    setAuth(true);
+    feedback.hidden = saved;
+    feedback.textContent = saved ? '' : ['Đã đăng nhập. Trình duyệt chỉ giữ khóa đến khi tải lại trang.',
+      'Signed in. Your browser can keep the key until this page reloads.', '已登录。浏览器只能保留密钥到页面重新加载。'][uiLang];
+    refreshDashboardStatus();
+    loadActiveTab();
+  } catch (error) {
+    if (keyField.value.trim() !== next) return;
+    feedback.dataset.error = 'true';
+    if (error.status === 401) {
+      if (next === KEY) {
+        KEY = '';
+        writeStored('sessionStorage', KEY_STORE, '');
+        setAuth(false);
+      }
+      feedback.textContent = [
+        'Khóa này không khớp với mac2API đang chạy. Hãy dùng khóa quản trị từ thư mục dữ liệu đang chạy rồi bấm Lưu.',
+        'This key was rejected. Use the administrator key from the running mac2API installation and try again.',
+        '此密钥未通过验证。请使用当前运行的 mac2API 数据目录中的管理密钥重试。',
+      ][uiLang];
+    } else {
+      feedback.textContent = error.message;
+    }
+  } finally {
+    save.disabled = keyField.readOnly = false;
+  }
 }
 
 function toast(msg, kind){
@@ -2958,9 +3003,6 @@ function openMuseExtension(){
   $('museExtension').scrollIntoView({block:'nearest'});
 }
 $('quickMuseImport').onclick = openMuseExtension;
-$('key').addEventListener('keydown', event => {
-  if (event.key === 'Enter') saveKey();
-});
 $('pageRefresh').onclick = async () => {
   const button = $('pageRefresh');
   button.disabled = true;
@@ -4397,10 +4439,12 @@ async function rotateKey(){
   if (!confirm('重新生成 API Key？\n\n旧 Key 会立即失效，已经接入的下游项目必须同步更新，否则会报 401。')) return;
   try{
     const d = await api('/admin/apikey/rotate', {method:'POST'});
+    authRevision++;
     realKey = d.api_key;
     KEY = d.api_key;
     writeStored('sessionStorage', KEY_STORE, KEY);
     $('key').value = KEY;
+    $('authFeedback').hidden = true;
     keyShown = true; renderKey();
     $('cmdText').textContent = buildCmd($('inBase').value);
     toast('已生成新 Key 并立即生效，本页已自动更新', 'ok');

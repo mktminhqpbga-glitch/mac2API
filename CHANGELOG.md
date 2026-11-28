@@ -1,5 +1,10 @@
 # Nhật ký và bàn giao mac2API
 
+## 1.6.31
+
+- Nút **Lưu** xác minh khóa quản trị trước khi lưu. Bảng điều khiển hiển thị lỗi khi khóa bị từ chối hoặc mất kết nối.
+- Trên Mac, lệnh `bash start-mac2api.command --copy-admin-key` sao chép khóa sau khi xác minh với ứng dụng đang chạy.
+
 ## 1.6.30
 
 - Đọc commit mới nhất từ Git khi kiểm tra cập nhật. Nếu GitHub giới hạn API, dùng lịch sử Git để xác minh bản mới.

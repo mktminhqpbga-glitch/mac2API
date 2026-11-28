@@ -1,6 +1,6 @@
 # MUSE2API
 
-Bản tổng hợp mac2API 1.6.30 gồm mã máy chủ, bảng quản trị, tiện ích Chrome/Edge 1.0.13 và các adapter MacFlow/Toonflow. [Nhật ký phiên bản](CHANGELOG.md)
+Bản tổng hợp mac2API 1.6.31 gồm mã máy chủ, bảng quản trị, tiện ích Chrome/Edge 1.0.13 và các adapter MacFlow/Toonflow. [Nhật ký phiên bản](CHANGELOG.md)
 
 MUSE2API cung cấp API kiểu OpenAI để gọi các tính năng chat, tạo ảnh và tạo video của [Muse.ai](https://muse.ai/). Máy chủ Python chạy FastAPI và điều khiển Chromium qua Chrome DevTools Protocol (CDP). Muse.ai thực hiện việc tạo nội dung. Dịch vụ quản lý cookie, hàng đợi, tài khoản, proxy và kết quả tải về.
 
@@ -17,6 +17,8 @@ bash start-mac2api.command
 Mở địa chỉ Terminal in ra, mặc định là [http://127.0.0.1:18610/admin](http://127.0.0.1:18610/admin). Nếu cổng đang được dùng, chờ tác vụ của bản cũ kết thúc rồi dừng tiến trình đó trước khi chạy lại.
 
 Nếu bạn để trống khóa quản trị, mở tệp `data/admin-key.json` tại đường dẫn Terminal in ra và sao chép giá trị `key`. Khóa tự tạo và khóa đã đổi trong bảng quản trị được lưu trong thư mục dữ liệu để dùng lại sau khi khởi động.
+
+Khi mac2API đang chạy, mở tab Terminal khác trong cùng thư mục và chạy `bash start-mac2api.command --copy-admin-key` để xác minh và sao chép khóa. Nếu đã đặt `MUSE2API_HOME` lúc khởi động, dùng cùng giá trị khi chạy lệnh này.
 
 Để dùng lại cấu hình và dữ liệu, đặt `MUSE2API_HOME` thành thư mục chứa `.env` và `data/` của bản cũ khi chạy lệnh khởi động. Bảng quản trị vẫn được đọc từ thư mục mã mới.
 

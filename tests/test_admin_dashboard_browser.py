@@ -41,7 +41,29 @@ def check_dashboard(app, page, url):
         "window.__errors=[];window.addEventListener('error',e=>__errors.push(e.message));window.confirm=()=>true;"})
     page.send("Page.navigate", {"url": url + "/admin"})
     wait(lambda: page.js("typeof goTab === 'function' && authOK === false"))
-    page.js("$('key').value='ui-fixture-only';saveKey()")
+    page.js("goTab('openai');$('key').value='wrong-fixture';$('saveAdminKey').click()")
+    wait(lambda: page.js("$('authFeedback').textContent.includes('không khớp') && !$('saveAdminKey').disabled"))
+    assert page.js("!$('authFeedback').hidden && !$('tab-openai').querySelector('[data-chrome-panel]').getClientRects().length")
+    assert page.js("!sessionStorage.getItem('muse2api_key')")
+
+    page.js("""(() => {
+      const fetchNormally = window.fetch;
+      window.fetch = (path, options) => {
+        window.fetch = fetchNormally;
+        return path === '/admin/session' ? Promise.reject(new TypeError('offline')) : fetchNormally(path, options);
+      };
+      $('key').value='ui-fixture-only';
+      $('keyBox').requestSubmit();
+    })()""")
+    wait(lambda: page.js("$('authFeedback').textContent.includes('Mất kết nối') && !$('saveAdminKey').disabled"))
+    assert page.js("authOK === false && !sessionStorage.getItem('muse2api_key')")
+    page.js("$('keyBox').requestSubmit()")
+    wait(lambda: page.js("authOK === true && $('authFeedback').hidden && !$('saveAdminKey').disabled"))
+    assert page.js("sessionStorage.getItem('muse2api_key') === 'ui-fixture-only'")
+    page.js("$('key').value='wrong-fixture';$('saveAdminKey').click()")
+    wait(lambda: page.js("$('authFeedback').textContent.includes('không khớp') && !$('saveAdminKey').disabled"))
+    assert page.js("authOK === true && sessionStorage.getItem('muse2api_key') === 'ui-fixture-only'")
+    page.js("$('key').value='ui-fixture-only';goTab('overview')")
     wait(lambda: page.js("$('overviewProviders').childElementCount === 5"))
     assert page.js("$('overviewBase').value.endsWith('/v1')")
     assert page.js("!$('overviewBase').getClientRects().length")

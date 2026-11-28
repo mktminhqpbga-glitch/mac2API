@@ -4195,6 +4195,11 @@ def admin_overview(_=Depends(auth), days: Literal["1", "7", "30"] = "1"):
     }, headers=NO_STORE)
 
 
+@app.get("/admin/session", status_code=204)
+def check_admin_session(_=Depends(auth)):
+    return Response(status_code=204, headers=NO_STORE)
+
+
 @app.get("/admin/status")
 def admin_status(_=Depends(auth), compact: bool = False):
     base = _public_base()

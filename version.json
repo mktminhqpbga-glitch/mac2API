@@ -1,9 +1,10 @@
 {
-  "version": "1.6.30",
+  "version": "1.6.31",
   "source_commit": "$Format:%H$",
   "updated_at": "2026-11-28",
   "repo": "https://github.com/mktminhqpbga-glitch/mac2API",
   "highlights": [
+    "管理密钥在保存之前验证，登录失败时显示原因。",
     "手动检查更新时读取 Git 分支最新提交；安装包保留提交标识。",
     "ChatGPT 和 Gemini 的页面顶部现在可添加独立浏览器账号，扩展和代理设置可按需展开。",
     "刷新测试页面后可继续查看图片和视频任务。文本响应和事件流采用时间与大小限制。",
@@ -18,6 +19,7 @@
     "手动安装的扩展可在每个已安装的浏览器个人资料中重新加载。"
   ],
   "highlights_en": [
+    "Administrator keys are verified before saving, with clear feedback if sign-in fails.",
     "Update checks read the current Git branch tip, and source packages carry their commit ID.",
     "Add a standalone browser profile from the top of the ChatGPT and Gemini pages. Extension and proxy settings are available in expandable sections.",
     "Resume image and video tests after reloading. Text responses and streams respect time and size limits.",
@@ -32,6 +34,7 @@
     "Reload the unpacked extension in every browser profile where it is installed."
   ],
   "highlights_vi": [
+    "Xác minh khóa quản trị trước khi lưu và báo rõ lý do nếu chưa đăng nhập được.",
     "Kiểm tra cập nhật lấy bản mới từ Git. Gói tải về giữ mã phiên bản để cập nhật các lần sau.",
     "Thêm hồ sơ chạy ngầm ngay đầu trang ChatGPT và Gemini. Tiện ích và proxy nằm trong các mục mở rộng.",
     "Theo dõi lại ảnh và video sau khi tải lại trang. Phản hồi văn bản có giới hạn thời gian và dung lượng.",
