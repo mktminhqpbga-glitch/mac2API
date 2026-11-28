@@ -1,6 +1,6 @@
 # MUSE2API
 
-Bản tổng hợp mac2API 1.6.25 gồm mã máy chủ, bảng quản trị, tiện ích Chrome/Edge 1.0.13 và các adapter MacFlow/Toonflow. [Nhật ký phiên bản](CHANGELOG.md)
+Bản tổng hợp mac2API 1.6.26 gồm mã máy chủ, bảng quản trị, tiện ích Chrome/Edge 1.0.13 và các adapter MacFlow/Toonflow. [Nhật ký phiên bản](CHANGELOG.md)
 
 MUSE2API cung cấp API kiểu OpenAI để gọi các tính năng chat, tạo ảnh và tạo video của [Muse.ai](https://muse.ai/). Máy chủ Python chạy FastAPI và điều khiển Chromium qua Chrome DevTools Protocol (CDP). Muse.ai thực hiện việc tạo nội dung. Dịch vụ quản lý cookie, hàng đợi, tài khoản, proxy và kết quả tải về.
 
@@ -203,6 +203,15 @@ Trong mac2API, mở **ChatGPT** hoặc **Gemini Web** và chọn cách kết n�
 | ChatGPT | `/chatgpt/v1` | `chatgpt/text` | `chatgpt/image` |
 | Gemini Web | `/gemini/v1` | `gemini-web/text` | `gemini-web/image` |
 
+### Dùng ChatGPT2API hoặc Gemini Web To API qua HTTP
+
+1. Chạy dịch vụ bạn muốn dùng và thiết lập tài khoản bên đó. [ChatGPT2API](https://github.com/basketikun/chatgpt2api) · [Gemini Web To API](https://github.com/ntthanh2603/gemini-web-to-api)
+2. Trong mac2API, mở mục **ChatGPT** hoặc **Gemini** và chọn đúng tên dịch vụ trong **Kết nối mặc định**. Ví dụ cho hai dịch vụ chạy trên cùng máy với mac2API là `http://127.0.0.1:3000/v1` và `http://127.0.0.1:4981/openai/v1`. Nếu dùng máy khác, điền địa chỉ mà máy chạy mac2API truy cập được.
+3. Điền khóa gọi ChatGPT2API. Với Gemini Web To API, chỉ điền khóa khi đầu ra HTTP của dịch vụ được bảo vệ bằng khóa đó. Bấm **Lưu và kiểm tra kết nối** để xác minh hai mô hình trong danh sách và chọn dịch vụ làm mặc định.
+4. Dùng **Thử API** để thử văn bản hoặc ảnh. Với khóa MacFlow đã giới hạn theo tài khoản, dùng **Sửa** trong mục **Quyền sử dụng** để cấp quyền cho dịch vụ vừa kết nối.
+
+Kết nối HTTP dùng đường mạng trực tiếp của máy chạy mac2API. Mục **Cài đặt mô hình** cho phép đổi mã mô hình nếu kho tài khoản của dịch vụ dùng tên khác. Tiện ích Chrome xuất hiện khi chọn cách kết nối qua trình duyệt.
+
 ### Dùng tài khoản web đã đăng nhập
 
 1. Trong mục **ChatGPT** hoặc **Gemini**, chọn **Tải tiện ích Chrome** rồi cài hoặc tải lại tiện ích **1.0.13**. Ba mục dùng chung một tiện ích. Lưu cách kết nối mặc định **Tài khoản web (Chrome hoặc hồ sơ riêng)**.
@@ -217,7 +226,7 @@ Tiện ích mở tab riêng cho mỗi tác vụ, gửi vào ô chat của phiên
 2. Vào **ChatGPT** hoặc **Gemini Web**. Chọn **API chính thức**, bấm **Lưu cách kết nối** rồi **Kiểm tra mô hình văn bản và ảnh**. Mô hình ảnh mặc định là `gpt-image-1.5` cho OpenAI và `gemini-2.5-flash-image` cho Google Gemini. Có thể đổi trong **Cài đặt nâng cao**.
 3. Trong **Khóa người dùng**, cấp quyền **OpenAI API** hoặc **Google Gemini API**. Lượt gọi qua API chính thức được tính theo giá của nhà cung cấp API.
 
-Cách kết nối mặc định áp dụng cho quản trị viên và khóa chỉ phân quyền theo nhà cung cấp. Khóa đã chọn tài khoản cụ thể chỉ dùng tài khoản được cấp. Nếu một khóa có nhiều loại kết nối, mac2API ưu tiên lựa chọn mặc định khi được cấp quyền. Cấu hình ChatGPT2API và Gemini-Web2API đã lưu có thể tiếp tục dùng qua lựa chọn **Dịch vụ riêng đã lưu**.
+Cách kết nối mặc định áp dụng cho quản trị viên và khóa chỉ phân quyền theo nhà cung cấp. Khóa đã chọn tài khoản cụ thể chỉ dùng tài khoản được cấp. Nếu một khóa có nhiều loại kết nối, mac2API ưu tiên lựa chọn mặc định khi được cấp quyền.
 
 ### Kết nối qua Chrome DevTools
 

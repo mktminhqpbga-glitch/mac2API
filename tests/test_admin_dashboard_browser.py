@@ -98,7 +98,7 @@ def check_dashboard(app, page, url):
         aid = app.chrome_bridge.pair(provider, "c" * 32, "Hồ sơ thử proxy").split(".")[0]
         page.js(f"goTab('{tab}')")
         panel = f"$('tab-{tab}')"
-        assert page.js(f"""Boolean({panel}.querySelector('[data-web-extension] a[download]').getClientRects().length)""")
+        wait(lambda: page.js(f"""Boolean({panel}.querySelector('[data-web-extension] a[download]').getClientRects().length)"""))
         wait(lambda: page.js(f"{panel}.querySelector('[data-web-extension-accounts]').textContent.includes('Hồ sơ thử proxy')"))
         page.js(f"""[...{panel}.querySelectorAll('[data-web-extension-accounts] button')]
             .find(button => button.textContent === 'Proxy').click()""")

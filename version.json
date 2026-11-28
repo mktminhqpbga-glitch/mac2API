@@ -1,8 +1,9 @@
 {
-  "version": "1.6.25",
+  "version": "1.6.26",
   "updated_at": "2026-11-28",
   "repo": "https://github.com/mktminhqpbga-glitch/mac2API",
   "highlights": [
+    "可在管理页面保存并验证 ChatGPT2API 与 Gemini Web To API 的 HTTP 连接。",
     "综合版本包含管理页面、Chrome/Edge 扩展 1.0.13 和 MacFlow/Toonflow 适配器。",
     "Muse、ChatGPT 和 Gemini 提供独立 API 地址和客户密钥。可在各服务商的页面下载扩展。",
     "支持按账号配置代理。ChatGPT 和 Gemini 可使用独立 Chromium 账号或官方 API。",
@@ -12,6 +13,7 @@
     "手动安装的扩展可在每个已安装的浏览器个人资料中重新加载。"
   ],
   "highlights_en": [
+    "Configure and verify HTTP connections to ChatGPT2API and Gemini Web To API directly in the dashboard.",
     "This consolidated release includes the dashboard, Chrome/Edge extension 1.0.13, and MacFlow/Toonflow adapters.",
     "Muse, ChatGPT, and Gemini have dedicated API addresses and customer keys. Download the extension from each provider tab.",
     "Set per-account proxies. ChatGPT and Gemini can use their own Chromium profiles or official APIs.",
@@ -21,6 +23,7 @@
     "Reload the unpacked extension in every browser profile where it is installed."
   ],
   "highlights_vi": [
+    "Lưu và kiểm tra kết nối HTTP tới ChatGPT2API và Gemini Web To API ngay trong bảng quản trị.",
     "Bản tổng hợp gồm bảng quản trị, tiện ích Chrome/Edge 1.0.13 và các tệp tích hợp MacFlow/Toonflow.",
     "Muse, ChatGPT và Gemini có địa chỉ API và khóa riêng theo nhà cung cấp. Tải tiện ích ngay trong từng mục.",
     "Đặt proxy theo tài khoản. ChatGPT và Gemini hỗ trợ hồ sơ Chromium riêng hoặc API chính thức.",

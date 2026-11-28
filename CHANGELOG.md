@@ -1,5 +1,10 @@
 # Nhật ký và bàn giao mac2API
 
+## 1.6.26
+
+- Mục ChatGPT và Gemini có biểu mẫu kết nối HTTP tới ChatGPT2API và Gemini Web To API. Nút **Lưu và kiểm tra kết nối** xác minh cấu hình trước khi chọn làm mặc định.
+- Gemini Web To API dùng đường dẫn `/openai/v1` khi nhập địa chỉ gốc, mặc định mô hình `gemini-auto` và hỗ trợ dịch vụ chỉ cần địa chỉ. Giao diện dành cho Chrome xuất hiện khi chọn kết nối qua trình duyệt.
+
 ## 1.6.25
 
 - Bản tổng hợp các bản sửa đến 1.6.24, gồm bảng quản trị, mã máy chủ, tiện ích Chrome/Edge 1.0.13 và các tệp tích hợp MacFlow/Toonflow.

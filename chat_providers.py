@@ -161,7 +161,7 @@ async def compatible_chat(url, key, model, payload, timeout, *, public_model=Non
     try:
         request = client.build_request(
             "POST", url, json=body,
-            headers={"Authorization": f"Bearer {key}"},
+            headers=_bearer_headers(key),
         )
         response = await client.send(request, stream=True)
         _check_response(response, submitted=public_model is not None)
@@ -332,8 +332,8 @@ class ChatGPT2APISettings(WebGatewaySettings):
 
 
 class GeminiWeb2APISettings(WebGatewaySettings):
-    text_model: str = Field(default="gemini-4-hydrogen", pattern=MODEL_ID)
-    image_model: str = Field(default="gemini-3.1-flash-image", pattern=MODEL_ID)
+    text_model: str = Field(default="gemini-auto", pattern=MODEL_ID)
+    image_model: str = Field(default="gemini-auto", pattern=MODEL_ID)
     prefer: bool = False
 
 
@@ -343,6 +343,8 @@ class WebGateway:
         self.label = label
         self.provider = provider
         self.account_id = f"{name}:pool"
+        self.key_required = provider == "chatgpt"
+        self.root_path = "/openai/v1" if provider == "gemini-web" else "/v1"
         self.defaults = settings().model_dump()
         self.lock = Lock()
 
@@ -354,46 +356,63 @@ class WebGateway:
         saved = self._read()
         return {k: saved[k] for k in self.defaults if k != "api_key"} | {
             "has_key": bool(saved["api_key"]), "ready": bool(saved.get("verified")),
-            "configured": bool(saved["base_url"] and saved["api_key"]),
+            "configured": self._configured(saved),
         }
 
+    def _prepare(self, settings, saved):
+        base_url = _base_url(settings.base_url, self.label, root_path=self.root_path)
+        updated = settings.model_dump(exclude={"api_key"}) | {"base_url": base_url}
+        key = saved["api_key"] if base_url and base_url == saved["base_url"] else ""
+        if "api_key" in settings.model_fields_set:
+            key = settings.api_key.get_secret_value().strip() if settings.api_key and base_url else ""
+            if key and not re.fullmatch(r"[!-~]+", key):
+                raise HTTPException(400, f"Khóa {self.label} phải dùng ký tự ASCII và không chứa khoảng trắng.")
+        updated["api_key"] = key
+        updated["verified"] = bool(saved.get("verified")) and all(
+            saved[k] == updated[k] for k in ("base_url", "api_key", "text_model", "image_model")
+        )
+        return updated
+
     def save(self, settings):
-        base_url = _base_url(settings.base_url, self.label)
         with self.lock:
-            saved = self._read()
-            updated = settings.model_dump(exclude={"api_key"}) | {"base_url": base_url}
-            key = saved["api_key"] if base_url and base_url == saved["base_url"] else ""
-            if "api_key" in settings.model_fields_set:
-                key = settings.api_key.get_secret_value().strip() if settings.api_key and base_url else ""
-                if key and not re.fullmatch(r"[!-~]+", key):
-                    raise HTTPException(400, f"Khóa {self.label} phải dùng ký tự ASCII và không chứa khoảng trắng.")
-            updated["api_key"] = key
-            updated["verified"] = bool(saved.get("verified")) and all(
-                saved[k] == updated[k] for k in ("base_url", "api_key", "text_model", "image_model")
-            )
+            updated = self._prepare(settings, self._read())
             _write(self.path, updated)
             return self.status()
 
-    def _credentials(self, *, verified=True):
+    def _configured(self, settings):
+        return bool(settings["base_url"] and (settings["api_key"] or not self.key_required))
+
+    def _credentials(self):
         saved = self._read()
-        if not (saved["base_url"] and saved["api_key"]):
-            raise HTTPException(503, f"Chưa có địa chỉ hoặc khóa {self.label}. Hãy thêm trong bảng quản trị mac2API.")
-        if verified and not saved.get("verified"):
+        if not self._configured(saved) or not saved.get("verified"):
             raise HTTPException(503, f"Hãy kiểm tra kết nối {self.label} trong mac2API trước khi gửi yêu cầu.")
         return saved
 
     async def test(self):
-        saved = self._credentials(verified=False)
+        saved = self._read()
+        return await self._verify(saved, saved)
+
+    async def configure(self, settings):
+        saved = self._read()
+        return await self._verify(saved, self._prepare(settings, saved))
+
+    async def _verify(self, previous, candidate):
+        if not candidate["base_url"]:
+            raise HTTPException(400, f"Hãy nhập địa chỉ {self.label}.")
+        if self.key_required and not candidate["api_key"]:
+            raise HTTPException(400, f"Hãy nhập khóa của {self.label}.")
         try:
             async with httpx.AsyncClient(timeout=15, trust_env=False) as client:
-                response = await client.get(saved["base_url"] + "/models", headers=_headers(saved))
+                response = await client.get(candidate["base_url"] + "/models",
+                                            headers=_bearer_headers(candidate["api_key"]))
                 _check_response(response)
                 data = response.json()
             if not isinstance(data, dict) or not isinstance(data.get("data"), list):
                 raise ValueError
             models = {item.get("id") for item in data["data"]
                       if isinstance(item, dict) and isinstance(item.get("id"), str)}
-            missing = [saved[k] for k in ("text_model", "image_model") if saved[k] not in models]
+            missing = [model for model in dict.fromkeys((candidate["text_model"], candidate["image_model"]))
+                       if model not in models]
             if missing:
                 raise HTTPException(400, f"{self.label} chưa có mô hình đã chọn: " + ", ".join(missing))
         except httpx.RequestError as exc:
@@ -401,9 +420,9 @@ class WebGateway:
         except ValueError:
             raise HTTPException(502, f"Địa chỉ chưa trả về danh sách mô hình {self.label} hợp lệ.") from None
         with self.lock:
-            if saved != self._read():
+            if previous != self._read():
                 raise HTTPException(409, "Cấu hình đã thay đổi. Hãy kiểm tra lại.")
-            _write(self.path, saved | {"verified": True})
+            _write(self.path, candidate | {"verified": True})
             return self.status()
 
     async def chat(self, messages, prompt, stream, timeout, *, before_send):
@@ -417,7 +436,7 @@ class WebGateway:
         saved = self._credentials()
         payload = {"model": saved["image_model"], "prompt": prompt, "n": 1, "response_format": "b64_json"}
         before_send()
-        response = _post_image(saved["base_url"] + "/images/generations", _headers(saved),
+        response = _post_image(saved["base_url"] + "/images/generations", _bearer_headers(saved["api_key"]),
                                payload, timeout, self.label, trust_env=False)
         return _decode_openai_image(response, self.label)
 
@@ -454,11 +473,11 @@ def _image_unknown(message, *, status=502):
     return HTTPException(status, {"code": "DELIVERY_UNKNOWN", "message": message + " Cần đối chiếu kết quả."})
 
 
-def _headers(settings):
-    return {"Authorization": f"Bearer {settings['api_key']}"}
+def _bearer_headers(key):
+    return {"Authorization": f"Bearer {key}"} if key else {}
 
 
-def _base_url(value, label):
+def _base_url(value, label, *, root_path):
     value = value.strip().rstrip("/")
     if not value:
         return ""
@@ -467,6 +486,8 @@ def _base_url(value, label):
         if (parts.scheme in {"http", "https"} and parts.hostname and parts.port != 0
                 and parts.username is None and parts.password is None and not parts.query and not parts.fragment
                 and re.fullmatch(r"[^\s\\?#]+", value)):
+            if not parts.path:
+                return value + root_path
             return value if parts.path.endswith("/v1") else value + "/v1"
     except ValueError:
         pass

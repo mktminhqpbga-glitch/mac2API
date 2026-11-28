@@ -34,20 +34,25 @@ class Upstream(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if self.headers["Authorization"] != "Bearer " + KEY:
+        if not self.authorized():
             return self.reply({}, 401)
-        if self.path == "/v1/models":
+        if self.path in {"/v1/models", "/openai/v1/models"}:
             return self.reply({"data": [{"id": model} for model in (
-                "auto", "gpt-image-2.6", "gemini-4-hydrogen", "gemini-3.1-flash-image"
+                "auto", "gpt-image-2.6", "gemini-auto", "gemini-4-hydrogen", "gemini-3.1-flash-image"
             )]})
         self.reply({}, 404)
 
+    def authorized(self):
+        if self.path.startswith("/openai/v1/"):
+            return self.headers.get("Authorization") is None
+        return self.headers.get("Authorization") == "Bearer " + KEY
+
     def do_POST(self):
-        if self.headers["Authorization"] != "Bearer " + KEY:
+        if not self.authorized():
             return self.reply({}, 401)
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         self.server.calls.append((self.path, body))
-        if self.path == "/v1/chat/completions":
+        if self.path in {"/v1/chat/completions", "/openai/v1/chat/completions"}:
             if body["stream"]:
                 if body["messages"][-1]["content"] == "broken stream":
                     return self.reply(b'data: {"error":{"message":"private upstream detail"}}\n\ndata: [DONE]\n\n',
@@ -58,7 +63,7 @@ class Upstream(BaseHTTPRequestHandler):
                 return self.reply({}, 429)
             return self.reply({"choices": [{"message": {"content": "xin chao", "role": "assistant"},
                                             "finish_reason": "stop"}]})
-        if self.path == "/v1/images/generations":
+        if self.path in {"/v1/images/generations", "/openai/v1/images/generations"}:
             if "broken" in body["prompt"]:
                 return self.reply({"data": []})
             return self.reply({"data": [{"b64_json": base64.b64encode(PNG).decode()}]})
@@ -99,6 +104,12 @@ async def verify(server, admin, settings, legacy, legacy_headers):
         assert tested.status_code == 200 and tested.json()["ready"], tested.text
         again = await http.put(ENDPOINT, headers=admin, json={"base_url": settings["base_url"] + "/v1/"})
         assert again.json()["ready"] and again.json()["has_key"] and KEY not in again.text
+        configure = ENDPOINT + "/configure"
+        assert (await http.post(configure, headers=legacy_headers, json=settings)).status_code == 401
+        broken_draft = await http.post(configure, headers=admin, json=settings | {"api_key": "wrong"})
+        assert broken_draft.status_code == 502
+        saved = await http.get(ENDPOINT, headers=admin)
+        assert saved.json()["ready"] and KEY not in saved.text
         catalog = (await http.get("/admin/client-keys", headers=admin)).json()["models"]
         assert next(m["accounts"] for m in catalog if m["id"] == "chatgpt/text")[0]["id"] == pool_id
 
@@ -158,7 +169,9 @@ async def exercise_gemini(server):
     path = "/admin/gemini-web2api"
     base = "/gemini/v1"
     text = base + "/chat/completions"
-    settings = {"base_url": f"http://127.0.0.1:{server.server_port}", "api_key": KEY}
+    host = f"http://127.0.0.1:{server.server_port}"
+    settings = {"base_url": host + "/v1", "api_key": KEY,
+                "text_model": "gemini-4-hydrogen", "image_model": "gemini-3.1-flash-image"}
     pool_id = app.gemini_web2api.account_id
     account = app.managed_web.create("gemini-web", "Fixture Chrome")
     app.managed_web.update(account, enabled=True, verified=True)
@@ -226,6 +239,24 @@ async def exercise_gemini(server):
             reply = await send(broad)
             assert reply.json()["choices"][0]["message"]["content"] == "via Chrome", reply.text
             assert (await http.get(ENDPOINT, headers=admin)).json()["ready"]
+
+            configured = await http.post(path + "/configure", headers=admin, json={"base_url": host})
+            assert configured.status_code == 200, configured.text
+            state = configured.json()
+            assert state["ready"] and state["configured"] and not state["has_key"]
+            assert state["base_url"] == host + "/openai/v1"
+            assert state["text_model"] == state["image_model"] == "gemini-auto"
+            selection = await http.put("/admin/connections/gemini-web", headers=admin, json={
+                "mode": "external", "image_model": "gemini-2.5-flash-image",
+            })
+            assert selection.json()["mode"] == "external"
+            assert (await send(broad)).json()["choices"][0]["message"]["content"] == "xin chao"
+            assert server.calls[-1][0] == "/openai/v1/chat/completions"
+            result = await http.post(base + "/images/generations", headers=guest,
+                                     json={"prompt": "cat", "response_format": "b64_json"})
+            assert result.status_code == 200 and base64.b64decode(result.json()["data"][0]["b64_json"]) == PNG
+            assert server.calls[-1][0] == "/openai/v1/images/generations"
+            assert browser.call_count == 4
 
 
 async def exercise_official():

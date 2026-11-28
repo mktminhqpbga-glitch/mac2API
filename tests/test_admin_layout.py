@@ -24,6 +24,9 @@ network=[]
 server_state={'mode':'update','videoPolls':0,'connections':{
  '/admin/connections/chatgpt':dict(mode='browser',image_model='gpt-image-1.5',official_configured=True,external_configured=False,profiles=[]),
  '/admin/connections/gemini-web':dict(mode='browser',image_model='gemini-2.5-flash-image',official_configured=True,external_configured=False,profiles=[]),
+},'gateways':{
+ '/admin/chatgpt2api':dict(base_url='',text_model='auto',image_model='gpt-image-2.6',has_key=False,ready=False),
+ '/admin/gemini-web2api':dict(base_url='',text_model='gemini-auto',image_model='gemini-auto',has_key=False,ready=False),
 }}
 feature_errors=[]
 def check(value,message):
@@ -41,6 +44,7 @@ class Handler(BaseHTTPRequestHandler):
   elif path=='/admin/apikey':data={'api_key':'fixture-only'};kind='application/json'
   elif path=='/admin/web-providers':data={'configured':False,'profile_connected':False,'ready':[],'local_setup':True};kind='application/json'
   elif path in server_state['connections']:data=server_state['connections'][path];kind='application/json'
+  elif path in server_state['gateways']:data=server_state['gateways'][path];kind='application/json'
   elif path in ['/admin/update/check','/admin/repo/status']:
    known=server_state['mode']=='update'
    data={'repo_url':'https://github.com/czg86389-hub/muse2api','repo_ref':'main','local_version':'1.6.10','remote_version':VERSION if known else '', 'local_sha':'aaaaaaa','remote_sha':'bbbbbbb' if known else '', 'up_to_date':False if known else None,'has_update':known,'check_error':'' if known else 'fixture remote unavailable','managed_deployment':False,'highlights':['fixture update'],'highlights_en':['fixture update'],'highlights_vi':['Bản thử tiếng Việt'],'recent_commits':[]};kind='application/json'
@@ -76,6 +80,11 @@ class Handler(BaseHTTPRequestHandler):
    reply.update(body)
   elif path.endswith('/test') and path[:-5] in server_state['connections']:
    reply={'ok':True}
+  elif path.endswith('/configure') and path[:-10] in server_state['gateways']:
+   saved = server_state['gateways'][path[:-10]]
+   saved.update({key:value for key,value in body.items() if key != 'api_key'})
+   saved.update(ready=True,has_key=bool(body.get('api_key')))
+   reply=saved
   elif path=='/v1/videos':
    reply={'id':'fixture-video','status':'queued'}
   else:
@@ -119,6 +128,18 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
    node=f"$('tab-{tab}')"
    wait(f"{node}.querySelector('[name=image_model]').value.length > 0")
    assert page.js(f"{node}.querySelector('[name=mode]').value === 'browser' && {node}.querySelector('[data-public-url]').value.endsWith('/{scope}/v1')")
+   page.js(f"""{{const form={node}.querySelector('form'); form.elements.mode.value='external';
+      form.elements.mode.dispatchEvent(new Event('change')); form.elements.gateway_url.value='http://127.0.0.1:10020';
+      if ('{provider}' === 'chatgpt') form.elements.gateway_key.value='fixture-gateway';
+      form.querySelector('button[type=submit]').click();}}""")
+   wait(f"{node}.querySelector('[data-connection-status]').textContent.includes('và chọn làm mặc định')")
+   assert page.js(f"{node}.querySelector('[data-chrome-panel]').hidden && {node}.querySelector('[name=gateway_key]').value === ''")
+   gateway='/admin/chatgpt2api' if provider=='chatgpt' else '/admin/gemini-web2api'
+   assert events[-2]['path']==gateway+'/configure' and events[-1]['body']['mode']=='external'
+   assert ('api_key' in events[-2]['body']) == (provider=='chatgpt')
+   page.send('Emulation.setDeviceMetricsOverride',{'width':390,'height':844,'deviceScaleFactor':1,'mobile':False})
+   assert page.js("document.documentElement.scrollWidth === document.documentElement.clientWidth")
+   page.send('Emulation.clearDeviceMetricsOverride')
    page.js(f"""{{const mode={node}.querySelector('[name=mode]'); mode.value='official';
       mode.dispatchEvent(new Event('change')); {node}.querySelector('button[type=submit]').click();}}""")
    wait(f"{node}.querySelector('[data-connection-status]').textContent.includes('Đã lưu')")
@@ -129,6 +150,8 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
    page.send('Emulation.setDeviceMetricsOverride',{'width':390,'height':844,'deviceScaleFactor':1,'mobile':False})
    assert page.js("document.documentElement.scrollWidth === document.documentElement.clientWidth")
    page.send('Emulation.clearDeviceMetricsOverride')
+  page.js("""{const mode=$('tab-gemini').querySelector('[name=mode]'); mode.value='browser';
+     mode.dispatchEvent(new Event('change'));}""")
   wait("$('tab-gemini').querySelector('[data-provider-status]').textContent.includes('Chưa kết nối')")
   assert page.js("$('tab-gemini').querySelector('[data-web-extension]').getClientRects().length && !$('tab-gemini').querySelector('[data-web-setup]').open && !$('extensionUpgradeNotice').getClientRects().length")
   page.js("$('tab-gemini').querySelector('[data-web-connect]').click()")
@@ -152,6 +175,7 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
    network.clear()
    server_state['mode']='update'
    page.js("loadRepoStatus(true)",await_promise=True)
+   wait("$('repoBadge').textContent.includes('1.6.10') && $('updateBanner').classList.contains('show')")
    if lang=='vi':
     check(page.js("$('updBannerMsg').textContent.includes('Bản thử tiếng Việt') && $('repoCommitsBox').textContent.includes('Bản thử tiếng Việt')"), 'vi: release notes are not localized')
     check(page.js("""(async () => {

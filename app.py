@@ -3832,6 +3832,11 @@ async def test_chatgpt2api(_=Depends(auth)):
     return JSONResponse(await chatgpt2api.test(), headers=NO_STORE)
 
 
+@app.post("/admin/chatgpt2api/configure")
+async def configure_chatgpt2api(settings: ChatGPT2APISettings, _=Depends(auth)):
+    return JSONResponse(await chatgpt2api.configure(settings), headers=NO_STORE)
+
+
 WebConnectionProvider = Literal["chatgpt", "gemini-web"]
 
 
@@ -3873,6 +3878,11 @@ def save_gemini_web2api(settings: GeminiWeb2APISettings, _=Depends(auth)):
 @app.post("/admin/gemini-web2api/test")
 async def test_gemini_web2api(_=Depends(auth)):
     return JSONResponse(await gemini_web2api.test(), headers=NO_STORE)
+
+
+@app.post("/admin/gemini-web2api/configure")
+async def configure_gemini_web2api(settings: GeminiWeb2APISettings, _=Depends(auth)):
+    return JSONResponse(await gemini_web2api.configure(settings), headers=NO_STORE)
 
 
 class ClientModelRule(BaseModel):
