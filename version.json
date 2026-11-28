@@ -1,8 +1,9 @@
 {
-  "version": "1.6.27",
+  "version": "1.6.28",
   "updated_at": "2026-11-28",
   "repo": "https://github.com/mktminhqpbga-glitch/mac2API",
   "highlights": [
+    "刷新测试页面后可继续查看图片和视频任务。文本响应和事件流采用时间与大小限制。",
     "可在各服务商页面配置、验证并启用 OpenAI 和 Google Gemini 官方 API 直连。",
     "可在管理页面保存并验证 ChatGPT2API 与 Gemini Web To API 的 HTTP 连接。",
     "综合版本包含管理页面、Chrome/Edge 扩展 1.0.13 和 MacFlow/Toonflow 适配器。",
@@ -14,6 +15,7 @@
     "手动安装的扩展可在每个已安装的浏览器个人资料中重新加载。"
   ],
   "highlights_en": [
+    "Resume image and video tests after reloading. Text responses and streams respect time and size limits.",
     "Configure and verify direct official OpenAI and Google Gemini API connections from their provider tabs.",
     "Configure and verify HTTP connections to ChatGPT2API and Gemini Web To API directly in the dashboard.",
     "This consolidated release includes the dashboard, Chrome/Edge extension 1.0.13, and MacFlow/Toonflow adapters.",
@@ -25,6 +27,7 @@
     "Reload the unpacked extension in every browser profile where it is installed."
   ],
   "highlights_vi": [
+    "Theo dõi lại ảnh và video sau khi tải lại trang. Phản hồi văn bản có giới hạn thời gian và dung lượng.",
     "Cài đặt và kiểm tra OpenAI API và Google Gemini API trực tiếp trong từng mục dịch vụ.",
     "Lưu và kiểm tra kết nối HTTP tới ChatGPT2API và Gemini Web To API ngay trong bảng quản trị.",
     "Bản tổng hợp gồm bảng quản trị, tiện ích Chrome/Edge 1.0.13 và các tệp tích hợp MacFlow/Toonflow.",

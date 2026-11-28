@@ -290,10 +290,12 @@ async function refreshRun(force = false) {
 
 function setPoll() {
   clearTimeout(timer);
+  const pending = readLocal('pending', {});
+  const lookingUp = pending.id && pending.lookupUntil > Date.now();
   if (authOK === false || !byId('tab-workflows').classList.contains('active') ||
-      (!historyUnavailable && !['running', 'pausing'].includes(lastRun?.state))) return;
+      (!historyUnavailable && !lookingUp && !['running', 'pausing'].includes(lastRun?.state))) return;
   timer = setTimeout(async () => {
-    if (historyUnavailable) {
+    if (historyUnavailable || lookingUp) {
       await loadWorkflows();
       return;
     }
@@ -327,7 +329,11 @@ async function loadHistory({recoverPending = false} = {}) {
         byId('workflowDraftStatus').textContent = '';
       }
     } catch (error) {
-      if (error.status !== 404) throw error;
+      if (![404, 409].includes(error.status)) throw error;
+      if (error.status === 409 && pending.id && readLocal('pending', {}).id === pending.id) {
+        writeLocal('pending', null);
+        byId('workflowDraftStatus').textContent = error.message;
+      }
     }
   }
   if (version !== viewVersion || authOK === false) return;
@@ -366,13 +372,14 @@ async function start(event) {
   const status = byId('workflowDraftStatus');
   status.textContent = 'Đang lưu luồng…';
   const version = viewVersion;
+  let id;
   try {
     const config = {...draft, title: draft.title.trim() || 'Luồng mới'};
     const raw = JSON.stringify(config);
     const pending = readLocal('pending', {});
-    const id = pending.raw === raw && pending.id ? pending.id : Array.from(
+    id = pending.raw === raw && pending.id ? pending.id : Array.from(
       crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
-    writeLocal('pending', {id, raw});
+    writeLocal('pending', {id, raw, lookupUntil: Date.now() + 30000});
     const run = await api('/admin/workflows', {method:'POST', timeout:20000, body:JSON.stringify({...config, id})});
     if (version !== viewVersion) return;
     writeLocal('pending', null);
@@ -386,6 +393,7 @@ async function start(event) {
         'Luồng đã được lưu. Bấm Làm mới để cập nhật danh sách.';
     }
   } catch (error) {
+    if ([400, 401, 403, 422].includes(error.status) && readLocal('pending', {}).id === id) writeLocal('pending', null);
     if (version === viewVersion) status.textContent = t(error.message);
   } finally {
     busy = false;

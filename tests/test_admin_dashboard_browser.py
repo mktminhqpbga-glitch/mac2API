@@ -296,6 +296,38 @@ def check_dashboard(app, page, url):
     wait(lambda: app.store.get_task(queued["id"])["status"] == "cancelled")
     wait(lambda: page.js("$('taskBody').textContent.includes('Đã hủy')"))
 
+    filename = "fixture-reload.png"
+    picture = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==")
+    (Path(app.CFG.media_dir) / filename).write_bytes(picture)
+
+    def complete_play_image(task, *_args):
+        return app.store.update_task(task["id"], status="completed", progress=100,
+                                     result={"filename": filename, "kind": "image", "size": len(picture)})
+
+    with patch.object(app, "_dispatch_media_task", side_effect=complete_play_image) as dispatched:
+        page.js("""goTab('play');
+            const originalFetch = window.fetch;
+            window.fetch = async (url, options) => {
+              const response = await originalFetch(url, options);
+              if (url === '/v1/images/tasks' && options.method === 'POST') throw new TypeError('offline');
+              return response;
+            };
+            $('imgPrompt').value = 'Ảnh đang theo dõi';
+            $('imgPrompt').dispatchEvent(new Event('input'));
+            $('imgBtn').click();""")
+        wait(lambda: page.js("$('imgRes').textContent.includes('Tiếp tục theo dõi')"))
+        saved = page.js("JSON.parse(sessionStorage.getItem('mac2api.play.media.admin.image'))")
+        assert saved["requestKey"] and "id" not in saved
+        assert httpx.get(url + "/admin/tasks/by-request", headers={
+            "Idempotency-Key": saved["requestKey"], "Authorization": "Bearer " + key,
+        }).status_code == 401
+        page.send("Page.reload")
+        wait(lambda: page.js("""$('imgRes').querySelector('a[download]')?.href.includes('fixture-reload.png')
+            && $('imgPrompt').value === 'Ảnh đang theo dõi' && ! $('imgRes').querySelector('details').open"""))
+        link = page.js("$('imgRes').querySelector('a[download]').href")
+        assert httpx.get(link).content == picture
+        assert dispatched.call_count == 1
+
     release = threading.Event()
     calls = []
 

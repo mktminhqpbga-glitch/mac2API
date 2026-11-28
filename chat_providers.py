@@ -23,6 +23,8 @@ from web_providers import MAX_IMAGE_BYTES, WebProviderError, decode_web_image
 
 ProviderName = Literal["openai", "gemini"]
 MODEL_ID = r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$"
+MAX_CHAT_BYTES = 16 * 1024 * 1024
+MAX_EVENT_BYTES = 2 * 1024 * 1024
 PROVIDERS = {
     "openai": ("OpenAI (ChatGPT)", "OPENAI_API_KEY", "OPENAI_MODEL", "gpt-4.1-mini",
                "https://api.openai.com/v1/chat/completions"),
@@ -143,6 +145,7 @@ async def compatible_chat(url, key, model, payload, timeout, *, public_model=Non
             raise HTTPException(400, "Hãy nhập ít nhất một tin nhắn.")
         body["messages"] = [{"role": "user", "content": prompt.strip()}]
 
+    deadline = time.monotonic() + timeout
     client = httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10), trust_env=trust_env)
     response = None
     streaming = False
@@ -160,20 +163,21 @@ async def compatible_chat(url, key, model, payload, timeout, *, public_model=Non
             "POST", url, json=body,
             headers=_bearer_headers(key),
         )
-        response = await client.send(request, stream=True)
+        with anyio.fail_after(timeout):
+            response = await client.send(request, stream=True)
         _check_response(response, submitted=public_model is not None)
         if body.get("stream"):
             if response.headers.get("content-type", "").split(";")[0].strip().lower() != "text/event-stream":
-                raise HTTPException(502, "Nhà cung cấp không trả về luồng SSE.")
+                raise _delivery_unknown("Dịch vụ chưa trả văn bản theo luồng.")
 
             async def chunks():
                 try:
-                    source = _gateway_chunks(response, public_model) if public_model else response.aiter_bytes()
+                    content = _chat_bytes(response, deadline)
+                    source = _gateway_chunks(content, public_model) if public_model else content
                     async for chunk in source:
                         yield chunk
-                except httpx.RequestError:
-                    yield (b'\n\ndata: {"error":{"message":"Upstream stream interrupted",'
-                           b'"type":"server_error","code":"DELIVERY_UNKNOWN"}}\n\n')
+                except (httpx.RequestError, TimeoutError, ValueError):
+                    yield b"\n\n" + _stream_interrupted()
                 finally:
                     await close()
             stream = StreamingResponse(
@@ -183,42 +187,85 @@ async def compatible_chat(url, key, model, payload, timeout, *, public_model=Non
             )
             streaming = True
             return stream
-        await response.aread()
-        data = response.json()
+        body_bytes = bytearray()
+        async for chunk in _chat_bytes(response, deadline):
+            body_bytes.extend(chunk)
+        data = json.loads(body_bytes)
         if not isinstance(data, dict) or not isinstance(data.get("choices"), list):
-            raise HTTPException(502, "Phản hồi chat từ nhà cung cấp không hợp lệ.")
+            raise ValueError
         if public_model:
             data["model"] = public_model
         return JSONResponse(data)
     except httpx.RequestError as exc:
         raise _connection_error(exc, submitted=True) from None
+    except TimeoutError:
+        raise _delivery_unknown("Đã hết thời gian chờ phản hồi.", status=504) from None
     except ValueError:
-        raise HTTPException(502, "Phản hồi chat từ nhà cung cấp không hợp lệ.") from None
+        raise _delivery_unknown("Phản hồi văn bản không hợp lệ hoặc vượt giới hạn dung lượng.") from None
     finally:
         if not streaming:
             await close()
 
 
-async def _gateway_chunks(response, model):
-    async for line in response.aiter_lines():
-        if not line.startswith("data:"):
-            continue
-        payload = line[5:].strip()
-        if payload == "[DONE]":
-            yield b"data: [DONE]\n\n"
-            return
+async def _chat_bytes(response, deadline):
+    source = response.aiter_bytes()
+    total = 0
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError
         try:
+            with anyio.fail_after(remaining):
+                chunk = await anext(source)
+        except StopAsyncIteration:
+            return
+        total += len(chunk)
+        if total > MAX_CHAT_BYTES:
+            raise ValueError("Chat response exceeds byte limit")
+        yield chunk
+
+
+def _stream_interrupted():
+    payload = {"error": {"message": "Luồng trả lời bị gián đoạn. Hãy đối chiếu kết quả trước khi gửi lại.",
+                         "type": "server_error", "code": "DELIVERY_UNKNOWN"}}
+    return b"data: " + json.dumps(payload, ensure_ascii=False).encode() + b"\n\n"
+
+
+async def _gateway_chunks(content, model):
+    partial = b""
+    data = []
+    event_bytes = 0
+    trailing_cr = False
+    async for chunk in content:
+        if trailing_cr:
+            chunk = chunk.removeprefix(b"\n")
+        trailing_cr = chunk.endswith(b"\r")
+        chunk = chunk.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        *lines, partial = (partial + chunk).split(b"\n")
+        if len(partial) > MAX_EVENT_BYTES:
+            raise ValueError("Incomplete event exceeds byte limit")
+        for line in lines:
+            event_bytes += len(line) + 1
+            if event_bytes > MAX_EVENT_BYTES:
+                raise ValueError("Event exceeds byte limit")
+            if line.startswith(b"data:"):
+                data.append(line[5:].removeprefix(b" "))
+            if line:
+                continue
+            payload = b"\n".join(data).strip()
+            data.clear()
+            event_bytes = 0
+            if not payload:
+                continue
+            if payload == b"[DONE]":
+                yield b"data: [DONE]\n\n"
+                return
             event = json.loads(payload)
-            if not isinstance(event, dict):
-                raise ValueError
-        except ValueError:
-            break
-        if "error" in event:
-            break
-        event["model"] = model
-        yield ("data: " + json.dumps(event, ensure_ascii=False) + "\n\n").encode()
-    yield (b'data: {"error":{"message":"Web gateway stream interrupted",'
-           b'"type":"server_error","code":"DELIVERY_UNKNOWN"}}\n\n')
+            if not isinstance(event, dict) or "error" in event:
+                raise ValueError("Invalid upstream event")
+            event["model"] = model
+            yield b"data: " + json.dumps(event, ensure_ascii=False).encode() + b"\n\n"
+    yield _stream_interrupted()
 
 
 def _check_response(response: httpx.Response, *, submitted=False):
@@ -347,10 +394,13 @@ class OfficialWebConnection:
             for candidate in response["candidates"]:
                 for part in candidate["content"]["parts"]:
                     if inline := part.get("inlineData"):
-                        return decode_web_image(inline["data"])
-        except (KeyError, TypeError, AttributeError, WebProviderError):
+                        try:
+                            return _decode_result_image(inline["data"])
+                        except (KeyError, TypeError, WebProviderError):
+                            continue
+        except (KeyError, TypeError, AttributeError):
             pass
-        raise _image_unknown("Google Gemini đã phản hồi nhưng không trả ảnh hợp lệ.")
+        raise _delivery_unknown("Google Gemini đã phản hồi nhưng chưa trả ảnh hợp lệ.")
 
 
 OPENAI_IMAGES_URL = "https://api.openai.com/v1/images/generations"
@@ -482,26 +532,40 @@ def _post_image(url, headers, payload, timeout, label, *, trust_env=True):
                 body = bytearray()
                 for chunk in response.iter_bytes():
                     if time.monotonic() >= deadline:
-                        raise _image_unknown(f"Hết thời gian chờ ảnh từ {label}.", status=504)
+                        raise _delivery_unknown(f"Hết thời gian chờ ảnh từ {label}.", status=504)
                     if len(body) + len(chunk) > limit:
-                        raise _image_unknown(f"Ảnh do {label} trả về vượt quá 20 MiB.")
+                        raise _delivery_unknown(f"Ảnh do {label} trả về vượt quá 20 MiB.")
                     body.extend(chunk)
         return json.loads(body)
     except httpx.RequestError as exc:
         raise _connection_error(exc, submitted=True) from None
     except ValueError:
-        raise _image_unknown(f"{label} đã phản hồi nhưng không đọc được kết quả.") from None
+        raise _delivery_unknown(f"{label} đã phản hồi nhưng không đọc được kết quả.") from None
 
 
 def _decode_openai_image(response, label):
     try:
-        return decode_web_image(response["data"][0]["b64_json"])
+        return _decode_result_image(response["data"][0]["b64_json"])
     except (KeyError, IndexError, TypeError, WebProviderError):
-        raise _image_unknown(f"{label} đã phản hồi nhưng không đọc được tệp ảnh.") from None
+        raise _delivery_unknown(f"{label} đã phản hồi nhưng không đọc được tệp ảnh.") from None
 
 
-def _image_unknown(message, *, status=502):
-    return HTTPException(status, {"code": "DELIVERY_UNKNOWN", "message": message + " Cần đối chiếu kết quả."})
+def _decode_result_image(value):
+    declared = None
+    if isinstance(value, str) and value.startswith("data:"):
+        mime, _, value = value.partition(",")
+        declared = {"data:image/png;base64": ".png", "data:image/jpeg;base64": ".jpg",
+                    "data:image/webp;base64": ".webp"}.get(mime)
+        if not declared:
+            raise WebProviderError("Ảnh trả về sai định dạng.")
+    data, extension = decode_web_image(value)
+    if declared and declared != extension:
+        raise WebProviderError("Nội dung ảnh khác định dạng mà dịch vụ khai báo.")
+    return data, extension
+
+
+def _delivery_unknown(message, *, status=502):
+    return HTTPException(status, {"code": "DELIVERY_UNKNOWN", "message": message + " Hãy đối chiếu trước khi gửi lại."})
 
 
 def _bearer_headers(key):

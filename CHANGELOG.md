@@ -1,5 +1,12 @@
 # Nhật ký và bàn giao mac2API
 
+## 1.6.28
+
+- Mục **Thử API** giữ mô tả và mã theo dõi ảnh/video khi tải lại cùng tab. Khi lấy lại kết quả, mac2API tra cứu tác vụ đã gửi. Với khóa người dùng, nhập lại khóa để xem tác vụ của khóa đó.
+- Kết quả ảnh và video có nút **Tải kết quả**. Dữ liệu phản hồi kỹ thuật nằm trong mục mở rộng.
+- Giới hạn thời gian và dung lượng trả lời văn bản. Xử lý sự kiện nhiều dòng và báo luồng bị ngắt. Kiểm tra định dạng ảnh trước khi lưu.
+- Luồng tự động thử tra cứu lại trong khoảng thời gian ngắn nếu tải lại trang trước khi nhận được xác nhận tạo luồng.
+
 ## 1.6.27
 
 - Mục ChatGPT và Gemini có biểu mẫu API chính thức chạy trong mac2API. **Lưu và kiểm tra kết nối** xác minh khóa, mô hình văn bản và mô hình ảnh trước khi đổi kết nối mặc định.

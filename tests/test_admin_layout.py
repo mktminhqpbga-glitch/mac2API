@@ -117,8 +117,8 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
    except (requests.RequestException,StopIteration):time.sleep(.1)
   assert page
   page.send('Page.enable');page.send('Runtime.enable')
-  page.send('Page.addScriptToEvaluateOnNewDocument',{'source':"localStorage.setItem('muse2api_lang',localStorage.getItem('muse2api_lang')||'zh');window.__confirms=[];window.confirm=(m)=>{window.__confirms.push(m);return false};window.__errors=[];window.addEventListener('error',e=>__errors.push(e.message));"})
-  page.send('Page.navigate',{'url':f'http://127.0.0.1:{server.server_port}/?key=fixture-only'})
+  page.send('Page.addScriptToEvaluateOnNewDocument',{'source':"sessionStorage.setItem('muse2api_key','fixture-only');localStorage.setItem('muse2api_lang',localStorage.getItem('muse2api_lang')||'zh');window.__confirms=[];window.confirm=(m)=>{window.__confirms.push(m);return false};window.__errors=[];window.addEventListener('error',e=>__errors.push(e.message));"})
+  page.send('Page.navigate',{'url':f'http://127.0.0.1:{server.server_port}/'})
   def wait(expr):
    end=time.monotonic()+15
    while time.monotonic()<end:
@@ -161,7 +161,7 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
   wait("$('tab-gemini').querySelector('[data-provider-status]').textContent.includes('Đã kết nối Chrome')")
   assert any(item['path']=='/admin/web-providers/connect-profile' for item in events)
   assert page.js("$('tab-gemini').querySelector('[data-provider-test]').disabled")
-  page.js("goTab('play');$('vidDur').value='125';$('vidBtn').click()")
+  page.js("goTab('play');$('vidPrompt').value='Một đoạn video thử';$('vidDur').value='125';$('vidBtn').click()")
   wait("$('vidRes').textContent.includes('fixture only') && !$('vidBtn').disabled")
   assert events[-1]['path']=='/v1/videos' and events[-1]['body']['duration']==125
   assert server_state['videoPolls']==2

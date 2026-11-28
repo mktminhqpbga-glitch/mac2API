@@ -2477,12 +2477,20 @@ def _task_receipt(task):
 @app.get("/v1/tasks/by-request")
 def lookup_task_by_request(request: Request, idempotency_key: Annotated[str | None, Header()] = None,
                            client=Depends(contract_auth)):
+    return _lookup_task_receipt(idempotency_key, owner=client["id"], scope=_path_provider(request))
+
+
+@app.get("/admin/tasks/by-request")
+def lookup_admin_task_by_request(idempotency_key: Annotated[str | None, Header()] = None, _=Depends(auth)):
+    return _lookup_task_receipt(idempotency_key, owner=None)
+
+
+def _lookup_task_receipt(idempotency_key, *, owner, scope=None):
     digest = _request_key_hash(idempotency_key)
-    scope = _path_provider(request)
     matches = []
     for task in store.tasks.values():
         provider = task.get("provider") or "muse"
-        if (task.get("owner") == client["id"]
+        if (task.get("owner") == owner
                 and (not scope or provider == scope)
                 and digest in (task.get("request_key"), task.get("image_request_key"))):
             matches.append(task)

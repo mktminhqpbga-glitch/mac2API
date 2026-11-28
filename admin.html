@@ -1079,37 +1079,36 @@
     <div class="section-grid">
     <form class="card" id="textPlayForm">
       <h3 data-ui="tryText">Thử văn bản</h3>
-      <p class="mono">POST /v1/chat/completions</p>
       <label><span data-ui="model">Mô hình</span><select id="playTextModel"><option value="muse/text">Muse</option></select></label>
       <label><span data-ui="message">Nội dung</span><textarea id="playText" rows="3" required></textarea></label>
       <button id="playTextSend" type="submit" data-ui="send">Gửi</button>
       <pre id="playTextResult" class="out" role="status" hidden data-no-i18n></pre>
     </form>
     <div class="card">
-      <h3>在线生图测试 <span class="tag">POST /v1/images/generations</span></h3>
+      <h3>Thử tạo ảnh</h3>
       <label><span data-ui="model">Mô hình</span><select id="playImageModel"><option value="muse/image">Muse</option></select></label>
       <div class="row">
-        <div style="flex:3"><label>提示词</label>
-          <input type="text" id="imgPrompt" value="一只戴宇航头盔的柴犬，赛博朋克风格，霓虹灯背景"></div>
-        <div style="max-width:140px"><label>比例</label>
+        <div style="flex:3"><label for="imgPrompt">Mô tả ảnh</label>
+          <input type="text" id="imgPrompt" placeholder="Ví dụ: Một chú mèo ngồi bên cửa sổ"></div>
+        <div style="max-width:140px"><label for="imgSize">Tỷ lệ khung hình</label>
           <select id="imgSize"><option>1:1</option><option>16:9</option><option>9:16</option><option>4:3</option><option>3:4</option></select></div>
       </div>
-      <div style="margin-top:12px"><button class="primary-lg" id="imgBtn" onclick="runImage()">开始生成图片</button></div>
+      <div style="margin-top:12px"><button class="primary-lg" id="imgBtn" onclick="runImage()">Tạo ảnh</button></div>
       <div class="result" id="imgRes" role="status"></div>
     </div>
 
     <div class="card">
-      <h3>在线生视频测试 <span class="tag">POST /v1/videos</span></h3>
+      <h3>Thử tạo video</h3>
       <label><span data-ui="model">Mô hình</span><select id="playVideoModel"><option value="muse/video">Muse</option></select></label>
       <div class="row">
-        <div style="flex:3"><label>提示词</label>
-          <input type="text" id="vidPrompt" value="一只橙色小猫在草地上慢慢走动，阳光明媚"></div>
-        <div style="max-width:110px"><label>时长(秒)</label>
+        <div style="flex:3"><label for="vidPrompt">Mô tả video</label>
+          <input type="text" id="vidPrompt" placeholder="Ví dụ: Một chú mèo đi qua bãi cỏ"></div>
+        <div style="max-width:110px"><label for="vidDur">Thời lượng (giây)</label>
           <input type="number" id="vidDur" value="5" min="1" step="1"></div>
-        <div style="max-width:140px"><label>比例</label>
+        <div style="max-width:140px"><label for="vidSize">Tỷ lệ khung hình</label>
           <select id="vidSize"><option>16:9</option><option>9:16</option><option>1:1</option></select></div>
       </div>
-      <div style="margin-top:12px"><button class="primary-lg" id="vidBtn" onclick="runVideo()">开始生成视频</button></div>
+      <div style="margin-top:12px"><button class="primary-lg" id="vidBtn" onclick="runVideo()">Tạo video</button></div>
       <div class="result" id="vidRes" role="status"></div>
     </div>
     </div>
@@ -5000,7 +4999,17 @@ async function loadMedia(){
 
 /* ================= 在线测试 ================= */
 const playModelFields = {text:'playTextModel', image:'playImageModel', video:'playVideoModel'};
+const playMedia = {
+  image: {button:'imgBtn', result:'imgRes', route:'/v1/images/tasks'},
+  video: {button:'vidBtn', result:'vidRes', route:'/v1/videos'},
+};
 let playModelRequest = 0;
+let playRunRevision = 0;
+for (const id of ['playText', 'imgPrompt', 'vidPrompt']) {
+  const storageKey = 'mac2api.play.draft.' + id;
+  $(id).value = readStored('sessionStorage', storageKey);
+  $(id).addEventListener('input', () => writeStored('sessionStorage', storageKey, $(id).value));
+}
 function playAuth(){
   if ($('playAuthMode').value === 'admin') return KEY;
   const key = $('playKey').value.trim();
@@ -5030,12 +5039,24 @@ function updatePlayButtons(){
 
 function resetPlayCredentials(){
   playModelRequest++;
+  clearPlayResults();
   $('playKey').value = '';
   $('playAuthMode').value = 'admin';
   $('playKeyField').hidden = true;
   $('playDiscover').disabled = false;
   playMessage('');
   clearPlayModels(true);
+}
+
+function clearPlayResults(){
+  playRunRevision++;
+  for (const id of ['playTextSend', 'imgBtn', 'vidBtn']) delete $(id).dataset.busy;
+  $('playTextResult').hidden = true;
+  $('playTextResult').textContent = '';
+  for (const {result} of Object.values(playMedia)) {
+    $(result).replaceChildren();
+    $(result).classList.remove('show');
+  }
 }
 
 async function loadPlayModels(){
@@ -5062,6 +5083,7 @@ async function loadPlayModels(){
     playMessage(Object.values(byKind).some(models => models.size)
       ? ['Chỉ hiển thị mô hình có trong danh sách của khóa này.', 'Showing models in this key’s catalog.', '仅显示此密钥目录中的模型。'][uiLang]
       : ['Khóa này chưa có mô hình khả dụng.', 'This key has no available models.', '此密钥暂无可用模型。'][uiLang]);
+    for (const kind of Object.keys(playMedia)) runPlayMedia(kind);
   } catch (error) {
     if (request !== playModelRequest) return;
     if ($('playAuthMode').value === 'client') clearPlayModels();
@@ -5074,6 +5096,7 @@ async function loadPlayModels(){
 $('playAuthMode').onchange = () => {
   const scoped = $('playAuthMode').value === 'client';
   playModelRequest++;
+  clearPlayResults();
   $('playDiscover').disabled = false;
   $('playKey').value = '';
   $('playKeyField').hidden = !scoped;
@@ -5084,6 +5107,7 @@ $('playAuthMode').onchange = () => {
 };
 $('playKey').oninput = () => {
   playModelRequest++;
+  clearPlayResults();
   $('playDiscover').disabled = false;
   clearPlayModels();
   playMessage('');
@@ -5093,92 +5117,183 @@ $('textPlayForm').onsubmit = async event => {
   event.preventDefault();
   const prompt = $('playText').value.trim();
   const model = $('playTextModel').value;
-  if (!prompt || !model) return;
+  if (!prompt || !model || $('playTextSend').dataset.busy) return;
+  const revision = playRunRevision;
   const output = $('playTextResult');
   $('playTextSend').dataset.busy = 'true';
   updatePlayButtons();
   output.hidden = false;
   output.textContent = ui('loading');
   try {
-    const result = await api('/v1/chat/completions', {authKey:playAuth(), method:'POST',
+    const result = await api('/v1/chat/completions', {authKey:playAuth(), method:'POST', timeout:330000,
       body:JSON.stringify({model, messages:[{role:'user', content:prompt}]})});
-    output.textContent = result.choices?.[0]?.message?.content || JSON.stringify(result, null, 2);
+    if (revision === playRunRevision) output.textContent =
+      result.choices?.[0]?.message?.content || 'Dịch vụ chưa trả văn bản để hiển thị.';
   } catch (error) {
-    output.textContent = t(error.message);
+    if (revision === playRunRevision) output.textContent = t(error.message);
   } finally {
-    delete $('playTextSend').dataset.busy;
-    updatePlayButtons();
+    if (revision === playRunRevision) {
+      delete $('playTextSend').dataset.busy;
+      updatePlayButtons();
+    }
   }
 };
 
-async function pollPlayTask(route, receipt, authKey, showProgress) {
-  const id = receipt.id || receipt.task_id;
+function readPlayTask(storageKey){
+  try {
+    const task = JSON.parse(readStored('sessionStorage', storageKey));
+    return typeof task?.requestKey === 'string' ? task : null;
+  } catch { return null; }
+}
+
+async function pollPlayTask(route, id, authKey, active, showProgress) {
   const deadline = Date.now() + 15 * 60 * 1000;
-  let state = receipt;
   let failures = 0;
-  if (!id) throw new Error('API chưa trả mã tác vụ.');
-  while (true) {
-    if (['completed','succeeded'].includes(state.status)) return state;
-    if (['failed','cancelled','interrupted'].includes(state.status)) throw new Error(t(state.error || usageStates[state.status] || state.status));
+  while (active()) {
     if (Date.now() >= deadline) throw new Error('Hết thời gian theo dõi. Tra cứu tác vụ ' + id + ' trước khi gửi lại.');
-    showProgress(id, state.status);
-    if (state !== receipt || failures) await new Promise(resolve => setTimeout(resolve, 2800));
+    let state;
     try {
-      state = await api(route + '/' + encodeURIComponent(id), {authKey});
+      state = await api(route + '/' + encodeURIComponent(id), {authKey, timeout:12000});
       failures = 0;
     } catch (error) {
+      if ([401,403,404].includes(error.status)) throw error;
       if (++failures >= 4) throw new Error('Chưa đọc được tác vụ ' + id + '. ' + t(error.message));
     }
+    if (!active()) return;
+    if (state) {
+      if (['completed','succeeded','failed','cancelled','interrupted'].includes(state.status)) return state;
+      if (!['queued','processing','running','pending'].includes(state.status)) throw new Error('Trạng thái tác vụ chưa đọc được.');
+      showProgress(state.status);
+    }
+    await new Promise(resolve => setTimeout(resolve, 2800));
   }
 }
 
-async function runPlayMedia(kind, request) {
+function showPlayMedia(kind, box, result, id){
   const image = kind === 'image';
-  const button = $(image ? 'imgBtn' : 'vidBtn');
-  const box = $(image ? 'imgRes' : 'vidRes');
-  const route = image ? '/v1/images/tasks' : '/v1/videos';
-  if (!request.model) return;
+  box.replaceChildren();
+  if (!['completed','succeeded'].includes(result.status)) {
+    box.append(clientElement('p', friendlyFailure(result.error || usageStates[result.status], undefined, result.error_code), 'hint'));
+    return;
+  }
+  box.append(clientElement('p', 'Hoàn tất · ' + id, 'hint'));
+  const rawUrl = (image ? result.data?.[0] : result.result)?.url || result.url;
+  let url;
+  if (rawUrl) {
+    try { url = new URL(rawUrl, location.href); } catch {}
+  }
+  if (url && ['http:', 'https:'].includes(url.protocol)) {
+    const preview = document.createElement(image ? 'img' : 'video');
+    preview.src = url.href;
+    if (image) preview.alt = ui('image');
+    else { preview.controls = true; preview.playsInline = true; preview.preload = 'metadata'; }
+    const download = clientElement('a', 'Tải kết quả', 'btnlike ghostlike');
+    url.searchParams.set('download', '1');
+    download.href = url.href;
+    download.download = '';
+    box.append(preview, download);
+  } else {
+    box.append(clientElement('p', 'Tệp kết quả chưa có sẵn. Hãy mở mục Tác vụ để kiểm tra.', 'hint'));
+  }
+  const details = document.createElement('details');
+  const raw = clientElement('pre', JSON.stringify(result, null, 2), 'out');
+  raw.setAttribute('data-no-i18n', '');
+  details.append(clientElement('summary', 'Chi tiết kỹ thuật'), raw);
+  box.append(details);
+}
+
+async function runPlayMedia(kind, request = null) {
+  const {button: buttonId, result: boxId, route} = playMedia[kind];
+  const button = $(buttonId);
+  const box = $(boxId);
+  if (button.dataset.busy || (request && !request.model)) return;
+  let authKey;
+  try { authKey = playAuth(); }
+  catch (error) { if (request) playMessage(error.message, true); return; }
+  const isAdmin = $('playAuthMode').value === 'admin';
+  const scope = isAdmin ? 'admin' : authKey.match(/^m2c_([0-9a-f]{16})\./)?.[1];
+  if (!authKey || !scope) {
+    if (request) playMessage(isAdmin ? 'Hãy nhập khóa quản trị để gửi tác vụ.' : 'Hãy kiểm tra khóa người dùng.', true);
+    return;
+  }
+  const storageKey = 'mac2api.play.media.' + scope + '.' + kind;
+  let task = readPlayTask(storageKey);
+  const previous = task;
+  if (!request && !task) return;
+  if (request && task && !task.terminal && !confirm(
+    'Bạn đang theo dõi một tác vụ trước đó. Bạn có muốn gửi một tác vụ mới không?')) return;
+  if (request) {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    bytes[6] = (bytes[6] & 15) | 64;
+    bytes[8] = (bytes[8] & 63) | 128;
+    const hex = [...bytes].map(value => value.toString(16).padStart(2, '0')).join('');
+    const requestKey = hex.replace(/^(........)(....)(....)(....)(............)$/, '$1-$2-$3-$4-$5');
+    task = {requestKey};
+  }
+  const revision = playRunRevision;
+  const active = () => revision === playRunRevision && activeTab === 'play';
+  const save = () => {
+    const current = readPlayTask(storageKey);
+    if (!current || current.requestKey === task.requestKey) writeStored('sessionStorage', storageKey, JSON.stringify(task));
+  };
   button.dataset.busy = 'true';
   updatePlayButtons();
   box.className = 'result show';
-  box.textContent = ui('loading');
+  box.textContent = request ? 'Đang gửi tác vụ…' : 'Đang khôi phục tiến độ…';
   try {
-    const authKey = playAuth();
-    const receipt = await api(route, {authKey, method:'POST', body: JSON.stringify(request)});
-    const result = await pollPlayTask(route, receipt, authKey, (id, status) => {
-      box.textContent = id + ' · ' + (usageStates[status] || status || ui('loading'));
-    });
-    const media = image ? result.data?.[0] : (result.result || result);
-    box.textContent = '';
-    const url = media?.url || result.url;
-    if (url) {
-      const preview = document.createElement(image ? 'img' : 'video');
-      preview.src = url;
-      if (image) preview.alt = ui('image');
-      else { preview.controls = true; preview.playsInline = true; preview.preload = 'metadata'; }
-      box.append(preview);
+    const headers = {'Idempotency-Key': task.requestKey};
+    if (request) writeStored('sessionStorage', storageKey, JSON.stringify(task));
+    if (!task.id) {
+      const receipt = request
+        ? await api(route, {authKey, headers, method:'POST', timeout:25000, body:JSON.stringify(request)})
+        : await api(isAdmin ? '/admin/tasks/by-request' : '/v1/tasks/by-request', {authKey, headers});
+      const id = receipt?.id || receipt?.task_id;
+      if (typeof id !== 'string' || !id || (receipt.kind && receipt.kind !== kind)) throw new Error('Chưa tìm thấy mã tác vụ phù hợp.');
+      task.id = id;
+      save();
     }
-    const raw = clientElement('pre', JSON.stringify(result, null, 2), 'out');
-    raw.setAttribute('data-no-i18n', '');
-    box.append(raw);
-    if (activeTab === 'media' && authKey === KEY) loadMedia();
+    const result = await pollPlayTask(route, task.id, authKey, active, status => {
+      box.textContent = (usageStates[status] || ui('loading')) + ' · ' + task.id;
+    });
+    if (!result || !active()) return;
+    task.terminal = true;
+    save();
+    showPlayMedia(kind, box, result, task.id);
   } catch (error) {
-    box.replaceChildren(clientElement('pre', t(error.message), 'out'));
+    if (!active()) return;
+    const rejected = request && !task.id && [400,401,403,404,413,422,429].includes(error.status);
+    if (rejected) {
+      if (readPlayTask(storageKey)?.requestKey === task.requestKey) {
+        writeStored('sessionStorage', storageKey, previous ? JSON.stringify(previous) : '');
+      }
+    }
+    const message = !request && !task.id && error.status === 404
+      ? 'Chưa thấy tác vụ đã gửi. Bạn có thể kiểm tra lại sau.'
+      : t(error.message);
+    box.replaceChildren(clientElement('p', message, 'hint'));
+    if (!rejected && !task.terminal && readPlayTask(storageKey)?.requestKey === task.requestKey) {
+      const resume = clientElement('button', 'Tiếp tục theo dõi', 'ghost mini');
+      resume.type = 'button';
+      resume.onclick = () => runPlayMedia(kind);
+      box.append(resume);
+    }
   } finally {
-    delete button.dataset.busy;
-    updatePlayButtons();
+    if (revision === playRunRevision) {
+      delete button.dataset.busy;
+      updatePlayButtons();
+    }
   }
 }
 
 function runImage(){
   const prompt = $('imgPrompt').value.trim();
-  if (!prompt) return toast('请输入提示词', 'warn');
+  if (!prompt) return toast('Hãy nhập mô tả ảnh.', 'warn');
   return runPlayMedia('image', {prompt, model:$('playImageModel').value, size:$('imgSize').value, timeout:600});
 }
 
 function runVideo(){
   const prompt = $('vidPrompt').value.trim();
-  if (!prompt) return toast('请输入提示词', 'warn');
+  if (!prompt) return toast('Hãy nhập mô tả video.', 'warn');
   const input = $('vidDur');
   const duration = input.valueAsNumber;
   if (!input.validity.valid || (input.value && !Number.isSafeInteger(duration))) {

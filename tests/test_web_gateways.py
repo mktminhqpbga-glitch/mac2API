@@ -53,20 +53,30 @@ class Upstream(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         self.server.calls.append((self.path, body))
         if self.path in {"/v1/chat/completions", "/openai/v1/chat/completions"}:
+            prompt = body["messages"][-1]["content"]
             if body["stream"]:
-                if body["messages"][-1]["content"] == "broken stream":
+                if prompt == "broken stream":
                     return self.reply(b'data: {"error":{"message":"private upstream detail"}}\n\ndata: [DONE]\n\n',
+                                      kind="text/event-stream")
+                if prompt == "multiline":
+                    return self.reply((': heartbeat\r\n\r\n'
+                                       'data: {"choices":[\r\ndata: {"delta":{"content":"Xin chào"}}]}\r\n\r\n'
+                                       'data: [DONE]\r\n\r\n').encode(), kind="text/event-stream")
+                if prompt == "unfinished stream":
+                    return self.reply(b'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n',
                                       kind="text/event-stream")
                 return self.reply(b'data: {"choices":[{"delta":{"content":"xin chao"},"finish_reason":"stop"}]}\n\n'
                                   b'data: [DONE]\n\n', kind="text/event-stream")
-            if body["messages"][-1]["content"] == "limit":
+            if prompt == "limit":
                 return self.reply({}, 429)
+            if prompt == "oversized":
+                return self.reply({"choices": [{"message": {"content": "x" * 4096}}]})
             return self.reply({"choices": [{"message": {"content": "xin chao", "role": "assistant"},
                                             "finish_reason": "stop"}]})
         if self.path in {"/v1/images/generations", "/openai/v1/images/generations"}:
             if "broken" in body["prompt"]:
                 return self.reply({"data": []})
-            return self.reply({"data": [{"b64_json": base64.b64encode(PNG).decode()}]})
+            return self.reply({"data": [{"b64_json": "data:image/png;base64," + base64.b64encode(PNG).decode()}]})
         self.reply({}, 404)
 
 
@@ -130,10 +140,17 @@ async def verify(server, admin, settings, legacy, legacy_headers):
         assert server.calls[-1] == ("/v1/chat/completions", {"model": "auto", "messages": messages, "stream": False})
         streamed = await http.post(text, headers=legacy_headers, json={"prompt": "hello", "stream": True})
         assert "xin chao" in streamed.text and "[DONE]" in streamed.text and "chatgpt/text" in streamed.text
+        multi = await http.post(text, headers=legacy_headers, json={"prompt": "multiline", "stream": True})
+        assert "Xin chào" in multi.text and "chatgpt/text" in multi.text and "[DONE]" in multi.text
+        unfinished = await http.post(text, headers=legacy_headers, json={"prompt": "unfinished stream", "stream": True})
+        assert "partial" in unfinished.text and "DELIVERY_UNKNOWN" in unfinished.text and "[DONE]" not in unfinished.text
         failed_stream = await http.post(text, headers=legacy_headers, json={"prompt": "broken stream", "stream": True})
         assert "DELIVERY_UNKNOWN" in failed_stream.text and "private upstream detail" not in failed_stream.text
         limited = await http.post(text, headers=legacy_headers, json={"prompt": "limit"})
         assert limited.status_code == 429, limited.text
+        with patch("chat_providers.MAX_CHAT_BYTES", 1024):
+            oversized = await http.post(text, headers=legacy_headers, json={"prompt": "oversized"})
+            assert oversized.status_code == 502 and "DELIVERY_UNKNOWN" in oversized.text
 
         images = SCOPED + "/images/tasks"
 
@@ -362,6 +379,41 @@ async def exercise_official():
                 assert reply.status_code == 200, reply.text
 
 
+async def exercise_chat_deadline():
+    import chat_providers
+
+    async def split_events():
+        event = 'data: {"choices":[\r\ndata: {"delta":{"content":"Chào"}}]}\r\n\r\ndata: [DONE]\r\n\r\n'
+        for byte in event.encode():
+            yield bytes([byte])
+
+    joined = b"".join([event async for event in chat_providers._gateway_chunks(split_events(), "chatgpt/text")])
+    assert "Chào" in joined.decode() and joined.endswith(b"data: [DONE]\n\n")
+
+    class LiveEvents(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            while True:
+                yield b'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'
+                await asyncio.sleep(0.02)
+
+    def upstream(_request):
+        return httpx.Response(200, stream=LiveEvents(), headers={"Content-Type": "text/event-stream"})
+
+    real_client = httpx.AsyncClient
+    with patch.object(chat_providers.httpx, "AsyncClient",
+                      lambda **kw: real_client(transport=httpx.MockTransport(upstream), **kw)):
+        response = await chat_providers.compatible_chat(
+            "http://fixture.invalid/chat/completions", "", "fixture",
+            {"prompt": "test", "stream": True}, 0.15, public_model="chatgpt/text",
+        )
+
+        async def collect():
+            return b"".join([chunk async for chunk in response.body_iterator])
+
+        content = await asyncio.wait_for(collect(), 2)
+        assert b"partial" in content and b"DELIVERY_UNKNOWN" in content and b"[DONE]" not in content
+
+
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory(prefix="web-gateway-fixture-") as root:
         os.environ.update(MUSE2API_HOME=root, MUSE2API_PROFILE_ROOT=root, MUSE2API_KEY="fixture-mac2api-key")
@@ -375,6 +427,7 @@ if __name__ == "__main__":
                     asyncio.run(exercise(server))
                 asyncio.run(exercise_gemini(server))
                 asyncio.run(exercise_official())
+                asyncio.run(exercise_chat_deadline())
             finally:
                 server.shutdown()
     print("PASS: official ChatGPT and Gemini APIs, gateway compatibility, account isolation and media")
