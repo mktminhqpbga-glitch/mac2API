@@ -9,10 +9,13 @@ import tarfile
 import tempfile
 import threading
 import time
+import subprocess
 from types import SimpleNamespace
 from dataclasses import replace
 import unittest
 from unittest.mock import patch
+
+import requests
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -23,7 +26,8 @@ import app
 
 
 class VersionReportingTests(unittest.TestCase):
-    def test_version_check_never_upgrades_or_masks_version(self):
+    @patch.object(app, "_remote_update_commit", return_value="")
+    def test_version_check_never_upgrades_or_masks_version(self, _git_tip):
         app._UPDATE_CACHE['ts']=0
         def get(url,**kwargs):
             body=({'status':'ahead'} if '/compare/' in url else {'version':'1.6.10'}) if 'raw.githubusercontent' in url or '/compare/' in url else [{'sha':'ab' * 20,'commit':{'message':'fix','committer':{'date':'2026-11-13'}}}]
@@ -37,7 +41,8 @@ class VersionReportingTests(unittest.TestCase):
             result=app._check_update_sync(force=True)
         self.assertIsNone(result['up_to_date']);self.assertTrue(result['check_error'])
 
-    def test_same_older_diverged_or_unconfirmed_do_not_offer_upgrade(self):
+    @patch.object(app, "_remote_update_commit", return_value="")
+    def test_same_older_diverged_or_unconfirmed_do_not_offer_upgrade(self, _git_tip):
         local = "a" * 40
         remote = "b" * 40
         for relation, answer in [("identical", True), ("behind", True),
@@ -65,6 +70,51 @@ class VersionReportingTests(unittest.TestCase):
                         app._upgrade_from_github_sync()
                 self.assertEqual(cm.exception.status_code, 409)
                 ensure.assert_not_called()
+
+    def test_current_git_tip_and_archive_provenance_when_github_api_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as root:
+            source = Path(root) / "source.git"
+            installed = Path(root) / "installed"
+            source.mkdir()
+            installed.mkdir()
+
+            def git(*args):
+                return subprocess.check_output(
+                    ["git", "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", *args],
+                    cwd=source, text=True,
+                ).strip()
+
+            git("init", "-b", "main")
+            git("commit", "--allow-empty", "-m", "installed")
+            local = git("rev-parse", "HEAD")
+            git("commit", "--allow-empty", "-m", "new update")
+            remote = git("rev-parse", "HEAD")
+            (installed / "version.json").write_text(json.dumps({"version": "1.6.28", "source_commit": local}))
+            marker = installed / "old-data-marker"
+            marker.write_text("a" * 40)
+            raw = SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"version": "1.6.29"})
+            stale = SimpleNamespace(raise_for_status=lambda: None, json=lambda: [{"sha": local}])
+
+            def get(url, **_):
+                if url == f"https://raw.githubusercontent.com/{app.REPO_SLUG}/{remote}/version.json":
+                    return raw
+                if url.endswith("/commits"):
+                    return stale
+                raise requests.HTTPError("GitHub REST unavailable")
+
+            with patch.object(app, "BASE_DIR", str(installed)), patch.object(app, "REPO_REF", "main"), \
+                 patch.object(app, "REPO_URL", str(source.with_suffix(""))), \
+                 patch.object(app, "_installed_sha_file", return_value=str(marker)), \
+                 patch.dict(os.environ, {"MUSE2API_BUILD_SHA": "", "RENDER_GIT_COMMIT": ""}), \
+                 patch("requests.get", side_effect=get):
+                result = app._check_update_sync(force=True)
+            self.assertTrue(result["has_update"], result)
+            self.assertEqual(result["remote_commit"], remote)
+            self.assertEqual(result["local_sha"], local[:7])
+            self.assertEqual(result["recent_commits"], [])
+            self.assertEqual(result["check_error"], "")
+            self.assertFalse((installed / ".git").exists())
+            self.assertEqual(marker.read_text(), "a" * 40)
 
     def test_actual_fork_is_ahead_of_upstream(self):
         local = "eeadd690b3a260ff75ba9219ad494006c3702b09"

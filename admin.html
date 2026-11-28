@@ -439,7 +439,7 @@
     <div class="hint" id="repoStatusDesc" data-i18n="repo-status-desc">正在实时对比本地版本与 GitHub 官方仓库最新版本…（在线升级自动保留 <code>.env</code> 密钥与 <code>data/</code> 账号池及媒体数据）</div>
     <div id="repoCommitsBox" style="margin-top:10px;background:var(--bg2);border:1px solid var(--line);border-radius:9px;padding:10px 14px;font-size:12.5px"></div>
     <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-      <button onclick="upgradeNow()" id="btnRepoPull">⚡ 一键从 GitHub 在线更新并重启</button>
+      <button onclick="upgradeNow()" id="btnRepoPull" disabled>⚡ 一键从 GitHub 在线更新并重启</button>
       <button class="ghost" onclick="loadRepoStatus(true)">🔍 立即重新检测更新</button>
       <a id="repoCommitsLink" href="https://github.com/mktminhqpbga-glitch/mac2API/commits/main" target="_blank" rel="noopener noreferrer" class="btnlike ghostlike" style="padding:7px 13px;font-size:12.5px">查看 GitHub 完整提交记录 ↗</a>
     </div>
@@ -5407,7 +5407,7 @@ async function loadRepoStatus(force){
   const request = ++repoStatusRequest;
   if (force) manualRepoStatus = request;
   try{
-    let s = await api('/admin/update/check' + (force ? '?force=true' : ''), {authKey:'', timeout:45000});
+    let s = await api('/admin/update/check' + (force ? '?force=true' : ''), {authKey:'', cache:'no-store', timeout:50000});
     if (request !== repoStatusRequest) return;
     _lastRepoStatus = s;
     for (const id of ['repoHomeLink','repoPanelLink']) {
@@ -5441,11 +5441,20 @@ async function loadRepoStatus(force){
       ? (LANG === 'en' ? 'Rebuild and switch the configured image to update.' : '请从配置的仓库分支重建并切换镜像。')
       : ((highlights || [])[0] || s.remote_msg || state);
     banner.classList.toggle('show', !!s.has_update && !!s.remote_sha && s.remote_sha !== _dismissedSha);
+    const blocked = s.managed_deployment
+      ? {vi:'Bản này được cài qua máy chủ. Hãy cập nhật bản triển khai.', en:'Update the deployed image.', zh:'请更新已部署的镜像。'}[LANG]
+      : s.local_dirty
+        ? {vi:'Thư mục mac2API có thay đổi. Hãy lưu lại các thay đổi trước khi cập nhật.', en:'Save your local source changes before updating.', zh:'更新前请保存本地源文件的更改。'}[LANG]
+        : !s.local_sha && s.remote_commit
+          ? {vi:'Bản đang chạy thiếu mã phiên bản để xác minh. Cần cập nhật thủ công một lần.', en:'The installed commit is unknown. Install the latest package once to enable updates.', zh:'无法识别已安装的提交。请手动安装一次最新安装包。'}[LANG]
+          : '';
+    const manualDownload = !s.managed_deployment && !s.local_sha && s.remote_version && /^[a-f0-9]{40}$/.test(s.remote_commit);
     desc.innerHTML = `<span>${LANG === 'en' ? 'Installed version: ' : t('当前已部署版本：')}</span><code>${esc(lVer)}</code>（Commit: <code>${esc(s.local_sha || '—')}</code>） · ` +
       `<span>${LANG === 'en' ? 'Update source: ' : t('更新来源：')}</span><a href="${esc(s.repo_url)}" target="_blank">${esc(s.repo_url)}</a> / <code>${esc(s.repo_ref || 'main')}</code><br>` +
       `<span>${LANG === 'en' ? 'Remote version: ' : t('远端版本：')}</span><code>${esc(s.remote_version || '未知')}</code>（Commit: <code>${esc(s.remote_sha || '—')}</code>）` +
-      (s.check_error ? `<br>${esc(s.check_error)}` : '') +
-      (s.managed_deployment ? '<br>此实例通过镜像部署，更新需从上述分支构建并切换容器。' : '');
+      (s.check_error ? `<br>${esc(t(s.check_error))}` : '') +
+      (blocked ? `<br>${esc(blocked)}` : '') +
+      (manualDownload ? ` <a href="${esc(s.repo_url)}/archive/${s.remote_commit}.zip" target="_blank" rel="noopener noreferrer">${{vi:'Tải bản mới', en:'Download latest package', zh:'下载最新安装包'}[LANG]}</a>` : '');
     for (const id of ['btnRepoPull', 'btnBannerUpgrade']) {
       const btn = $(id); if (btn) btn.disabled = !!s.managed_deployment || !s.has_update || !!s.local_dirty;
     }

@@ -5164,7 +5164,7 @@ TRACKED_REPO_PATHS = [
     *RUNTIME_SOURCE_FILES, "GENERATION_QUEUE.md", "VERSION_REPORTING.md",
     "start-mac2api.command", "README.md", "AGENTS.md", "CHANGELOG.md",
     "MAC2API_API_CONTRACT_TESTS.md",
-    "Dockerfile", "docker-compose.yml", ".dockerignore", ".env.example", ".gitignore",
+    "Dockerfile", "docker-compose.yml", ".dockerignore", ".env.example", ".gitattributes", ".gitignore",
     "LICENSE", "extension", "deploy", "tools", "adapters",
 ]
 _UPDATE_CACHE: dict[str, Any] = {"ts": 0.0, "data": None}
@@ -5217,28 +5217,68 @@ def _ensure_git_repo(token: str = ""):
     _git(["config", "user.email", "czg86389-hub@users.noreply.github.com"])
 
 
+def _remote_update_commit() -> str:
+    if REPO_REF == "HEAD" or REPO_REF.startswith("refs/"):
+        refs = [REPO_REF]
+        if REPO_REF.startswith("refs/tags/"):
+            refs.insert(0, REPO_REF + "^{}")
+    else:
+        tag = f"refs/tags/{REPO_REF}"
+        refs = [f"refs/heads/{REPO_REF}", tag + "^{}", tag]
+    try:
+        result = _git(["ls-remote", "--exit-code", f"{REPO_URL}.git", *refs], timeout=6)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if result.returncode != 0:
+        return ""
+    advertised = {}
+    for line in result.stdout.splitlines():
+        sha, separator, ref = line.partition("\t")
+        if separator and re.fullmatch(r"[0-9a-f]{40}", sha):
+            advertised[ref] = sha
+    return next((advertised[ref] for ref in refs if ref in advertised), "")
+
+
+def _git_update_relation(local: str, remote: str, git_options: list[str]) -> str:
+    base = _git([*git_options, "merge-base", local, remote], timeout=3)
+    if base.returncode == 0:
+        ancestor = base.stdout.strip()
+        if ancestor == local:
+            return "ahead"
+        if ancestor == remote:
+            return "behind"
+        return "diverged"
+    return "unknown"
+
+
 def _compare_update_commits(local: str, remote: str, has_git: bool, headers: dict) -> str:
-    """Describe remote relative to local, without fetching or modifying Git."""
+    """Verify ancestry without downloading into the installed checkout."""
     if not all(re.fullmatch(r"[0-9a-f]{40}", sha) for sha in (local, remote)):
         return "unknown"
     if local == remote:
         return "identical"
     if has_git:
-        base = _git(["merge-base", local, remote])
-        if base.returncode == 0:
-            ancestor = base.stdout.strip()
-            if ancestor == local:
-                return "ahead"
-            if ancestor == remote:
-                return "behind"
+        relation = _git_update_relation(local, remote, [])
+        if relation != "unknown":
+            return relation
     import requests
-    response = requests.get(
-        f"https://api.github.com/repos/{REPO_SLUG}/compare/{local}...{remote}",
-        params={"per_page": 1}, headers=headers, timeout=6,
-    )
-    response.raise_for_status()
-    comparison = response.json().get("status")
-    return comparison if comparison in ("ahead", "behind", "diverged") else "unknown"
+    try:
+        response = requests.get(
+            f"https://api.github.com/repos/{REPO_SLUG}/compare/{local}...{remote}",
+            params={"per_page": 1}, headers=headers, timeout=6,
+        )
+        response.raise_for_status()
+        comparison = response.json().get("status")
+        if comparison in ("ahead", "behind", "diverged"):
+            return comparison
+    except (requests.RequestException, ValueError, AttributeError):
+        pass
+    with tempfile.TemporaryDirectory(prefix="mac2api-update-check-") as temporary:
+        _git(["init", "--bare", temporary], timeout=3).check_returncode()
+        git_options = ["--git-dir", temporary]
+        _git([*git_options, "fetch", "--no-tags", "--filter=tree:0", f"{REPO_URL}.git", remote],
+             timeout=12).check_returncode()
+        return _git_update_relation(local, remote, git_options)
 
 
 def _check_update_sync(force: bool = False, _auto_upgrade: bool = False) -> dict:
@@ -5256,6 +5296,10 @@ def _check_update_sync(force: bool = False, _auto_upgrade: bool = False) -> dict
         result = _git(["rev-parse", "HEAD"])
         if result.returncode == 0:
             local_sha = result.stdout.strip()
+    if not local_sha and not has_git:
+        archive_sha = local.get("source_commit")
+        if isinstance(archive_sha, str) and re.fullmatch(r"[0-9a-f]{40}", archive_sha):
+            local_sha = archive_sha
     if not local_sha and os.path.isfile(_installed_sha_file()):
         with open(_installed_sha_file()) as f:
             local_sha = f.read().strip()
@@ -5263,7 +5307,8 @@ def _check_update_sync(force: bool = False, _auto_upgrade: bool = False) -> dict
     if has_git:
         changed = _git(["status", "--porcelain", "--", *TRACKED_REPO_PATHS])
         local_dirty = changed.returncode == 0 and bool(changed.stdout.strip())
-    remote_version, remote_sha, remote_commit, remote_msg, remote_time = "", "", "", "", ""
+    remote_version, remote_msg, remote_time = "", "", ""
+    remote_commit = _remote_update_commit()
     commits, highlights, highlights_en, highlights_vi, errors = [], [], [], [], []
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "muse2api-updater"}
     token = _read_env_key("GITHUB_TOKEN")
@@ -5272,18 +5317,23 @@ def _check_update_sync(force: bool = False, _auto_upgrade: bool = False) -> dict
     try:
         response = requests.get(
             f"https://api.github.com/repos/{REPO_SLUG}/commits",
-            params={"sha": REPO_REF, "per_page": 5}, headers=headers, timeout=6)
+            params={"sha": remote_commit or REPO_REF, "per_page": 5}, headers=headers, timeout=6)
         response.raise_for_status()
         raw_commits = response.json()
-        remote_commit = raw_commits[0]["sha"] if raw_commits else ""
-        for commit in raw_commits:
-            info = commit.get("commit") or {}
-            commits.append({"sha": commit["sha"][:7], "message": info.get("message", "").split("\n")[0],
-                            "date": (info.get("committer") or {}).get("date", ""),
-                            "url": commit.get("html_url") or REPO_URL})
-        if commits:
-            remote_sha, remote_msg, remote_time = (commits[0][k] for k in ("sha", "message", "date"))
+        if raw_commits:
+            head = raw_commits[0]["sha"]
+            if not remote_commit and re.fullmatch(r"[0-9a-f]{40}", head):
+                remote_commit = head
+            if head == remote_commit:
+                for commit in raw_commits:
+                    info = commit.get("commit") or {}
+                    commits.append({"sha": commit["sha"][:7], "message": info.get("message", "").split("\n")[0],
+                                    "date": (info.get("committer") or {}).get("date", ""),
+                                    "url": commit.get("html_url") or REPO_URL})
+                remote_msg, remote_time = (commits[0][k] for k in ("message", "date"))
     except Exception:
+        pass
+    if not remote_commit:
         errors.append("远端提交读取失败")
     # Pin release notes and version to the same commit as the reported remote SHA.
     try:
@@ -5302,12 +5352,14 @@ def _check_update_sync(force: bool = False, _auto_upgrade: bool = False) -> dict
     try:
         relation = _compare_update_commits(local_sha, remote_commit, has_git, headers)
     except Exception:
-        errors.append("Không xác minh được quan hệ giữa hai commit.")
+        pass
+    if relation == "unknown" and local_sha and remote_commit:
+        errors.append("Không xác minh được bản mới nối tiếp bản đang chạy.")
     verified = relation != "unknown" and bool(remote_version)
     has_update = verified and relation == "ahead"
     data = {"repo_url": REPO_URL, "repo_ref": REPO_REF, "has_git": has_git,
             "local_version": local_version, "local_sha": local_sha[:7], "remote_relation": relation,
-            "remote_version": remote_version, "remote_sha": remote_sha, "remote_commit": remote_commit,
+            "remote_version": remote_version, "remote_sha": remote_commit[:7], "remote_commit": remote_commit,
             "remote_msg": remote_msg, "remote_time": remote_time,
             "has_update": has_update, "up_to_date": (relation in ("identical", "behind") and not local_dirty) if verified else None,
             "local_dirty": local_dirty,
@@ -5433,7 +5485,7 @@ def _install_source_archive(content):
 @app.get("/admin/repo/status")
 async def admin_check_update(force: bool = False):
     """供所有已部署节点实时检测 GitHub 官方仓库是否有新版本更新。"""
-    return await asyncio.to_thread(_check_update_sync, force)
+    return JSONResponse(await asyncio.to_thread(_check_update_sync, force), headers=NO_STORE)
 
 
 @app.post("/admin/update/upgrade")

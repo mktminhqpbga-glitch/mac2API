@@ -35,7 +35,8 @@ class ReleaseIntegrationTests(unittest.TestCase):
     def test_api_version_matches_release_metadata(self):
         self.assertEqual(app.app.openapi()['info']['version'], app._read_local_version()['version'])
 
-    def test_remote_metadata_is_bound_to_the_reported_commit(self):
+    @patch.object(app, "_remote_update_commit", return_value="")
+    def test_remote_metadata_is_bound_to_the_reported_commit(self, _git_tip):
         seen=[]
         def get(url,**kw):seen.append(url);return remote(url,**kw)
         with patch('requests.get',side_effect=get),patch.object(app,'_read_local_version',return_value={'version':'1.6.10'}),patch.dict(os.environ,{'MUSE2API_BUILD_SHA':'a'*40}):
@@ -45,7 +46,8 @@ class ReleaseIntegrationTests(unittest.TestCase):
         self.assertEqual(data['highlights_vi'], ['Bản thử tiếng Việt'])
         self.assertTrue(any('/'+COMMIT+'/version.json' in url for url in seen),seen)
 
-    def test_git_worktree_reports_its_real_commit(self):
+    @patch.object(app, "_remote_update_commit", return_value="")
+    def test_git_worktree_reports_its_real_commit(self, _git_tip):
         expected=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()[:7]
         with patch('requests.get',side_effect=remote),patch.dict(os.environ,{'MUSE2API_BUILD_SHA':''}):
             data=app._check_update_sync(force=True)

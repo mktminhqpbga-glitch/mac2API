@@ -1,5 +1,10 @@
 # Nhật ký và bàn giao mac2API
 
+## 1.6.30
+
+- Đọc commit mới nhất từ Git khi kiểm tra cập nhật. Nếu GitHub giới hạn API, dùng lịch sử Git để xác minh bản mới.
+- Gói nguồn lưu mã commit. Bảng cập nhật giải thích lý do khi cần cài thủ công hoặc cập nhật qua máy chủ.
+
 ## 1.6.29
 
 - Đưa luồng thêm hồ sơ chạy ngầm lên đầu trang ChatGPT và Gemini. Mỗi hồ sơ hiển thị trạng thái và hướng dẫn đăng nhập, kiểm tra rồi bật.
