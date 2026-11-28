@@ -1,5 +1,11 @@
 # Nhật ký và bàn giao mac2API
 
+## 1.6.29
+
+- Đưa luồng thêm hồ sơ chạy ngầm lên đầu trang ChatGPT và Gemini. Mỗi hồ sơ hiển thị trạng thái và hướng dẫn đăng nhập, kiểm tra rồi bật.
+- Chuyển tiện ích Chrome, cách kết nối mặc định và cấu hình proxy vào các mục mở rộng. Giữ địa chỉ và khóa MacFlow ngay trên trang dịch vụ.
+- Mở **Thử API** từ trang dịch vụ sẽ chọn sẵn mô hình văn bản và ảnh của dịch vụ đó.
+
 ## 1.6.28
 
 - Mục **Thử API** giữ mô tả và mã theo dõi ảnh/video khi tải lại cùng tab. Khi lấy lại kết quả, mac2API tra cứu tác vụ đã gửi. Với khóa người dùng, nhập lại khóa để xem tác vụ của khóa đó.

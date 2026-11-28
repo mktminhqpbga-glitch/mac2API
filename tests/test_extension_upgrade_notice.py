@@ -10,7 +10,7 @@ html=(root/'admin.html').read_text()
 assert 'id="extensionUpgradeNotice"' in html and '"extension-upgrade-notice":' in html
 assert html.index('id="tab-pool"') < html.index('id="museExtension"') < html.index('id="extensionUpgradeNotice"') < html.index('id="tab-tasks"')
 assert 'href="/admin/extension"' in html
-setup = html.split('id="chatProviderTemplate"', 1)[1].split('</template>', 1)[0]
+setup = html.split('id="webBrowserOptionsTemplate"', 1)[1].split('</template>', 1)[0]
 assert 'chrome://inspect/#remote-debugging' in setup and '--user-data-dir' not in setup
 assert "releases/download/" not in html.split('id="extensionUpgradeNotice"', 1)[1].split('</div>', 1)[0]
 assert 'id="extensionVersion"' in (root/'extension/popup.html').read_text()

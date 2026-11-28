@@ -94,10 +94,60 @@ def check_dashboard(app, page, url):
         page.js("$('clientDismiss').click()")
         wait(lambda: page.js("!$('clientKeyDialog').open"))
 
-    for tab, provider in (("openai", "chatgpt"), ("gemini", "gemini-web")):
+    browser_tabs = (("openai", "chatgpt"), ("gemini", "gemini-web"))
+    with patch.object(app, "visible_chrome_available", return_value=True), \
+         patch.object(app.managed_web, "login") as open_login:
+        for tab, provider in browser_tabs:
+            page.js(f"goTab('{tab}')")
+            panel = f"$('tab-{tab}')"
+            form = f"{panel}.querySelector('[data-web-account-create]')"
+            status = f"{panel}.querySelector('[data-web-accounts-status]')"
+            rows = f"{panel}.querySelector('[data-web-accounts]')"
+            advanced = f"{panel}.querySelector('[data-connection-settings]')"
+            wait(lambda: page.js(f"{form}.getClientRects().length > 0"))
+            assert page.js(f"""!{advanced}.open &&
+                !{panel}.querySelector('[data-web-extension] a').getClientRects().length &&
+                {form}.getBoundingClientRect().top < {panel}.querySelector('[data-public-url]').getBoundingClientRect().top""")
+            page.js(f"{form}.elements.label.value='   ';{form}.requestSubmit()")
+            assert page.js(f"{status}.dataset.error === 'true'")
+            label = "Hồ sơ " + provider
+            page.js(f"{form}.elements.label.value={json.dumps(label)};{form}.requestSubmit()")
+            wait(lambda: page.js(f"{rows}.textContent.includes({json.dumps(label)}) && !{form}.elements.label.value"))
+
+            def button(text):
+                return f"[...{rows}.querySelectorAll('button')].find(button => button.textContent === {json.dumps(text)})"
+
+            assert page.js(f"{button('Bật')}.disabled && !{button('Proxy')}.getClientRects().length")
+            page.js(f"{button('Đăng nhập')}.click()")
+            wait(lambda: page.js(f"{status}.textContent.includes('cửa sổ vừa mở')"))
+            assert open_login.call_args.args[0]["provider"] == provider
+            with patch.object(app.web_providers, "check_managed", side_effect=app.WebSessionUnavailable()):
+                page.js(f"{button('Kiểm tra')}.click()")
+                wait(lambda: page.js(f"{status}.textContent.includes('Chưa xác nhận được')"))
+                assert page.js(f"{button('Bật')}.disabled")
+            with patch.object(app.web_providers, "check_managed"):
+                page.js(f"{button('Kiểm tra')}.click()")
+                wait(lambda: page.js(f"{status}.textContent.includes('Bấm Bật') && !{button('Bật')}.disabled"))
+            page.js(f"{button('Bật')}.click()")
+            wait(lambda: page.js(f"{rows}.textContent.includes('Sẵn sàng') && {status}.textContent.includes('Đã bật')"))
+            saved = next(account for account in app.ManagedWebAccounts(app.CFG).list_accounts()
+                         if account["provider"] == provider)
+            assert saved["verified"] and saved["enabled"] and not saved["proxy"]
+            page.send("Page.reload")
+            wait(lambda: page.js(f"{rows}.textContent.includes('Sẵn sàng') && !{advanced}.open"))
+            page.send("Emulation.setDeviceMetricsOverride",
+                      {"width": 320, "height": 760, "deviceScaleFactor": 1, "mobile": False})
+            assert page.js("document.documentElement.scrollWidth <= innerWidth + 1")
+            page.send("Emulation.clearDeviceMetricsOverride")
+            page.js(f"{panel}.querySelector('[data-open-try]').click()")
+            wait(lambda: page.js(f"$('playTextModel').value === '{provider}/text' && "
+                                 f"$('playImageModel').value === '{provider}/image'"))
+
+    for tab, provider in browser_tabs:
         aid = app.chrome_bridge.pair(provider, "c" * 32, "Hồ sơ thử proxy").split(".")[0]
         page.js(f"goTab('{tab}')")
         panel = f"$('tab-{tab}')"
+        page.js(f"{panel}.querySelector('[data-connection-settings]').open = true")
         wait(lambda: page.js(f"""Boolean({panel}.querySelector('[data-web-extension] a[download]').getClientRects().length)"""))
         wait(lambda: page.js(f"{panel}.querySelector('[data-web-extension-accounts]').textContent.includes('Hồ sơ thử proxy')"))
         page.js(f"""[...{panel}.querySelectorAll('[data-web-extension-accounts] button')]
@@ -116,7 +166,7 @@ def check_dashboard(app, page, url):
     page.js("loadChatProvider('gemini')", await_promise=True)
     page.js("""[...$('tab-gemini').querySelectorAll('[data-web-extension-accounts] button')]
         .find(button => button.textContent === 'Ngắt liên kết').click()""")
-    wait(lambda: page.js("$('tab-gemini').querySelector('[data-web-accounts-status]').textContent.includes('Đã ngắt liên kết')"))
+    wait(lambda: page.js("$('tab-gemini').querySelector('[data-web-extension-status]').textContent.includes('Đã ngắt liên kết')"))
     assert not any(item["id"] == aid for item in app.chrome_bridge.list_accounts())
 
     def screenshot(name):
@@ -305,8 +355,9 @@ def check_dashboard(app, page, url):
                                      result={"filename": filename, "kind": "image", "size": len(picture)})
 
     with patch.object(app, "_dispatch_media_task", side_effect=complete_play_image) as dispatched:
-        page.js("""goTab('play');
-            const originalFetch = window.fetch;
+        page.js("goTab('play')")
+        wait(lambda: page.js("!$('playDiscover').disabled && $('playImageModel').value === 'muse/image'"))
+        page.js("""const originalFetch = window.fetch;
             window.fetch = async (url, options) => {
               const response = await originalFetch(url, options);
               if (url === '/v1/images/tasks' && options.method === 'POST') throw new TypeError('offline');

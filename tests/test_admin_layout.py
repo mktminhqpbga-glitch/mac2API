@@ -96,7 +96,7 @@ class Handler(BaseHTTPRequestHandler):
   self.send_response(200);self.send_header('Content-Type','application/json');self.end_headers();self.wfile.write(data)
 server=ThreadingHTTPServer(('127.0.0.1',0),Handler);threading.Thread(target=server.serve_forever,daemon=True).start()
 with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
-with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
+with tempfile.TemporaryDirectory(prefix='muse-layout-') as home:
  ffmpeg=shutil.which('ffmpeg')
  assert ffmpeg, 'Install FFmpeg for media UI integration checks'
  clip=Path(home)/'fixture.mp4';thumb=Path(home)/'fixture.jpg'
@@ -131,7 +131,8 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
    node=f"$('tab-{tab}')"
    wait(f"{node}.querySelector('[name=image_model]').value.length > 0")
    assert page.js(f"{node}.querySelector('[name=mode]').value === 'browser' && {node}.querySelector('[data-public-url]').value.endsWith('/{scope}/v1')")
-   page.js(f"""{{const form={node}.querySelector('form'); form.elements.mode.value='external';
+   page.js(f"""{{{node}.querySelector('[data-connection-settings] > summary').click();
+      const form={node}.querySelector('.gateway-form'); form.elements.mode.value='external';
       form.elements.mode.dispatchEvent(new Event('change')); form.elements.gateway_url.value='http://127.0.0.1:10020';
       if ('{provider}' === 'chatgpt') form.elements.gateway_key.value='fixture-gateway';
       form.querySelector('button[type=submit]').click();}}""")
@@ -143,7 +144,7 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
    page.send('Emulation.setDeviceMetricsOverride',{'width':390,'height':844,'deviceScaleFactor':1,'mobile':False})
    assert page.js("document.documentElement.scrollWidth === document.documentElement.clientWidth")
    page.send('Emulation.clearDeviceMetricsOverride')
-   page.js(f"""{{const form={node}.querySelector('form'); form.elements.mode.value='official';
+   page.js(f"""{{const form={node}.querySelector('.gateway-form'); form.elements.mode.value='official';
       form.elements.mode.dispatchEvent(new Event('change')); form.elements.official_key.value='fixture-provider-key';
       form.querySelector('button[type=submit]').click();}}""")
    wait(f"{node}.querySelector('[data-connection-status]').textContent.includes('trực tiếp và chọn làm mặc định')")
@@ -155,9 +156,11 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
    page.send('Emulation.clearDeviceMetricsOverride')
   page.js("""{const mode=$('tab-gemini').querySelector('[name=mode]'); mode.value='browser';
      mode.dispatchEvent(new Event('change'));}""")
-  wait("$('tab-gemini').querySelector('[data-provider-status]').textContent.includes('Chưa kết nối')")
+  assert page.js("$('tab-gemini').querySelector('[data-chrome-panel]').hidden")
+  page.js("$('tab-gemini').querySelector('.gateway-form button[type=submit]').click()")
+  wait("!$('tab-gemini').querySelector('[data-chrome-panel]').hidden && $('tab-gemini').querySelector('[data-provider-status]').textContent.includes('Chưa kết nối')")
   assert page.js("$('tab-gemini').querySelector('[data-web-extension]').getClientRects().length && !$('tab-gemini').querySelector('[data-web-setup]').open && !$('extensionUpgradeNotice').getClientRects().length")
-  page.js("$('tab-gemini').querySelector('[data-web-connect]').click()")
+  page.js("$('tab-gemini').querySelector('[data-web-setup] summary').click();$('tab-gemini').querySelector('[data-web-connect]').click()")
   wait("$('tab-gemini').querySelector('[data-provider-status]').textContent.includes('Đã kết nối Chrome')")
   assert any(item['path']=='/admin/web-providers/connect-profile' for item in events)
   assert page.js("$('tab-gemini').querySelector('[data-provider-test]').disabled")

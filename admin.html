@@ -52,7 +52,7 @@
   .advanced-settings{padding:11px 0;border-top:1px solid var(--line)}
   .advanced-settings>summary{cursor:pointer;color:var(--muted);font-weight:600}
   .advanced-settings[open]>summary{margin-bottom:11px}
-  details:is(.advanced-settings,.nav-advanced,[data-task-diagnostic]):not([open])>:not(summary){display:none}
+  details:is(.advanced-settings,.nav-advanced,.web-account-settings,[data-task-diagnostic]):not([open])>:not(summary){display:none}
   nav.tabs button{background:transparent;border:1px solid transparent;color:var(--muted);
     padding:8px 11px;text-align:left;font-size:13px;min-height:37px;border-radius:9px}
   nav.tabs button:hover{color:var(--text);background:var(--panel2)}
@@ -302,6 +302,10 @@
   [data-web-setup]{padding:13px 0;margin:12px 0 0;border-top:1px solid var(--line)}
   [data-web-account-create]{display:flex;gap:9px;align-items:flex-end;flex-wrap:wrap;margin:12px 0}
   [data-web-account-create] label{width:min(100%,280px);margin:0}
+  [data-web-accounts] strong{overflow-wrap:anywhere}
+  .web-account-settings{grid-column:1/-1}
+  .web-account-settings summary{cursor:pointer;font-size:12px;color:var(--muted)}
+  .web-account-settings .acts{margin-top:8px}
   .section-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,370px),1fr));gap:14px;align-items:start}
   .section-grid .card{margin-bottom:0}
   .toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin:12px 0}
@@ -644,16 +648,21 @@
       </div>
     </div>
   </section>
-  <section class="tab" id="tab-openai"><div data-chrome-panel hidden></div></section>
-  <section class="tab" id="tab-gemini"><div data-chrome-panel hidden></div></section>
+  <section class="tab" id="tab-openai"></section>
+  <section class="tab" id="tab-gemini"></section>
   <template id="webConnectionTemplate">
+    <div data-chrome-panel hidden></div>
     <div class="card">
-      <h2>Cách kết nối</h2>
+      <div data-provider-output></div>
+      <button type="button" class="ghost" data-open-try>Mở Thử API</button>
+    </div>
+    <details class="card advanced-settings" data-connection-settings>
+      <summary><span data-ui="advanced">Cài đặt nâng cao</span><span data-connection-mode></span></summary>
       <form class="gateway-form">
         <label>Kết nối mặc định
           <select name="mode">
+            <option value="browser" selected>Tài khoản web</option>
             <option value="official"></option>
-            <option value="browser" selected>Tài khoản web (Chrome hoặc hồ sơ riêng)</option>
             <option value="external" hidden></option>
           </select>
         </label>
@@ -679,14 +688,11 @@
           </details>
           <p class="hint"><a data-gateway-help target="_blank" rel="noopener noreferrer">Xem hướng dẫn của dịch vụ</a></p>
         </div>
-        <div class="row">
-          <button type="submit">Lưu cách kết nối</button>
-          <button type="button" data-open-try>Mở Thử API</button>
-        </div>
+        <button type="submit">Lưu cách kết nối</button>
         <p class="hint status-text" data-connection-status role="status"></p>
       </form>
-      <div class="advanced-settings" data-provider-output></div>
-    </div>
+      <div class="advanced-settings" data-browser-options hidden></div>
+    </details>
   </template>
   <template id="providerOutputTemplate">
     <h3 data-ui="apiOutput">API đầu ra</h3>
@@ -718,43 +724,48 @@
       <p class="hint status-text" data-official-result role="status"></p>
     </form>
   </template>
-  <template id="chatProviderTemplate">
-    <div class="card">
-      <h3 data-provider-title></h3>
-      <p class="hint" data-provider-status role="status"></p>
-      <div data-web-extension>
-        <div class="acts">
-          <a class="btnlike" href="/admin/extension" download>Tải tiện ích Chrome 1.0.13</a>
-          <button type="button" class="ghost" data-web-copy-key>Sao chép khóa quản trị</button>
-        </div>
-        <p class="hint">Mở tab <strong data-web-service></strong> đã đăng nhập, mở tiện ích, dán khóa quản trị rồi bấm đúng tên dịch vụ. Tiện ích mặc định dùng địa chỉ mac2API trên máy này.</p>
-        <div data-web-extension-accounts></div>
+  <template id="webBrowserOptionsTemplate">
+    <h3>Kết nối bằng tiện ích Chrome</h3>
+    <p class="hint status-text" data-provider-status role="status"></p>
+    <div data-web-extension>
+      <div class="acts">
+        <a class="btnlike" href="/admin/extension" download>Tải tiện ích Chrome 1.0.13</a>
+        <button type="button" class="ghost" data-web-copy-key>Sao chép khóa quản trị</button>
       </div>
-      <details class="advanced-settings" data-web-advanced>
-        <summary data-ui="advanced">Cài đặt nâng cao</summary>
-        <details data-web-setup>
-          <summary>Kết nối qua Chrome DevTools</summary>
-        <ol>
-          <li>Trong Chrome 144 trở lên, dán <code>chrome://inspect/#remote-debugging</code> vào thanh địa chỉ và bật gỡ lỗi từ xa.</li>
-          <li>Bấm <b>Kết nối Chrome</b> bên dưới rồi chọn <b>Cho phép</b> khi Chrome hỏi.</li>
-          <li>Mở tiện ích trong tab đã đăng nhập. Vào <b>Tùy chọn kết nối nâng cao</b>, bỏ chọn chế độ chạy trực tiếp rồi bấm <b data-web-extension-button></b>.</li>
-        </ol>
+      <p class="hint">Mở tab <strong data-web-service></strong> đã đăng nhập, mở tiện ích, dán khóa quản trị rồi bấm đúng tên dịch vụ. Tiện ích mặc định dùng địa chỉ mac2API trên máy này.</p>
+      <div data-web-extension-accounts></div>
+    </div>
+    <details class="advanced-settings" data-web-setup hidden>
+      <summary>Kết nối qua Chrome DevTools</summary>
+      <ol>
+        <li>Trong Chrome 144 trở lên, dán <code>chrome://inspect/#remote-debugging</code> vào thanh địa chỉ và bật gỡ lỗi từ xa.</li>
+        <li>Bấm <b>Kết nối Chrome</b> bên dưới rồi chọn <b>Cho phép</b> khi Chrome hỏi.</li>
+        <li>Mở tiện ích trong tab đã đăng nhập. Vào <b>Tùy chọn kết nối nâng cao</b>, bỏ chọn chế độ chạy trực tiếp rồi bấm <b data-web-extension-button></b>.</li>
+      </ol>
+      <div class="acts">
         <button type="button" class="ghost" data-web-copy>Sao chép địa chỉ cài đặt Chrome</button>
         <button type="button" data-web-connect>Kết nối Chrome</button>
-        </details>
-      </details>
-      <p class="hint" data-web-remote hidden>Chrome phải chạy cùng máy với mac2API. Bản trên Render không truy cập Chrome đang mở trên máy Mac của bạn.</p>
-      <button type="button" class="ghost" data-provider-test>Kiểm tra phiên trình duyệt</button>
-      <p class="hint" data-web-accounts-status role="status"></p>
-    </div>
-    <div class="card" data-web-accounts-panel hidden>
-      <h3 data-ui="chromiumAccounts">Tài khoản Chromium</h3>
-      <p class="hint">Dùng hồ sơ riêng khi cần đặt proxy cho từng tài khoản.</p>
-      <p class="hint" data-web-headless hidden>Cần mở mac2API trên máy có màn hình để thêm hồ sơ và đăng nhập.</p>
+        <button type="button" class="ghost" data-provider-test>Kiểm tra phiên trình duyệt</button>
+      </div>
+    </details>
+    <p class="hint" data-web-remote hidden>Chrome phải chạy cùng máy với mac2API. Bản trên Render không truy cập Chrome đang mở trên máy Mac của bạn.</p>
+    <p class="hint status-text" data-web-extension-status role="status"></p>
+  </template>
+  <template id="webAccountsTemplate">
+    <div class="card" data-web-accounts-panel>
+      <h2 data-web-account-title></h2>
+      <p class="hint" data-web-account-guide hidden>Thêm hồ sơ rồi đăng nhập trong cửa sổ mac2API mở. Sau đó bấm <strong>Kiểm tra</strong> và <strong>Bật</strong> để hồ sơ có thể chạy tác vụ ngầm.</p>
+      <div data-web-headless hidden>
+        <p class="hint">Máy đang chạy mac2API cần có giao diện để mở cửa sổ đăng nhập.</p>
+        <button type="button" class="ghost" data-web-open-options>Mở tùy chọn kết nối</button>
+      </div>
       <form data-web-account-create hidden>
         <label><span data-ui="accountName">Tên tài khoản</span><input type="text" name="label" maxlength="120" required></label>
         <button type="submit">Thêm hồ sơ</button>
       </form>
+      <p class="hint status-text" data-web-accounts-status role="status"></p>
+      <p class="hint" data-web-extension-priority hidden>Tiện ích Chrome đang được ưu tiên. Để thử hồ sơ chạy ngầm, tắt tài khoản tiện ích trong Cài đặt nâng cao hoặc dùng khóa riêng đã chọn hồ sơ này.</p>
+      <p class="hint" data-web-account-empty hidden>Chưa có hồ sơ riêng.</p>
       <div data-web-accounts></div>
     </div>
   </template>
@@ -2834,7 +2845,7 @@ const uiCopy = {
   filterUsage:['Lọc lượt sử dụng','Filter usage','筛选用量'], usageDetails:['Chi tiết lượt sử dụng','Usage details','用量详情'],
   defaultModel:['Mô hình mặc định','Default model','默认模型'], providerKey:['Khóa API của nhà cung cấp','Provider API key','服务商 API 密钥'],
   testConnection:['Kiểm tra kết nối','Test connection','测试连接'], removeKey:['Gỡ khóa đã lưu','Remove saved key','删除已保存的密钥'],
-  chromiumAccounts:['Tài khoản Chromium','Chromium accounts','Chromium 账号'], accountName:['Tên tài khoản','Account name','账号名称'],
+  accountName:['Tên tài khoản','Account name','账号名称'],
   providerType:['AI và loại','Provider and type','服务商与类型'], allProviders:['Tất cả AI','All providers','所有服务商'],
   findTask:['Tìm mã tác vụ','Find task ID','搜索任务 ID'],
   playAccess:['Quyền dùng để thử API','API test credentials','API 测试凭据'], accessMode:['Dùng quyền','Test with','使用权限'],
@@ -2877,7 +2888,7 @@ function goTab(name){
   if (button) button.click();
 }
 
-function showTab(name, {navigate = false, focus = false} = {}){
+function showTab(name, {navigate = false, focus = false, playProvider} = {}){
   const button = navButtons.find(item => item.dataset.t === name);
   const advanced = button?.closest('.nav-advanced');
   if (advanced) advanced.open = true;
@@ -2906,10 +2917,10 @@ function showTab(name, {navigate = false, focus = false} = {}){
   $('pageContext').textContent = pageContexts[name]?.[uiLang] || '';
   if (navigate && location.hash !== '#' + name) history.pushState(null, '', '#' + name);
   if (focus) $('pageTitle').focus();
-  loadActiveTab();
+  loadActiveTab(playProvider);
 }
 
-function loadActiveTab(){
+function loadActiveTab(playProvider){
   switch (activeTab) {
     case 'overview': return loadOverview();
     case 'pool': $('cmdText').textContent = buildCmd($('inBase').value); return loadPool();
@@ -2922,7 +2933,7 @@ function loadActiveTab(){
     case 'usage': return loadUsageView();
     case 'media': return loadMedia();
     case 'official': return loadOfficialProviders();
-    case 'play': return $('playAuthMode').value === 'admin' ? loadPlayModels() : undefined;
+    case 'play': return $('playAuthMode').value === 'admin' ? loadPlayModels(playProvider) : undefined;
   }
 }
 navButtons.forEach(button => {
@@ -3890,9 +3901,10 @@ function setupProviderOutput(container, provider){
 
 function setupWebConnection(tab, provider){
   const section = $('tab-' + tab);
-  const card = $('webConnectionTemplate').content.firstElementChild.cloneNode(true);
-  section.prepend(card);
-  const form = card.querySelector('form');
+  section.append($('webConnectionTemplate').content.cloneNode(true));
+  const advanced = section.querySelector('[data-connection-settings]');
+  const activeMode = advanced.querySelector('[data-connection-mode]');
+  const form = advanced.querySelector('form');
   const mode = form.elements.mode;
   const model = form.elements.image_model;
   const status = form.querySelector('[data-connection-status]');
@@ -3901,6 +3913,7 @@ function setupWebConnection(tab, provider){
   const {official_key: officialKey, official_text_model: officialText} = form.elements;
   const external = form.querySelector('[data-external-connection]');
   const chromePanel = section.querySelector('[data-chrome-panel]');
+  const browserOptions = section.querySelector('[data-browser-options]');
   const {gateway_url: gatewayUrl, gateway_key: gatewayKey, gateway_text_model: gatewayText,
     gateway_image_model: gatewayImage, remove_gateway_key: removeKey} = form.elements;
   const save = form.querySelector('button[type=submit]');
@@ -3924,8 +3937,8 @@ function setupWebConnection(tab, provider){
     ? 'https://github.com/basketikun/chatgpt2api' : 'https://github.com/ntthanh2603/gemini-web-to-api';
   gatewayUrl.placeholder = chatgpt ? 'http://127.0.0.1:3000/v1' : 'http://127.0.0.1:4981/openai/v1';
 
-  setupProviderOutput(card.querySelector('[data-provider-output]'), provider);
-  form.querySelector('[data-open-try]').onclick = () => goTab('play');
+  setupProviderOutput(section.querySelector('[data-provider-output]'), provider);
+  section.querySelector('[data-open-try]').onclick = () => showTab('play', {navigate:true, focus:true, playProvider:provider});
 
   function showStatus(message, failed = false){
     status.dataset.error = String(failed);
@@ -3938,7 +3951,7 @@ function setupWebConnection(tab, provider){
     const useOfficial = mode.value === 'official';
     official.hidden = officialModels.hidden = !useOfficial;
     external.hidden = !useGateway;
-    chromePanel.hidden = !state || mode.value !== 'browser';
+    chromePanel.hidden = browserOptions.hidden = state?.mode !== 'browser';
     mode.disabled = !state || busy;
     save.disabled = !state || busy;
     save.textContent = useGateway || useOfficial ? 'Lưu và kiểm tra kết nối' : 'Lưu cách kết nối';
@@ -3963,6 +3976,7 @@ function setupWebConnection(tab, provider){
   }
 
   function render(settings){
+    if (!state && settings.mode !== 'browser') advanced.open = true;
     state = settings;
     externalOption.hidden = !settings.external_configured && settings.mode !== 'external';
     mode.value = settings.mode;
@@ -3971,6 +3985,8 @@ function setupWebConnection(tab, provider){
     officialKey.placeholder = settings.official_key_from_env ? 'Đang dùng khóa đặt trên máy chủ'
       : settings.official_configured ? 'Để trống để giữ khóa đã lưu' : '';
     model.value = settings.image_model;
+    activeMode.textContent = settings.mode === 'official' ? ' · ' + officialName
+      : settings.mode === 'external' ? ' · ' + gatewayName : '';
     updateControls();
     let message = '';
     if (settings.mode === 'official') message = settings.official_configured
@@ -3991,7 +4007,10 @@ function setupWebConnection(tab, provider){
         render(settings);
         if (!chromePanel.hidden) await loadChatProvider(tab);
       }
-    } catch (error) { showStatus(error.message, true); }
+    } catch (error) {
+      if (activeTab === tab) advanced.open = true;
+      showStatus(error.message, true);
+    }
   }
 
   async function submit(){
@@ -4041,13 +4060,14 @@ function setupWebConnection(tab, provider){
   mode.onchange = () => {
     showStatus('');
     updateControls();
-    if (!chromePanel.hidden) loadChatProvider(tab);
   };
   removeKey.onchange = updateControls;
   window.addEventListener('mac2api:reset', () => {
     state = undefined;
     gatewayState = undefined;
     form.reset();
+    advanced.open = false;
+    activeMode.textContent = '';
     officialKey.placeholder = '';
     externalOption.hidden = true;
     gatewayKey.placeholder = '';
@@ -4068,15 +4088,18 @@ const chatProviderPanels = new Map([
   ['gemini', 'gemini-web', 'Gemini'],
 ].map(([tab, id, name]) => {
   const panel = $('tab-' + tab);
-  panel.querySelector('[data-chrome-panel]').append($('chatProviderTemplate').content.cloneNode(true));
+  panel.querySelector('[data-chrome-panel]').append($('webAccountsTemplate').content.cloneNode(true));
+  panel.querySelector('[data-browser-options]').append($('webBrowserOptionsTemplate').content.cloneNode(true));
   localizeUi(panel);
-  panel.querySelector('[data-provider-title]').textContent = 'Kết nối ' + name;
+  panel.querySelector('[data-web-account-title]').textContent = 'Hồ sơ ' + name + ' chạy ngầm';
   const test = panel.querySelector('[data-provider-test]');
   const status = panel.querySelector('[data-provider-status]');
   const setup = panel.querySelector('[data-web-setup]');
   const extensionAccounts = panel.querySelector('[data-web-extension-accounts]');
+  const extensionStatus = panel.querySelector('[data-web-extension-status]');
   const connect = panel.querySelector('[data-web-connect]');
   const accountPanel = panel.querySelector('[data-web-accounts-panel]');
+  const extensionPriority = accountPanel.querySelector('[data-web-extension-priority]');
   const accountsList = panel.querySelector('[data-web-accounts]');
   const accountStatus = panel.querySelector('[data-web-accounts-status]');
   const accountForm = panel.querySelector('[data-web-account-create]');
@@ -4084,29 +4107,48 @@ const chatProviderPanels = new Map([
   const devtools = id === 'gemini-web';
   panel.querySelector('[data-web-service]').textContent = name;
   panel.querySelector('[data-web-extension-button]').textContent = name;
-  panel.querySelector('[data-web-advanced]').hidden = test.hidden = !devtools;
   panel.querySelector('[data-web-copy-key]').onclick = () => copyKey();
   panel.querySelector('[data-web-copy]').onclick = () => copyText('chrome://inspect/#remote-debugging');
+  panel.querySelector('[data-web-open-options]').onclick = () => {
+    const advanced = panel.querySelector('[data-connection-settings]');
+    advanced.open = true;
+    advanced.querySelector('summary').focus();
+  };
 
-  async function accountAction(path, options, message) {
+  async function accountAction(path, options, message, feedback = accountStatus) {
+    feedback.dataset.error = 'false';
+    feedback.textContent = 'Đang xử lý…';
+    let failure = '';
     try {
       await api(path, options);
-      render(await api('/admin/web-providers'));
-      accountStatus.textContent = message;
-      return true;
     } catch (error) {
-      accountStatus.textContent = error.message;
-      return false;
+      failure = error.message;
     }
+    try {
+      render(await api('/admin/web-providers'));
+    } catch {
+      message += ' Bấm Làm mới để cập nhật danh sách.';
+    }
+    feedback.dataset.error = String(Boolean(failure));
+    feedback.textContent = failure || message;
+    return !failure;
   }
 
   accountForm.onsubmit = async event => {
     event.preventDefault();
     const button = accountForm.querySelector('button');
+    const label = accountForm.elements.label.value.trim();
+    if (button.disabled) return;
+    if (!label) {
+      accountStatus.dataset.error = 'true';
+      accountStatus.textContent = 'Hãy nhập tên cho hồ sơ.';
+      accountForm.elements.label.focus();
+      return;
+    }
     button.disabled = true;
     try {
-      if (await accountAction(accountsPath, {method: 'POST', body: JSON.stringify({label: accountForm.elements.label.value.trim()})},
-                              'Đã thêm hồ sơ. Chọn Proxy nếu cần, rồi bấm Đăng nhập.')) accountForm.reset();
+      if (await accountAction(accountsPath, {method: 'POST', body: JSON.stringify({label})},
+                              'Đã thêm hồ sơ ' + label + '. Bấm Đăng nhập bên cạnh tên hồ sơ.')) accountForm.reset();
     } finally { button.disabled = false; }
   };
 
@@ -4116,7 +4158,7 @@ const chatProviderPanels = new Map([
       button.type = 'button';
       button.disabled = Boolean(disabled || account.busy);
       button.onclick = async () => {
-        const siblings = [...buttons.querySelectorAll('button')].map(item => [item, item.disabled]);
+        const siblings = [...buttons.closest('.provider-row').querySelectorAll('button')].map(item => [item, item.disabled]);
         for (const [item] of siblings) item.disabled = true;
         try { await action(); }
         finally { for (const [item, wasDisabled] of siblings) item.disabled = wasDisabled; }
@@ -4125,10 +4167,10 @@ const chatProviderPanels = new Map([
     }
   }
 
-  function renameAccount(path, account) {
+  function renameAccount(path, account, feedback) {
     const label = window.prompt('Tên tài khoản', account.label)?.trim();
     if (label && label !== account.label) {
-      return accountAction(path, {method:'PATCH', body:JSON.stringify({label})}, 'Đã đổi tên tài khoản.');
+      return accountAction(path, {method:'PATCH', body:JSON.stringify({label})}, 'Đã đổi tên tài khoản.', feedback);
     }
   }
 
@@ -4137,36 +4179,53 @@ const chatProviderPanels = new Map([
       const data = await api('/admin/web-providers');
       render(data);
       const checked = data.extension_accounts?.find(item => item.id === account.id && item.provider === id);
-      accountStatus.textContent = checked?.verified
+      extensionStatus.dataset.error = String(!checked?.verified);
+      extensionStatus.textContent = checked?.verified
         ? 'Tiện ích đang kết nối với mac2API.'
         : 'Hãy mở Chrome và kiểm tra bạn đã đăng nhập ' + name + '. Sau đó, liên kết lại trong tiện ích.';
-    } catch (error) { accountStatus.textContent = error.message; }
+    } catch (error) {
+      extensionStatus.dataset.error = 'true';
+      extensionStatus.textContent = error.message;
+    }
   }
 
   function renderAccounts(data) {
     const entries = (data.accounts || []).filter(account => account.provider === id);
-    accountPanel.hidden = false;
     accountForm.hidden = !data.managed_login_available;
+    accountPanel.querySelector('[data-web-account-guide]').hidden = accountForm.hidden;
     accountPanel.querySelector('[data-web-headless]').hidden = data.managed_login_available;
+    accountPanel.querySelector('[data-web-account-empty]').hidden = entries.length > 0;
     accountsList.replaceChildren();
     for (const account of entries) {
       const row = document.createElement('div');
       row.className = 'provider-row';
-      const details = account.busy ? 'Đang dùng' : !account.verified ? 'Chờ kiểm tra' : account.enabled ? 'Đang bật' : 'Đã tắt';
+      const state = account.busy ? 'Đang dùng' : !account.verified ? 'Cần kiểm tra' : account.enabled ? 'Sẵn sàng' : 'Đã tắt';
+      const tone = !account.verified ? 'warn' : account.enabled ? 'ok' : 'mute';
       const description = clientElement('div');
       description.append(clientElement('strong', account.label),
-                         clientElement('p', details + (account.proxy ? ' · ' + account.proxy.server : ''), 'hint'));
+                         clientElement('p', undefined, 'hint'));
+      description.lastElementChild.append(clientElement('span', state, 'badge ' + tone));
       const buttons = clientElement('div', undefined, 'acts');
       row.append(description, buttons);
       const path = accountsPath + '/' + encodeURIComponent(account.id);
       appendAccountActions(buttons, account, [
-        ['Đăng nhập', () => accountAction(path + '/login', {method: 'POST'}, 'Đăng nhập trong cửa sổ Chromium rồi bấm Kiểm tra.'), !data.managed_login_available],
-        ['Kiểm tra', () => accountAction(path + '/test', {method: 'POST'}, 'Phiên đăng nhập đã được xác minh.'), false],
-        ['Đổi tên', () => renameAccount(path, account)],
-        ['Proxy', () => openProxy(account.id, account), false],
+        ['Đăng nhập', () => accountAction(path + '/login', {method: 'POST'},
+          'Đăng nhập trong cửa sổ vừa mở. Khi vào được trang ' + name + ', quay lại đây và bấm Kiểm tra.'), !data.managed_login_available],
+        ['Kiểm tra', () => accountAction(path + '/test', {method: 'POST'},
+          account.enabled ? 'Phiên đăng nhập dùng được.' : 'Phiên đăng nhập dùng được. Bấm Bật để chạy tác vụ.')],
         [account.enabled ? 'Tắt' : 'Bật', () => accountAction(path, {method: 'PATCH', body: JSON.stringify({enabled: !account.enabled})},
-          account.enabled ? 'Đã tắt hồ sơ.' : 'Đã bật hồ sơ.'), !account.verified && !account.enabled],
+          account.enabled ? 'Đã tắt hồ sơ.' : 'Đã bật hồ sơ. Bạn có thể mở Thử API để kiểm tra.'), !account.verified && !account.enabled],
       ]);
+      const settings = clientElement('details', undefined, 'web-account-settings');
+      const settingsButtons = clientElement('div', undefined, 'acts');
+      settings.append(clientElement('summary', 'Cài đặt tài khoản'));
+      if (account.proxy) settings.append(clientElement('p', 'Proxy đang dùng ' + account.proxy.server, 'hint'));
+      appendAccountActions(settingsButtons, account, [
+        ['Đổi tên', () => renameAccount(path, account)],
+        ['Proxy', () => openProxy(account.id, account)],
+      ]);
+      settings.append(settingsButtons);
+      row.append(settings);
       accountsList.append(row);
     }
   }
@@ -4182,7 +4241,7 @@ const chatProviderPanels = new Map([
 
   function render(data) {
     const ready = data.ready?.includes(id) ?? Boolean(data.configured);
-    const managed = data.accounts?.some(account => account.provider === id && account.enabled);
+    const managed = data.accounts?.some(account => account.provider === id && account.enabled && account.verified);
     const extensions = (data.extension_accounts || []).filter(account => account.provider === id);
     const extensionReady = extensions.some(account => account.enabled && account.verified);
     status.textContent = devtools && data.profile_connected ? 'Đã kết nối Chrome. Mở tab đã đăng nhập và chọn dịch vụ trong tiện ích.'
@@ -4191,7 +4250,7 @@ const chatProviderPanels = new Map([
     setup.hidden = !devtools || data.local_setup === false;
     panel.querySelector('[data-web-remote]').hidden = data.local_setup !== false;
     if (ready && data.linked_at?.[id]) status.textContent = 'Đã xác minh tab qua tiện ích lúc ' + fmtTime(data.linked_at[id]) + '.';
-    if (managed) status.textContent = ready ? 'Đang dùng kho hồ sơ Chromium.' : 'Hãy kiểm tra phiên của hồ sơ Chromium đã bật.';
+    extensionPriority.hidden = !(managed && extensionReady);
     if (extensionReady) status.textContent = 'Đã kết nối tiện ích Chrome. Hãy giữ cửa sổ Chrome mở.';
     else if (extensions.some(account => account.enabled) && !ready) status.textContent = 'Hồ sơ tiện ích Chrome đang ngoại tuyến hoặc cần đăng nhập lại.';
     test.disabled = !devtools || extensionReady || managed || !ready;
@@ -4204,11 +4263,11 @@ const chatProviderPanels = new Map([
       const buttons = clientElement('div', undefined, 'acts');
       appendAccountActions(buttons, account, [
         ['Kiểm tra', () => checkExtensionAccount(account)],
-        ['Đổi tên', () => renameAccount(path, account)],
+        ['Đổi tên', () => renameAccount(path, account, extensionStatus)],
         ['Proxy', () => openProxy(account.id, account, {extension:true})],
         [account.enabled ? 'Tắt' : 'Bật', () => accountAction(path, {method:'PATCH', body:JSON.stringify({enabled:!account.enabled})},
-          account.enabled ? 'Đã tắt hồ sơ.' : 'Đã bật hồ sơ.')],
-        ['Ngắt liên kết', () => accountAction(path, {method:'DELETE'}, 'Đã ngắt liên kết ' + account.label + '.')],
+          account.enabled ? 'Đã tắt hồ sơ.' : 'Đã bật hồ sơ.', extensionStatus)],
+        ['Ngắt liên kết', () => accountAction(path, {method:'DELETE'}, 'Đã ngắt liên kết ' + account.label + '.', extensionStatus)],
       ]);
       row.append(buttons);
       extensionAccounts.append(row);
@@ -4228,20 +4287,29 @@ const chatProviderPanels = new Map([
     extensionAccounts.replaceChildren();
     accountsList.replaceChildren();
     accountForm.reset();
-    accountPanel.hidden = true;
+    accountForm.hidden = true;
+    accountPanel.querySelector('[data-web-account-guide]').hidden = true;
+    accountPanel.querySelector('[data-web-headless]').hidden = true;
+    accountPanel.querySelector('[data-web-account-empty]').hidden = true;
+    extensionPriority.hidden = true;
     status.textContent = '';
     accountStatus.textContent = '';
+    extensionStatus.textContent = '';
     test.disabled = true;
   });
-  return [tab, {render, status}];
+  return [tab, {render, accountStatus}];
 }));
 
 async function loadChatProvider(id) {
   if ($('tab-' + id).querySelector('[data-chrome-panel]').hidden) return;
-  const {render, status} = chatProviderPanels.get(id);
+  const {render, accountStatus} = chatProviderPanels.get(id);
   try {
     render(await api('/admin/web-providers'));
-  } catch (error) { status.textContent = error.message; }
+    accountStatus.textContent = '';
+  } catch (error) {
+    accountStatus.dataset.error = 'true';
+    accountStatus.textContent = error.message + ' Bấm Làm mới để thử lại.';
+  }
 }
 
 /* ================= 接入信息 / API Key ================= */
@@ -4569,14 +4637,16 @@ async function saveProxy(remove){
   try{
     await api(target.path, {method:target.extension ? 'POST' : 'PATCH', body:JSON.stringify({proxy})});
     if (proxyTarget === target) $('proxyDialog').close();
-    const message = target.extension ? 'Đã lưu proxy. Vào Tài khoản Chromium để đăng nhập, kiểm tra và bật hồ sơ.'
+    const message = target.extension ? 'Đã lưu proxy. Vào danh sách hồ sơ chạy ngầm để đăng nhập, kiểm tra và bật hồ sơ.'
       : target.account.provider ? 'Đã lưu kết nối. Bấm Kiểm tra trên hồ sơ trước khi dùng.'
       : proxy ? '代理已保存，下次请求生效' : '代理已移除，恢复默认网络';
     toast(message, 'ok');
     if (target.account.provider) {
       const tab = target.account.provider === 'chatgpt' ? 'openai' : 'gemini';
       await loadChatProvider(tab);
-      $('tab-' + tab).querySelector('[data-web-accounts-status]').textContent = message;
+      const status = $('tab-' + tab).querySelector('[data-web-accounts-status]');
+      status.dataset.error = 'false';
+      status.textContent = message;
     }
     else await loadPool();
   }catch(e){
@@ -5059,10 +5129,15 @@ function clearPlayResults(){
   }
 }
 
-async function loadPlayModels(){
+async function loadPlayModels(provider){
   const request = ++playModelRequest;
   $('playDiscover').disabled = true;
   const previous = Object.fromEntries(Object.entries(playModelFields).map(([kind, id]) => [kind, $(id).value]));
+  if (provider) {
+    // Leave these empty until we can select the intended provider from the catalog.
+    for (const kind of ['text', 'image']) $(playModelFields[kind]).value = '';
+    updatePlayButtons();
+  }
   try {
     const data = await api('/v1/models', {authKey:playAuth()});
     if (request !== playModelRequest || activeTab !== 'play') return;
@@ -5077,7 +5152,8 @@ async function loadPlayModels(){
     for (const [kind, id] of Object.entries(playModelFields)) {
       const options = [...byKind[kind].keys()];
       $(id).replaceChildren(...options.map(model => new Option(model, model)));
-      if (options.includes(previous[kind])) $(id).value = previous[kind];
+      if (provider && kind !== 'video') $(id).value = provider + '/' + kind;
+      else if (options.includes(previous[kind])) $(id).value = previous[kind];
     }
     updatePlayButtons();
     playMessage(Object.values(byKind).some(models => models.size)
@@ -5112,7 +5188,7 @@ $('playKey').oninput = () => {
   clearPlayModels();
   playMessage('');
 };
-$('playDiscover').onclick = loadPlayModels;
+$('playDiscover').onclick = () => loadPlayModels();
 $('textPlayForm').onsubmit = async event => {
   event.preventDefault();
   const prompt = $('playText').value.trim();
