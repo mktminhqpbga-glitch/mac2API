@@ -9,6 +9,8 @@ const adapters = {
 };
 const requestKey = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const receipt = { task_id: "task_fixture", id: "task_fixture", kind: "image", status: "queued", progress: 0 };
+const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==", "base64");
+const mp4Header = Buffer.from("000000186674797069736f6d0000020069736f6d69736f32", "hex");
 
 function fixture(handler, options = {}) {
     const traffic = [];
@@ -27,6 +29,8 @@ function fixture(handler, options = {}) {
                     assert.ok(url.startsWith(base));
                     const path = url.slice(base.length);
                     traffic.push([init.method, path]);
+                    if (path === "/media/fixture.png?access=demo") return new Response(png);
+                    if (path === "/media/fixture.mp4") return new Response(mp4Header);
                     return handler(path, init, saved);
                 }
             }
@@ -65,15 +69,18 @@ for (const [name, model] of Object.entries(adapters)) {
             return result();
         });
         const assets = await adapter.generateImage.call(f.context, imageRequest(model));
-        assert.deepEqual(assets, [{ mediaType: "image", type: "url", url: base + "/media/fixture.png?access=demo" }]);
+        assert.deepEqual(assets, [{ mediaType: "image", type: "binary", mimeType: "image/png", data: png }]);
         assert.deepEqual(f.traffic, [
-            ["GET", "/capabilities"], ["POST", "/images/tasks"], ["GET", "/tasks/by-request"], ["GET", "/images/tasks/task_fixture"]
+            ["GET", "/capabilities"], ["POST", "/images/tasks"], ["GET", "/tasks/by-request"],
+            ["GET", "/images/tasks/task_fixture"], ["GET", "/media/fixture.png?access=demo"]
         ]);
 
         // A restored pending record still uses the original UUID, with no POST.
         f.traffic.length = 0;
         await adapter.resumeTask.call(f.context, f.saved[0]);
-        assert.deepEqual(f.traffic, [["GET", "/tasks/by-request"], ["GET", "/images/tasks/task_fixture"]]);
+        assert.deepEqual(f.traffic, [
+            ["GET", "/tasks/by-request"], ["GET", "/images/tasks/task_fixture"], ["GET", "/media/fixture.png?access=demo"]
+        ]);
     });
 
     test(`${name} treats 429 as a rejection and interrupted as unresolved`, async () => {
@@ -125,6 +132,38 @@ for (const [name, model] of Object.entries(adapters)) {
         }, { signal: controller.signal });
         await assert.rejects(adapter.generateImage.call(f.context, imageRequest(model)), error => error === stop);
         assert.deepEqual(f.traffic.at(-1), ["POST", "/images/tasks/task_fixture/cancel"]);
+    });
+
+    test(`${name} works without host persistence and maps the chosen image settings`, async () => {
+        const f = fixture((path, init) => {
+            if (path === "/capabilities") return discovery(model);
+            if (path === "/images/tasks") {
+                assert.deepEqual(JSON.parse(init.body), {
+                    model, prompt: "Tạo ảnh thử", response_format: "url", aspect_ratio: "3:4", size: "4K",
+                    extra: "Độ phân giải ảnh mong muốn: 4K. Chất lượng ảnh mong muốn: high.",
+                });
+                assert.match(init.headers["Idempotency-Key"], requestKey);
+                return Response.json(receipt);
+            }
+            return result();
+        });
+        delete f.context.saveTaskData;
+        const assets = await adapter.generateImage.call(f.context, { ...imageRequest(model), quality: "high" });
+        assert.deepEqual(assets, [{ mediaType: "image", type: "binary", mimeType: "image/png", data: png }]);
+        assert.equal(f.traffic.filter(([method]) => method === "POST").length, 1);
+    });
+
+    test(`${name} rejects foreign output URLs and non-image files`, async () => {
+        const task = { kind: "image", base, id: "task_fixture" };
+        const foreign = fixture(() => Response.json({ status: "completed", data: [{ url: "https://invalid.test/v1/media/image.png" }] }));
+        await assert.rejects(adapter.resumeTask.call(foreign.context, task), /nằm ngoài kho media/);
+        assert.deepEqual(foreign.traffic, [["GET", "/images/tasks/task_fixture"]]);
+
+        const wrongType = fixture(path => path === "/media/invalid.png"
+            ? new Response("<html>not an image</html>", { headers: { "Content-Type": "image/png" } })
+            : Response.json({ status: "completed", data: [{ url: "/v1/media/invalid.png" }] }));
+        await assert.rejects(adapter.resumeTask.call(wrongType.context, task), /chưa phải ảnh/);
+        assert.deepEqual(wrongType.traffic, [["GET", "/images/tasks/task_fixture"], ["GET", "/media/invalid.png"]]);
     });
 }
 
@@ -190,7 +229,7 @@ test("Muse forwards preset and unrestricted durations with the selected ratio an
         });
         const output = await adapter.generateVideo.call(f.context, { ...request, duration,
             other: { mac2ApiVideoDuration: customDuration } });
-        assert.equal(output[0].mediaType, "video");
+        assert.deepEqual(output, [{ mediaType: "video", type: "binary", mimeType: "video/mp4", data: mp4Header }]);
         assert.equal(f.traffic.filter(([method]) => method === "POST").length, 1);
     }
     const invalid = fixture(() => assert.fail("Invalid video duration tried to contact mac2API"));

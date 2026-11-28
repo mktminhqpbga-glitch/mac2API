@@ -1,6 +1,6 @@
 # MUSE2API
 
-Bản tổng hợp mac2API 1.6.32 gồm mã máy chủ, bảng quản trị, tiện ích Chrome/Edge 1.0.14 và các adapter MacFlow/Toonflow. [Nhật ký phiên bản](CHANGELOG.md)
+Bản tổng hợp mac2API 1.6.33 gồm mã máy chủ, bảng quản trị, tiện ích Chrome/Edge 1.0.14 và các adapter MacFlow/Toonflow. [Nhật ký phiên bản](CHANGELOG.md)
 
 MUSE2API cung cấp API kiểu OpenAI để gọi các tính năng chat, tạo ảnh và tạo video của [Muse.ai](https://muse.ai/). Máy chủ Python chạy FastAPI và điều khiển Chromium qua Chrome DevTools Protocol (CDP). Muse.ai thực hiện việc tạo nội dung. Dịch vụ quản lý cookie, hàng đợi, tài khoản, proxy và kết quả tải về.
 
@@ -244,9 +244,13 @@ Khi có hồ sơ tiện ích đang kết nối và được cấp quyền, mac2A
 
 Để thêm media trong MacFlow/Toonflow, nhập tệp theo dịch vụ bạn muốn dùng.
 
-- Muse 2.0.11 hỗ trợ ảnh, video, tối đa 20 ảnh tham chiếu và thời lượng video tùy chỉnh. [mac2ApiMuse.ts](adapters/2.0.7/mac2ApiMuse.ts)
-- ChatGPT Web 2.0.8 hỗ trợ tạo ảnh từ văn bản. [mac2ApiChatGpt.ts](adapters/2.0.7/mac2ApiChatGpt.ts)
-- Gemini Web 2.0.8 hỗ trợ tạo ảnh từ văn bản. [mac2ApiGemini.ts](adapters/2.0.7/mac2ApiGemini.ts)
+- Muse **2.0.12** tạo ảnh, video, nhận tối đa 20 ảnh cho tác vụ ảnh hoặc một khung đầu cho video. Base URL mặc định là `http://127.0.0.1:18610/muse/v1`. [mac2ApiMuse.ts](adapters/2.0.7/mac2ApiMuse.ts)
+- ChatGPT Web **2.0.9** tạo ảnh từ mô tả. Base URL mặc định là `http://127.0.0.1:18610/chatgpt/v1`. [mac2ApiChatGpt.ts](adapters/2.0.7/mac2ApiChatGpt.ts)
+- Gemini Web **2.0.9** tạo ảnh từ mô tả. Base URL mặc định là `http://127.0.0.1:18610/gemini/v1`. [mac2ApiGemini.ts](adapters/2.0.7/mac2ApiGemini.ts)
+
+Trong mac2API, bấm **Tạo khóa riêng** ở trang dịch vụ rồi nhập khóa `m2c_…` vào nhà cung cấp tương ứng trong Toonflow. Chép Base URL từ mục **API đầu ra** nếu mac2API chạy ở địa chỉ khác. Giữ Base URL gốc khi tiếp tục một tác vụ đã lưu.
+
+Tỷ lệ, độ phân giải và thời lượng video tùy chỉnh được gửi dưới dạng lựa chọn mong muốn của tác vụ. Kích thước và thời lượng thực tế do nhà cung cấp trả về. Adapter tải tệp từ mac2API, nhận diện định dạng từ dữ liệu tệp rồi trả ảnh hoặc video cho Toonflow. Khi host hỗ trợ khôi phục, adapter lưu mã yêu cầu trước khi gửi và mã tác vụ ngay sau khi nhận biên nhận.
 
 Các mô-đun chat dùng cấu hình nhà cung cấp văn bản với giao thức OpenAI Chat Completions. Cấu hình media tổng hợp cũ dùng tệp riêng. [mac2Api.ts](adapters/mac2Api.ts)
 

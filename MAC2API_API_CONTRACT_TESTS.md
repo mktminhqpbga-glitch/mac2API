@@ -17,19 +17,19 @@ Mẫu dưới đây được ghi từ fixture ASGI với khóa chỉ có quyền
 ```json
 {
   "contractVersion": 1,
-  "serverVersion": "1.6.12",
+  "serverVersion": "1.6.33",
   "providers": [
     {"id": "muse", "configured": true, "connected": false, "ready": true, "busy": false, "reason": "browser_idle"}
   ],
   "models": [
     {"id": "muse/text", "provider": "muse", "type": "text", "configured": true, "connected": false, "ready": true, "busy": false, "reason": "browser_idle", "modes": ["text"], "maxReferences": 0, "allowedMimeTypes": [], "maxReferenceBytes": 0},
-    {"id": "muse/image", "provider": "muse", "type": "image", "configured": true, "connected": false, "ready": true, "busy": false, "reason": "browser_idle", "modes": ["text", "singleImage", "multiReference"], "maxReferences": 10, "allowedMimeTypes": ["image/jpeg", "image/png", "image/gif", "image/webp", "image/heic", "image/heif", "image/avif"], "maxReferenceBytes": 41943040},
+    {"id": "muse/image", "provider": "muse", "type": "image", "configured": true, "connected": false, "ready": true, "busy": false, "reason": "browser_idle", "modes": ["text", "singleImage", "multiReference"], "maxReferences": 20, "allowedMimeTypes": ["image/jpeg", "image/png", "image/gif", "image/webp", "image/heic", "image/heif", "image/avif"], "maxReferenceBytes": 41943040},
     {"id": "muse/video", "provider": "muse", "type": "video", "configured": true, "connected": false, "ready": true, "busy": false, "reason": "browser_idle", "modes": ["text", "singleImage"], "maxReferences": 1, "allowedMimeTypes": ["image/jpeg", "image/png", "image/gif", "image/webp", "image/heic", "image/heif", "image/avif"], "maxReferenceBytes": 41943040},
     {"id": "muse-spark", "provider": "muse", "type": "text", "configured": true, "connected": false, "ready": true, "busy": false, "reason": "browser_idle", "modes": ["text"], "maxReferences": 0, "allowedMimeTypes": [], "maxReferenceBytes": 0},
-    {"id": "muse-image", "provider": "muse", "type": "image", "configured": true, "connected": false, "ready": true, "busy": false, "reason": "browser_idle", "modes": ["text", "singleImage", "multiReference"], "maxReferences": 10, "allowedMimeTypes": ["image/jpeg", "image/png", "image/gif", "image/webp", "image/heic", "image/heif", "image/avif"], "maxReferenceBytes": 41943040},
+    {"id": "muse-image", "provider": "muse", "type": "image", "configured": true, "connected": false, "ready": true, "busy": false, "reason": "browser_idle", "modes": ["text", "singleImage", "multiReference"], "maxReferences": 20, "allowedMimeTypes": ["image/jpeg", "image/png", "image/gif", "image/webp", "image/heic", "image/heif", "image/avif"], "maxReferenceBytes": 41943040},
     {"id": "muse-video", "provider": "muse", "type": "video", "configured": true, "connected": false, "ready": true, "busy": false, "reason": "browser_idle", "modes": ["text", "singleImage"], "maxReferences": 1, "allowedMimeTypes": ["image/jpeg", "image/png", "image/gif", "image/webp", "image/heic", "image/heif", "image/avif"], "maxReferenceBytes": 41943040}
   ],
-  "limits": {"perClientPending": 2, "perKindPending": 8},
+  "limits": {"perClientPending": 2, "perKindPending": 8, "perClientImagePending": 4, "perImagePending": 20},
   "features": {"idempotency": true, "lookupByRequestKey": true, "cancel": true}
 }
 ```
@@ -80,7 +80,7 @@ Khi máy chủ từ chối trước khi nhận tác vụ, HTTP 429 có `Retry-Af
 | Kho media | URL ký tối đa 7 ngày và có thể hết hạn sớm nếu tệp được dọn, khóa chủ bị thu hồi hoặc khóa ký thay đổi. Lấy URL mới từ GET tác vụ nếu còn dữ liệu. Tải bytes vào workspace MacFlow trước khi báo đầu ra sẵn sàng. Khi ghi media, kho 5 GB dọn tệp cũ theo ngưỡng 70%. |
 | URL quản trị cũ chưa ký | Dùng Bearer quản trị để tải hoặc lấy URL mới từ bảng quản trị. Biến `MUSE2API_ALLOW_LEGACY_PUBLIC_MEDIA=1` giữ URL quản trị chưa ký trong thời gian chuyển đổi có chủ đích. URL client vẫn được kiểm tra quyền. |
 | Client tích hợp sẵn | Gọi capabilities, lookup và cancel bằng khóa `m2c_…`. Các tuyến cũ vẫn nhận khóa quản trị để bảng điều khiển và tích hợp hiện có tiếp tục hoạt động. API task cũ tiếp tục chấp nhận khóa idempotency không theo UUID theo phạm vi loại tác vụ và nhà cung cấp. |
-| Adapter độc lập | Tệp Muse trong `adapters/2.0.7/` có phiên bản 2.0.11 và kiểm tra giới hạn ảnh của máy chủ trước POST. Tệp ChatGPT và Gemini có phiên bản 2.0.8. Cả ba dùng hợp đồng v1 và chuyển sang `/models` khi capabilities trả 404. Host phải hỗ trợ lưu trạng thái tác vụ trước POST. Adapter lưu UUID cho GET tra cứu và dừng nếu kết quả chưa rõ. |
+| Adapter độc lập | Tệp Muse trong `adapters/2.0.7/` có phiên bản 2.0.12 và kiểm tra giới hạn ảnh của máy chủ trước POST. Tệp ChatGPT và Gemini có phiên bản 2.0.9. Cả ba dùng hợp đồng v1 và chuyển sang `/models` khi capabilities trả 404. Khi host cung cấp `saveTaskData`, adapter lưu UUID trước POST và ghi mã tác vụ rồi mới thăm dò. Khi thiếu biên nhận, adapter chỉ tra cứu bằng GET. Sau khi hoàn tất, adapter dùng Bearer tải tệp từ kho media cùng nguồn và trả `MediaAsset[]` dạng nhị phân với MIME nhận diện từ dữ liệu. |
 | Máy chủ tự triển khai | Chạy một tiến trình mac2API cho mỗi thư mục dữ liệu. Qua proxy ngược, cấu hình HTTPS và chuyển đúng scheme từ proxy tin cậy. Thêm origin trình duyệt được phép bằng `MUSE2API_CORS_ORIGINS`. Giữ chế độ AIChrome của MacFlow độc lập với phiên do mac2API điều khiển. |
 
 ## Chẩn đoán tác vụ Muse

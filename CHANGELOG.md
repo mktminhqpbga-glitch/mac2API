@@ -1,5 +1,10 @@
 # Nhật ký và bàn giao mac2API
 
+## 1.6.33
+
+- Chuẩn hóa ba tệp nhập Toonflow. Muse 2.0.12 tạo ảnh và video. ChatGPT và Gemini 2.0.9 tạo ảnh từ mô tả.
+- Cài sẵn địa chỉ riêng từng dịch vụ. Tải tệp kết quả có xác thực và kiểm tra định dạng thực trước khi trả media. Lưu thông tin khôi phục khi host hỗ trợ.
+
 ## 1.6.32
 
 - Tiện ích Chrome/Edge 1.0.14 nhận diện phiên ChatGPT qua tài khoản hoặc lịch sử trò chuyện trong thanh bên. Khi trang đang hiện nút đăng nhập, tiện ích báo rõ cần đăng nhập trong Chrome.

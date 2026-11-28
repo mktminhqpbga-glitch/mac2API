@@ -1,9 +1,10 @@
 {
-  "version": "1.6.32",
+  "version": "1.6.33",
   "source_commit": "$Format:%H$",
   "updated_at": "2026-11-28",
   "repo": "https://github.com/mktminhqpbga-glitch/mac2API",
   "highlights": [
+    "更新 Toonflow 适配器：Muse 2.0.12，ChatGPT 和 Gemini 2.0.9，验证下载文件后返回媒体。",
     "Chrome 扩展 1.0.14 可通过 ChatGPT 侧栏的历史记录验证已登录的页面。",
     "管理密钥在保存之前验证，登录失败时显示原因。",
     "手动检查更新时读取 Git 分支最新提交；安装包保留提交标识。",
@@ -20,6 +21,7 @@
     "手动安装的扩展可在每个已安装的浏览器个人资料中重新加载。"
   ],
   "highlights_en": [
+    "Updated Toonflow adapters: Muse 2.0.12, ChatGPT and Gemini 2.0.9. Download and verify the media file before returning it.",
     "Chrome extension 1.0.14 can recognize signed-in ChatGPT tabs through conversation history in the sidebar.",
     "Administrator keys are verified before saving, with clear feedback if sign-in fails.",
     "Update checks read the current Git branch tip, and source packages carry their commit ID.",
@@ -36,6 +38,7 @@
     "Reload the unpacked extension in every browser profile where it is installed."
   ],
   "highlights_vi": [
+    "Cập nhật adapter Toonflow Muse 2.0.12, ChatGPT và Gemini 2.0.9. Kiểm tra tệp ảnh và video trước khi trả kết quả.",
     "Tiện ích Chrome 1.0.14 nhận diện tài khoản ChatGPT qua lịch sử trò chuyện trong thanh bên.",
     "Xác minh khóa quản trị trước khi lưu và báo rõ lý do nếu chưa đăng nhập được.",
     "Kiểm tra cập nhật lấy bản mới từ Git. Gói tải về giữ mã phiên bản để cập nhật các lần sau.",
