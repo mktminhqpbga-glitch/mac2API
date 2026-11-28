@@ -1,6 +1,6 @@
 # MUSE2API
 
-Bản tổng hợp mac2API 1.6.24 gồm mã máy chủ, bảng quản trị, tiện ích Chrome/Edge 1.0.13 và các adapter MacFlow/Toonflow. [Nhật ký phiên bản](CHANGELOG.md)
+Bản tổng hợp mac2API 1.6.25 gồm mã máy chủ, bảng quản trị, tiện ích Chrome/Edge 1.0.13 và các adapter MacFlow/Toonflow. [Nhật ký phiên bản](CHANGELOG.md)
 
 MUSE2API cung cấp API kiểu OpenAI để gọi các tính năng chat, tạo ảnh và tạo video của [Muse.ai](https://muse.ai/). Máy chủ Python chạy FastAPI và điều khiển Chromium qua Chrome DevTools Protocol (CDP). Muse.ai thực hiện việc tạo nội dung. Dịch vụ quản lý cookie, hàng đợi, tài khoản, proxy và kết quả tải về.
 
@@ -233,7 +233,13 @@ Khi kết nối qua Chrome, ChatGPT và Gemini tạo một ảnh từ mô tả t
 
 Khi có hồ sơ tiện ích đang kết nối và được cấp quyền, mac2API ưu tiên các hồ sơ này. Khi chưa có hồ sơ tiện ích phù hợp, mac2API dùng kho Chromium hoặc kết nối DevTools theo cấu hình và quyền của khóa. Để khóa khách hàng chỉ chạy qua một proxy cụ thể, chọn đúng hồ sơ đó khi cấp quyền.
 
-Để thêm media trong MacFlow/Toonflow, nhập từng tệp trong [bộ adapter theo hợp đồng v1](adapters/2.0.7/). Tệp [mac2Api.ts](adapters/mac2Api.ts) dùng cho cấu hình tổng hợp cũ. Các mô-đun chat dùng cấu hình nhà cung cấp văn bản với giao thức OpenAI Chat Completions.
+Để thêm media trong MacFlow/Toonflow, nhập tệp theo dịch vụ bạn muốn dùng.
+
+- Muse 2.0.11 hỗ trợ ảnh, video, tối đa 20 ảnh tham chiếu và thời lượng video tùy chỉnh. [mac2ApiMuse.ts](adapters/2.0.7/mac2ApiMuse.ts)
+- ChatGPT Web 2.0.8 hỗ trợ tạo ảnh từ văn bản. [mac2ApiChatGpt.ts](adapters/2.0.7/mac2ApiChatGpt.ts)
+- Gemini Web 2.0.8 hỗ trợ tạo ảnh từ văn bản. [mac2ApiGemini.ts](adapters/2.0.7/mac2ApiGemini.ts)
+
+Các mô-đun chat dùng cấu hình nhà cung cấp văn bản với giao thức OpenAI Chat Completions. Cấu hình media tổng hợp cũ dùng tệp riêng. [mac2Api.ts](adapters/mac2Api.ts)
 
 ## Tương thích với kết nối API chính thức đã có
 

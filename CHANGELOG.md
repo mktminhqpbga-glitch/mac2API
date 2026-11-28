@@ -1,5 +1,12 @@
 # Nhật ký và bàn giao mac2API
 
+## 1.6.25
+
+- Bản tổng hợp các bản sửa đến 1.6.24, gồm bảng quản trị, mã máy chủ, tiện ích Chrome/Edge 1.0.13 và các tệp tích hợp MacFlow/Toonflow.
+- Muse, ChatGPT và Gemini có mục quản lý, địa chỉ API và quyền theo khóa riêng. Có thể đặt proxy theo từng tài khoản web và tải tiện ích trong mục của dịch vụ tương ứng.
+- Luồng tự động lưu tiến độ và cho chạy lại từng bước lỗi. Hàng chờ ảnh và video phục hồi tác vụ chưa gửi sau khi khởi động lại. Bản cập nhật kiểm tra đủ tệp trước khi cài.
+- Hướng dẫn tải đúng tệp media cho từng dịch vụ, gồm Muse 2.0.11, ChatGPT Web 2.0.8 và Gemini Web 2.0.8. [Hướng dẫn cài đặt và tích hợp](README.md)
+
 ## 1.6.24
 
 - Hiển thị đúng kết quả khi ngắt liên kết Chrome. Xóa dữ liệu hiển thị của phiên cũ khi đổi hoặc bỏ khóa quản trị.
