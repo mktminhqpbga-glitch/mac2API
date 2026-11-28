@@ -57,8 +57,8 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                Response, StreamingResponse)
 from pydantic import model_validator, BaseModel, Field, SecretStr, ValidationError, field_validator
 
-from chat_providers import (ChatGPT2APISettings, ChatProviders, GeminiWeb2APISettings,
-                            OfficialWebConnection, ProviderName, ProviderSettings, WebConnectionSettings, WebGateway)
+from chat_providers import (ChatGPT2APISettings, ChatProviders, GeminiWeb2APISettings, OfficialWebConnection,
+                            OfficialWebConnectionSettings, ProviderName, ProviderSettings, WebConnectionSettings, WebGateway)
 from chrome_bridge import ChromeBridge, EXTENSION_PROVIDERS
 from client_usage import ClientJob, ClientUsage, Price, TextOutcome, redact_content
 from config import CFG
@@ -3844,8 +3844,11 @@ WebConnectionProvider = Literal["chatgpt", "gemini-web"]
 def get_web_connection(provider: WebConnectionProvider, _=Depends(auth)):
     connection = OFFICIAL_WEB_CONNECTIONS[provider]
     external = WEB_GATEWAYS[provider]
+    official = connection.status()
     return JSONResponse({**connection.settings(), "mode": _default_web_connection(provider),
-                         "official_configured": connection.status()["configured"],
+                         "official_configured": official["configured"],
+                         "official_text_model": official["text_model"],
+                         "official_key_from_env": official["key_from_env"],
                          "external_configured": external.status()["configured"],
                          "profiles": [account for account in chrome_bridge.list_accounts()
                                       if account["provider"] == provider]},
@@ -3863,6 +3866,13 @@ def save_web_connection(provider: WebConnectionProvider, settings: WebConnection
 @app.post("/admin/connections/{provider}/test")
 async def test_official_web_connection(provider: WebConnectionProvider, _=Depends(auth)):
     return JSONResponse(await OFFICIAL_WEB_CONNECTIONS[provider].test(), headers=NO_STORE)
+
+
+@app.post("/admin/connections/{provider}/official")
+async def configure_official_web_connection(provider: WebConnectionProvider,
+                                            settings: OfficialWebConnectionSettings, _=Depends(auth)):
+    await OFFICIAL_WEB_CONNECTIONS[provider].configure(settings)
+    return get_web_connection(provider)
 
 
 @app.get("/admin/gemini-web2api")

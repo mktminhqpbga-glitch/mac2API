@@ -1,5 +1,10 @@
 # Nhật ký và bàn giao mac2API
 
+## 1.6.27
+
+- Mục ChatGPT và Gemini có biểu mẫu API chính thức chạy trong mac2API. **Lưu và kiểm tra kết nối** xác minh khóa, mô hình văn bản và mô hình ảnh trước khi đổi kết nối mặc định.
+- mac2API gọi OpenAI và Google qua mạng trực tiếp ở chế độ API chính thức. Các cấu hình tài khoản web và dịch vụ ngoài đã lưu vẫn dùng được.
+
 ## 1.6.26
 
 - Mục ChatGPT và Gemini có biểu mẫu kết nối HTTP tới ChatGPT2API và Gemini Web To API. Nút **Lưu và kiểm tra kết nối** xác minh cấu hình trước khi chọn làm mặc định.

@@ -275,10 +275,12 @@ async def exercise_official():
         assert openai or request.url.host == "generativelanguage.googleapis.com"
         if request.method == "GET":
             model = path.rsplit("/", 1)[1]
-            if openai:
-                assert request.headers["Authorization"] == "Bearer fixture-openai"
-            else:
-                assert request.headers["x-goog-api-key"] == "fixture-gemini"
+            authorized = (request.headers.get("Authorization") == "Bearer fixture-openai" if openai
+                          else request.headers.get("x-goog-api-key") == "fixture-gemini")
+            if not authorized:
+                return httpx.Response(401)
+            if model == "missing-image":
+                return httpx.Response(404)
             return httpx.Response(200, json={"id": model} if openai else {"name": "models/" + model})
         body = json.loads(request.content)
         if path.endswith("/chat/completions"):
@@ -309,8 +311,29 @@ async def exercise_official():
                 base = f"/{prefix}/v1"
                 settings = f"/admin/connections/{module}"
                 model = "gpt-fixture" if provider == "openai" else "gemini-fixture"
-                assert (await http.put(f"/admin/chat-providers/{provider}", headers=admin,
-                                       json={"model": model, "api_key": f"fixture-{provider}"})).status_code == 200
+                configure = settings + "/official"
+                config = {"model": model, "image_model": image_model, "api_key": f"fixture-{provider}"}
+                previous = (await http.get(settings, headers=admin)).json()
+                assert (await http.post(configure, json=config)).status_code == 401
+                failed = await http.post(configure, headers=admin, json=config | {"api_key": "incorrect"})
+                assert failed.status_code == 502
+                assert (await http.get(settings, headers=admin)).json() == previous
+                response = await http.post(configure, headers=admin, json=config)
+                assert response.status_code == 200 and config["api_key"] not in response.text, response.text
+                state = response.json()
+                assert state["mode"] == "official" and state["official_configured"]
+                assert state["official_text_model"] == model and state["image_model"] == image_model
+                assert [x.url.path.rsplit("/", 1)[1] for x in requests[-2:]] == [model, image_model]
+                failed = await http.post(configure, headers=admin, json={
+                    "model": model, "image_model": "missing-image",
+                })
+                assert failed.status_code == 404
+                assert (await http.get(settings, headers=admin)).json() == state
+                env_name = "OPENAI_API_KEY" if provider == "openai" else "GEMINI_API_KEY"
+                with patch.dict(os.environ, {env_name: config["api_key"]}):
+                    assert (await http.post(configure, headers=admin, json=config)).status_code == 409
+                    env = await http.post(configure, headers=admin, json={"model": model, "image_model": image_model})
+                    assert env.status_code == 200 and env.json()["official_key_from_env"]
                 catalog = (await http.get("/admin/client-keys", headers=admin)).json()["models"]
                 text = next(entry for entry in catalog if entry["id"] == module + "/text")
                 assert f"{provider}:api" in {item["id"] for item in text["accounts"]}

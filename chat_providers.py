@@ -5,7 +5,6 @@ import json
 import os
 from pathlib import Path
 import re
-from tempfile import NamedTemporaryFile
 from threading import Lock
 import time
 from typing import Literal
@@ -65,30 +64,24 @@ class ChatProviders:
                            "key_from_env": bool(os.environ.get(key_env, "").strip())})
         return result
 
+    @staticmethod
+    def _updated(saved, provider, settings):
+        updated = {**saved.get(provider, {}), "model": settings.model}
+        if "api_key" in settings.model_fields_set:
+            key = settings.api_key.get_secret_value().strip() if settings.api_key else ""
+            if key and not re.fullmatch(r"[!-~]+", key):
+                raise HTTPException(400, "API Key phải gồm các ký tự ASCII và không chứa khoảng trắng.")
+            if key:
+                updated["api_key"] = key
+            else:
+                updated.pop("api_key", None)
+        return updated
+
     def save(self, provider: ProviderName, settings: ProviderSettings):
         with self.lock:
             saved = self._read()
-            current = saved.setdefault(provider, {})
-            current["model"] = settings.model
-            if "api_key" in settings.model_fields_set:
-                key = settings.api_key.get_secret_value().strip() if settings.api_key else ""
-                if key and not re.fullmatch(r"[!-~]+", key):
-                    raise HTTPException(400, "API Key phải gồm các ký tự ASCII và không chứa khoảng trắng.")
-                if key:
-                    current["api_key"] = key
-                else:
-                    current.pop("api_key", None)
-
-            temporary = None
-            try:
-                with NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.path.parent,
-                                        prefix=".chat-providers-", delete=False) as file:
-                    temporary = Path(file.name)
-                    json.dump(saved, file)
-                temporary.replace(self.path)
-            finally:
-                if temporary:
-                    temporary.unlink(missing_ok=True)
+            saved[provider] = self._updated(saved, provider, settings)
+            _write(str(self.path), saved)
         return next(item for item in self.status() if item["id"] == provider)
 
     @staticmethod
@@ -106,9 +99,13 @@ class ChatProviders:
             raise HTTPException(503, f"Chưa cấu hình API Key cho {PROVIDERS[provider][0]}.")
         return key, model
 
-    async def test(self, provider: ProviderName, *, model_override=None):
+    async def test(self, provider: ProviderName, *, model_override=None, trust_env=True):
         key, default_model = self._credentials(provider)
         model = model_override or default_model
+        return await self._test_model(provider, key, model, trust_env=trust_env)
+
+    @staticmethod
+    async def _test_model(provider, key, model, *, trust_env=True):
         if not re.fullmatch(MODEL_ID, model):
             raise HTTPException(400, "Model mặc định không hợp lệ.")
         if provider == "openai":
@@ -118,7 +115,7 @@ class ChatProviders:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
             headers = {"x-goog-api-key": key}
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with httpx.AsyncClient(timeout=15, trust_env=trust_env) as client:
                 response = await client.get(url, headers=headers)
                 _check_response(response)
                 data = response.json()
@@ -265,6 +262,10 @@ class WebConnectionSettings(BaseModel):
     image_model: str = Field(pattern=MODEL_ID)
 
 
+class OfficialWebConnectionSettings(ProviderSettings):
+    image_model: str = Field(pattern=MODEL_ID)
+
+
 class OfficialWebConnection:
     def __init__(self, providers, provider, api_provider, image_model):
         self.providers = providers
@@ -285,12 +286,42 @@ class OfficialWebConnection:
             _write(str(self.providers.path), saved)
 
     def status(self):
-        key, _ = self.providers._settings(self.api_provider, self.providers._read())
-        return {"configured": bool(key), "ready": bool(key)}
+        key, model = self.providers._settings(self.api_provider, self.providers._read())
+        key_env = PROVIDERS[self.api_provider][1]
+        return {"configured": bool(key), "ready": bool(key), "text_model": model,
+                "key_from_env": bool(os.environ.get(key_env, "").strip())}
+
+    async def configure(self, settings):
+        previous = self.providers._read()
+        previous_connection = previous.get("web_connections", {}).get(self.provider)
+        provider = self.api_provider
+        updated = self.providers._updated(previous, provider, settings)
+        key_env = PROVIDERS[provider][1]
+        env_key = os.environ.get(key_env, "").strip()
+        if env_key and "api_key" in settings.model_fields_set:
+            raise HTTPException(409, "Khóa đang được đặt trong cấu hình máy chủ. Hãy đổi khóa tại đó.")
+        key = env_key or updated.get("api_key")
+        if not key:
+            raise HTTPException(400, f"Hãy nhập khóa của {self.label}.")
+        for model in dict.fromkeys((settings.model, settings.image_model)):
+            await self.providers._test_model(provider, key, model, trust_env=False)
+        with self.providers.lock:
+            saved = self.providers._read()
+            if (saved.get(provider) != previous.get(provider)
+                    or saved.get("web_connections", {}).get(self.provider) != previous_connection):
+                raise HTTPException(409, "Cấu hình đã thay đổi. Hãy tải lại và kiểm tra lần nữa.")
+            saved[provider] = updated
+            saved.setdefault("web_connections", {})[self.provider] = {
+                "mode": "official", "image_model": settings.image_model,
+            }
+            try:
+                _write(str(self.providers.path), saved)
+            except OSError as exc:
+                raise HTTPException(507, "Không lưu được kết nối. Kiểm tra quyền ghi dữ liệu.") from exc
 
     async def test(self):
-        await self.providers.test(self.api_provider)
-        await self.providers.test(self.api_provider, model_override=self.settings()["image_model"])
+        await self.providers.test(self.api_provider, trust_env=False)
+        await self.providers.test(self.api_provider, model_override=self.settings()["image_model"], trust_env=False)
         return {"ok": True}
 
     async def chat(self, messages, prompt, stream, timeout, *, before_send):
@@ -298,7 +329,7 @@ class OfficialWebConnection:
         before_send()
         return await compatible_chat(PROVIDERS[self.api_provider][4], key, model,
                                      {"messages": messages, "prompt": prompt, "stream": stream},
-                                     timeout, public_model=f"{self.provider}/text")
+                                     timeout, public_model=f"{self.provider}/text", trust_env=False)
 
     def image(self, prompt, timeout, *, before_send):
         key, _ = self.providers._credentials(self.api_provider)
@@ -306,12 +337,12 @@ class OfficialWebConnection:
         before_send()
         if self.api_provider == "openai":
             response = _post_image(OPENAI_IMAGES_URL, {"Authorization": f"Bearer {key}"},
-                                   {"model": model, "prompt": prompt, "n": 1}, timeout, self.label)
+                                   {"model": model, "prompt": prompt, "n": 1}, timeout, self.label, trust_env=False)
             return _decode_openai_image(response, self.label)
         response = _post_image(GEMINI_IMAGES_URL.format(model=model), {"x-goog-api-key": key}, {
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]},
-        }, timeout, self.label)
+        }, timeout, self.label, trust_env=False)
         try:
             for candidate in response["candidates"]:
                 for part in candidate["content"]["parts"]:

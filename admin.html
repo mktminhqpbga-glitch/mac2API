@@ -652,21 +652,20 @@
       <form class="gateway-form">
         <label>Kết nối mặc định
           <select name="mode">
-            <option value="external"></option>
-            <option value="official">API chính thức</option>
+            <option value="official"></option>
             <option value="browser" selected>Tài khoản web (Chrome hoặc hồ sơ riêng)</option>
+            <option value="external" hidden></option>
           </select>
         </label>
         <div data-official-connection hidden>
-          <p class="hint">Nhà cung cấp tính phí theo mức sử dụng API. Khóa và mô hình văn bản được lấy từ mục API chính thức.</p>
-          <div class="acts">
-            <button type="button" data-open-official>Mở cài đặt khóa API chính thức</button>
-            <button type="button" data-test-official>Kiểm tra mô hình văn bản và ảnh</button>
-          </div>
+          <p class="hint">mac2API gọi HTTP trực tiếp. Chi phí được tính theo tài khoản API của nhà cung cấp.</p>
+          <label><span data-official-key-label></span><input type="password" name="official_key" autocomplete="new-password" spellcheck="false"></label>
+          <p class="hint"><a data-official-key-site target="_blank" rel="noopener noreferrer">Mở trang tạo khóa API</a></p>
         </div>
         <details data-official-models hidden>
-          <summary>Cài đặt nâng cao</summary>
-          <label>Mô hình tạo ảnh qua API chính thức <input type="text" name="image_model" required spellcheck="false"></label>
+          <summary>Cài đặt mô hình</summary>
+          <label>Mô hình văn bản <input type="text" name="official_text_model" spellcheck="false"></label>
+          <label>Mô hình ảnh <input type="text" name="image_model" spellcheck="false"></label>
         </details>
         <div data-external-connection hidden>
           <p class="hint">Chạy dịch vụ này và đăng nhập tài khoản bên đó. Sau đó điền địa chỉ mà máy chạy mac2API truy cập được.</p>
@@ -3900,20 +3899,26 @@ function setupWebConnection(tab, provider){
   const status = form.querySelector('[data-connection-status]');
   const official = form.querySelector('[data-official-connection]');
   const officialModels = form.querySelector('[data-official-models]');
+  const {official_key: officialKey, official_text_model: officialText} = form.elements;
   const external = form.querySelector('[data-external-connection]');
   const chromePanel = section.querySelector('[data-chrome-panel]');
   const {gateway_url: gatewayUrl, gateway_key: gatewayKey, gateway_text_model: gatewayText,
     gateway_image_model: gatewayImage, remove_gateway_key: removeKey} = form.elements;
-  const test = official.querySelector('[data-test-official]');
   const save = form.querySelector('button[type=submit]');
   const endpoint = '/admin/connections/' + provider;
   const chatgpt = provider === 'chatgpt';
+  const officialName = chatgpt ? 'OpenAI API' : 'Google Gemini API';
   const gatewayName = chatgpt ? 'ChatGPT2API' : 'Gemini Web To API';
   const gatewayEndpoint = '/admin/' + (chatgpt ? 'chatgpt2api' : 'gemini-web2api');
   let state;
   let gatewayState;
 
-  mode.querySelector('[value=external]').textContent = gatewayName;
+  const externalOption = mode.querySelector('[value=external]');
+  externalOption.textContent = gatewayName + ' (dịch vụ ngoài đã lưu)';
+  mode.querySelector('[value=official]').textContent = officialName + ' trực tiếp';
+  official.querySelector('[data-official-key-label]').textContent = 'Khóa ' + officialName;
+  official.querySelector('[data-official-key-site]').href = chatgpt
+    ? 'https://platform.openai.com/api-keys' : 'https://aistudio.google.com/apikey';
   external.querySelector('[data-gateway-address]').textContent = 'Địa chỉ ' + gatewayName;
   external.querySelector('[data-gateway-key-label]').textContent = 'Khóa của dịch vụ' + (chatgpt ? '' : ' (nếu có)');
   external.querySelector('[data-gateway-help]').href = chatgpt
@@ -3922,7 +3927,6 @@ function setupWebConnection(tab, provider){
 
   setupProviderOutput(card.querySelector('[data-provider-output]'), provider);
   form.querySelector('[data-open-try]').onclick = () => goTab('play');
-  form.querySelector('[data-open-official]').onclick = () => goTab('official');
 
   function showStatus(message, failed = false){
     status.dataset.error = String(failed);
@@ -3932,14 +3936,16 @@ function setupWebConnection(tab, provider){
   function updateControls(){
     const busy = form.hasAttribute('aria-busy');
     const useGateway = mode.value === 'external';
-    official.hidden = officialModels.hidden = mode.value !== 'official';
+    const useOfficial = mode.value === 'official';
+    official.hidden = officialModels.hidden = !useOfficial;
     external.hidden = !useGateway;
     chromePanel.hidden = !state || mode.value !== 'browser';
-    test.disabled = !state?.official_configured || busy;
     mode.disabled = !state || busy;
     save.disabled = !state || busy;
-    save.textContent = useGateway ? 'Lưu và kiểm tra kết nối' : 'Lưu cách kết nối';
-    model.disabled = officialModels.hidden || busy;
+    save.textContent = useGateway || useOfficial ? 'Lưu và kiểm tra kết nối' : 'Lưu cách kết nối';
+    officialKey.disabled = !useOfficial || busy || Boolean(state?.official_key_from_env);
+    officialText.disabled = model.disabled = !useOfficial || busy;
+    officialText.required = model.required = useOfficial;
     for (const field of [gatewayUrl, gatewayText, gatewayImage]) field.disabled = !useGateway || busy;
     for (const field of [gatewayUrl, gatewayText, gatewayImage]) field.required = useGateway;
     gatewayKey.disabled = !useGateway || busy || removeKey.checked;
@@ -3959,11 +3965,18 @@ function setupWebConnection(tab, provider){
 
   function render(settings){
     state = settings;
+    externalOption.hidden = !settings.external_configured && settings.mode !== 'external';
     mode.value = settings.mode;
+    officialText.value = settings.official_text_model;
+    officialKey.value = '';
+    officialKey.placeholder = settings.official_key_from_env ? 'Đang dùng khóa đặt trên máy chủ'
+      : settings.official_configured ? 'Để trống để giữ khóa đã lưu' : '';
     model.value = settings.image_model;
     updateControls();
     let message = '';
-    if (settings.mode === 'official' && !settings.official_configured) message = 'Hãy thêm khóa trong mục API chính thức.';
+    if (settings.mode === 'official') message = settings.official_configured
+      ? 'Đã cấu hình ' + officialName + ' trực tiếp.'
+      : 'Nhập khóa ' + officialName + ' để kết nối.';
     if (settings.mode === 'external') message = gatewayState?.ready
       ? 'Đang dùng ' + gatewayName + '.'
       : 'Hãy lưu và kiểm tra lại kết nối ' + gatewayName + '.';
@@ -3982,17 +3995,20 @@ function setupWebConnection(tab, provider){
     } catch (error) { showStatus(error.message, true); }
   }
 
-  async function submit({check = false} = {}){
+  async function submit(){
     if (form.hasAttribute('aria-busy')) return;
     const useGateway = mode.value === 'external';
+    const useOfficial = mode.value === 'official';
     form.setAttribute('aria-busy', 'true');
     updateControls();
-    showStatus(check || useGateway ? 'Đang kiểm tra kết nối…' : 'Đang lưu kết nối…');
+    showStatus(useOfficial || useGateway ? 'Đang kiểm tra kết nối…' : 'Đang lưu kết nối…');
     let verified = false;
     try {
-      if (check) {
-        await api(endpoint + '/test', {method:'POST', timeout:35000});
-        showStatus('Nhà cung cấp đã xác nhận khóa và cả hai mô hình.');
+      if (useOfficial) {
+        const draft = {model: officialText.value.trim(), image_model: model.value.trim()};
+        if (!state.official_key_from_env && officialKey.value.trim()) draft.api_key = officialKey.value.trim();
+        render(await api(endpoint + '/official', {method:'POST', body:JSON.stringify(draft), timeout:35000}));
+        showStatus('Đã kết nối ' + officialName + ' trực tiếp và chọn làm mặc định.');
       } else {
         if (useGateway) {
           const draft = {base_url: gatewayUrl.value.trim(), text_model: gatewayText.value.trim(),
@@ -4007,7 +4023,7 @@ function setupWebConnection(tab, provider){
           mode: mode.value, image_model: model.value.trim(),
         }), timeout:20000}));
         if (useGateway) showStatus('Đã kết nối ' + gatewayName + ' và chọn làm mặc định.');
-        else if (state.mode !== 'official' || state.official_configured) showStatus('Đã lưu cách kết nối mặc định.');
+        else showStatus('Đã lưu cách kết nối mặc định.');
         if (!chromePanel.hidden) await loadChatProvider(tab);
       }
     } catch (error) {
@@ -4029,14 +4045,12 @@ function setupWebConnection(tab, provider){
     if (!chromePanel.hidden) loadChatProvider(tab);
   };
   removeKey.onchange = updateControls;
-  test.onclick = () => {
-    if (state?.image_model !== model.value.trim()) return showStatus('Hãy lưu mô hình tạo ảnh trước khi kiểm tra.', true);
-    return submit({check:true});
-  };
   window.addEventListener('mac2api:reset', () => {
     state = undefined;
     gatewayState = undefined;
     form.reset();
+    officialKey.placeholder = '';
+    externalOption.hidden = true;
     gatewayKey.placeholder = '';
     external.querySelector('[data-gateway-remove]').hidden = true;
     updateControls();

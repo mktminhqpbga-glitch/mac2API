@@ -22,8 +22,8 @@ accounts=[{'id':'fixture'+str(i).zfill(5),'label':'Fixture-'+str(i),'enabled':Tr
 events=[]
 network=[]
 server_state={'mode':'update','videoPolls':0,'connections':{
- '/admin/connections/chatgpt':dict(mode='browser',image_model='gpt-image-1.5',official_configured=True,external_configured=False,profiles=[]),
- '/admin/connections/gemini-web':dict(mode='browser',image_model='gemini-2.5-flash-image',official_configured=True,external_configured=False,profiles=[]),
+ '/admin/connections/chatgpt':dict(mode='browser',image_model='gpt-image-1.5',official_text_model='gpt-4.1-mini',official_configured=False,external_configured=True,profiles=[]),
+ '/admin/connections/gemini-web':dict(mode='browser',image_model='gemini-2.5-flash-image',official_text_model='gemini-2.5-flash',official_configured=False,external_configured=True,profiles=[]),
 },'gateways':{
  '/admin/chatgpt2api':dict(base_url='',text_model='auto',image_model='gpt-image-2.6',has_key=False,ready=False),
  '/admin/gemini-web2api':dict(base_url='',text_model='gemini-auto',image_model='gemini-auto',has_key=False,ready=False),
@@ -78,6 +78,9 @@ class Handler(BaseHTTPRequestHandler):
   elif path in server_state['connections']:
    reply=server_state['connections'][path]
    reply.update(body)
+  elif path.endswith('/official') and path[:-9] in server_state['connections']:
+   reply=server_state['connections'][path[:-9]]
+   reply.update(mode='official',image_model=body['image_model'],official_text_model=body['model'],official_configured=True)
   elif path.endswith('/test') and path[:-5] in server_state['connections']:
    reply={'ok':True}
   elif path.endswith('/configure') and path[:-10] in server_state['gateways']:
@@ -140,13 +143,13 @@ with tempfile.TemporaryDirectory(prefix='muse-layout-',dir=Path.home()) as home:
    page.send('Emulation.setDeviceMetricsOverride',{'width':390,'height':844,'deviceScaleFactor':1,'mobile':False})
    assert page.js("document.documentElement.scrollWidth === document.documentElement.clientWidth")
    page.send('Emulation.clearDeviceMetricsOverride')
-   page.js(f"""{{const mode={node}.querySelector('[name=mode]'); mode.value='official';
-      mode.dispatchEvent(new Event('change')); {node}.querySelector('button[type=submit]').click();}}""")
-   wait(f"{node}.querySelector('[data-connection-status]').textContent.includes('Đã lưu')")
-   page.js(f"{node}.querySelector('[data-test-official]').click()")
-   wait(f"{node}.querySelector('[data-connection-status]').textContent.includes('đã xác nhận')")
+   page.js(f"""{{const form={node}.querySelector('form'); form.elements.mode.value='official';
+      form.elements.mode.dispatchEvent(new Event('change')); form.elements.official_key.value='fixture-provider-key';
+      form.querySelector('button[type=submit]').click();}}""")
+   wait(f"{node}.querySelector('[data-connection-status]').textContent.includes('trực tiếp và chọn làm mặc định')")
+   assert page.js(f"{node}.querySelector('[data-external-connection]').hidden && {node}.querySelector('[name=official_key]').value === ''")
    endpoint='/admin/connections/'+provider
-   assert [event['path'] for event in events[-2:]]==[endpoint,endpoint+'/test']
+   assert events[-1]['path']==endpoint+'/official' and events[-1]['body']['api_key']=='fixture-provider-key'
    page.send('Emulation.setDeviceMetricsOverride',{'width':390,'height':844,'deviceScaleFactor':1,'mobile':False})
    assert page.js("document.documentElement.scrollWidth === document.documentElement.clientWidth")
    page.send('Emulation.clearDeviceMetricsOverride')
